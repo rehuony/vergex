@@ -1,0 +1,238 @@
+import type { ReactNode } from 'react'
+import { ChevronLeft } from 'lucide-react'
+import { cn } from '@/utils/cn'
+import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
+
+// The settings tabs share one layout:
+// - rows: the name in a 160px column, the control filling the rest, every
+//   control 36px tall, rows split by a line, no help text under them;
+// - a group that is submitted together ends with SettingActions.
+// Nothing appears between rows on input, so the dialog never shifts.
+
+// One labelled row: the name on the left, the control on the right.
+export function SettingRow({
+  label,
+  htmlFor,
+  className,
+  children,
+}: {
+  label: string
+  /** Id of the control the label names; omit when the row has no single one. */
+  htmlFor?: string
+  className?: string
+  children: ReactNode
+}) {
+  const Label = htmlFor ? 'label' : 'p'
+  return (
+    <div
+      className={cn(
+        'grid gap-2 border-t border-[var(--line)] py-4 first:border-t-0 sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center sm:gap-6',
+        className
+      )}
+    >
+      <Label htmlFor={htmlFor} className="text-sm font-medium text-vergex-text">
+        {label}
+      </Label>
+      <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-2">
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// One entry in a list, such as a saved connection: its icon, name and status
+// badge on the left, its buttons on the right.
+export function SettingItem({
+  icon,
+  title,
+  badge,
+  detail,
+  children,
+}: {
+  icon: ReactNode
+  title: ReactNode
+  /** A SettingBadge shown right after the name. */
+  badge?: ReactNode
+  detail?: ReactNode
+  children?: ReactNode
+}) {
+  return (
+    <div className="flex items-center gap-3 border-t border-[var(--line)] py-4 first:border-t-0">
+      <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[var(--surface)] text-vergex-text-muted">
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        {/* Where the name and badge do not fit, the badge drops below. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <p className="max-w-full truncate text-sm font-medium text-vergex-text">
+            {title}
+          </p>
+          {badge}
+        </div>
+        {detail && (
+          <p className="truncate text-xs text-vergex-text-muted">{detail}</p>
+        )}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// A list tab: the entries scroll while the action bar, with the add button,
+// stays at the bottom of the tab whatever the list's length.
+export function SettingList({
+  children,
+  actions,
+}: {
+  children: ReactNode
+  actions: ReactNode
+}) {
+  return (
+    <div className="flex h-full flex-col">
+      <ScrollArea
+        className="-mx-6 min-h-0 flex-1 px-6"
+        viewportClassName="flex flex-col"
+      >
+        {children}
+      </ScrollArea>
+      <SettingActions>{actions}</SettingActions>
+    </div>
+  )
+}
+
+// Fills the rest of the tab with one centred message: loading, empty or a
+// failure (role="alert").
+export function SettingState({
+  role,
+  children,
+}: {
+  role?: 'alert' | 'status'
+  children: ReactNode
+}) {
+  return (
+    <div
+      role={role}
+      className={cn(
+        'flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center text-sm',
+        role === 'alert' ? 'text-vergex-danger' : 'text-vergex-text-muted'
+      )}
+    >
+      {children}
+    </div>
+  )
+}
+
+const badgeTones = {
+  success: 'bg-vergex-success/10 text-vergex-success',
+  danger: 'bg-vergex-danger/10 text-vergex-danger',
+  muted: 'bg-vergex-bg text-vergex-text-muted',
+}
+
+export function SettingBadge({
+  tone = 'muted',
+  children,
+}: {
+  tone?: keyof typeof badgeTones
+  children: ReactNode
+}) {
+  return (
+    <span
+      className={cn(
+        'shrink-0 whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium',
+        badgeTones[tone]
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
+// Heads a view opened from a list: back to the list, then what it is about.
+export function SettingBack({
+  onBack,
+  backLabel,
+  icon,
+  title,
+  detail,
+  children,
+}: {
+  onBack: () => void
+  backLabel: string
+  icon?: ReactNode
+  title: ReactNode
+  detail?: ReactNode
+  /** A link or button on the right, such as where to get a key. */
+  children?: ReactNode
+}) {
+  return (
+    <div className="flex items-center gap-3 py-4">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={onBack}
+        aria-label={backLabel}
+        className="-ml-2 size-8 shrink-0"
+      >
+        <ChevronLeft className="size-4" />
+      </Button>
+      {icon && (
+        <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[var(--surface)] text-vergex-text-muted">
+          {icon}
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <h3 className="truncate text-sm font-medium text-vergex-text">
+          {title}
+        </h3>
+        {detail && (
+          <p className="truncate text-xs text-vergex-text-muted">{detail}</p>
+        )}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+const messageTones = {
+  danger: 'text-vergex-danger',
+  success: 'text-vergex-success',
+  muted: 'text-vergex-text-muted',
+}
+
+/**
+ * The bar that ends a group submitted together: its buttons on the right and,
+ * on the left, a one-line message such as a validation error. The bar is as
+ * tall as its buttons whether or not the message shows, so nothing moves.
+ */
+export function SettingActions({
+  message,
+  messageTone = 'danger',
+  messageId,
+  children,
+}: {
+  message?: ReactNode
+  /** Errors are red; a passed check is green, progress is muted. */
+  messageTone?: keyof typeof messageTones
+  /** For the fields the message is about to point aria-describedby at. */
+  messageId?: string
+  children: ReactNode
+}) {
+  return (
+    <div className="flex items-center gap-2 border-t border-[var(--line)] py-4">
+      <p
+        id={messageId}
+        aria-live="polite"
+        title={typeof message === 'string' ? message : undefined}
+        className={cn(
+          'mr-auto min-w-0 truncate text-xs',
+          messageTones[messageTone]
+        )}
+      >
+        {message}
+      </p>
+      {children}
+    </div>
+  )
+}

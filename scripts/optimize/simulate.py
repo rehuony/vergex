@@ -1,6 +1,6 @@
 """Replay recorded AI decisions under alternative risk/throttle parameters.
 
-Mirrors the live semantics of trader/auto_trader_throttle.go:
+Mirrors the live semantics of internal/trader/auto_trader_throttle.go:
   - throttle thresholds compare PRICE-basis PnL% (leverage-independent),
     matching the 2026-07-24 fix that converted the live thresholds from
     margin basis to price basis

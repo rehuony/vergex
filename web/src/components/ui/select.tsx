@@ -1,102 +1,94 @@
-import { useRef, useState, useLayoutEffect, useCallback } from 'react'
-import { createPortal } from 'react-dom'
-import { ChevronDown } from 'lucide-react'
-import { cn } from '../../lib/cn'
+import * as SelectPrimitive from '@radix-ui/react-select'
+import { Check, ChevronDown } from 'lucide-react'
+import { cn } from '@/utils/cn'
 
 export interface SelectOption {
   value: string | number
   label: string
+  /** Language of the label when it differs from the page, e.g. "zh". */
+  lang?: string
 }
 
-interface NofxSelectProps {
+interface AppSelectProps {
   value: string | number
   onChange: (value: string) => void
   options: SelectOption[]
   disabled?: boolean
+  /** Classes for the trigger, e.g. its width or height. */
   className?: string
-  style?: React.CSSProperties
+  id?: string
+  'aria-label'?: string
 }
 
-export function NofxSelect({ value, onChange, options, disabled, className, style }: NofxSelectProps) {
-  const [open, setOpen] = useState(false)
-  const triggerRef = useRef<HTMLDivElement>(null)
-  const dropdownRef = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
-  const selected = options.find(o => String(o.value) === String(value))
+// Radix reserves the empty string for "nothing selected", but options such as
+// "Auto" use it as a real value.
+const EMPTY = '__empty__'
+const toItem = (value: string | number) =>
+  String(value) === '' ? EMPTY : String(value)
 
-  const updatePos = useCallback(() => {
-    if (!triggerRef.current) return
-    const rect = triggerRef.current.getBoundingClientRect()
-    setPos({ top: rect.bottom + 4, left: rect.left, width: rect.width })
-  }, [])
-
-  useLayoutEffect(() => {
-    if (!open) return
-    updatePos()
-    const handleClose = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (triggerRef.current?.contains(target)) return
-      if (dropdownRef.current?.contains(target)) return
-      setOpen(false)
-    }
-    const handleScroll = (e: Event) => {
-      if (dropdownRef.current?.contains(e.target as Node)) return
-      setOpen(false)
-    }
-    document.addEventListener('mousedown', handleClose)
-    window.addEventListener('scroll', handleScroll, true)
-    return () => {
-      document.removeEventListener('mousedown', handleClose)
-      window.removeEventListener('scroll', handleScroll, true)
-    }
-  }, [open, updatePos])
-
+/**
+ * A dropdown styled like the account menu. Radix Select supplies keyboard
+ * navigation, typeahead and the listbox semantics.
+ */
+export function AppSelect({
+  value,
+  onChange,
+  options,
+  disabled,
+  className,
+  id,
+  'aria-label': ariaLabel,
+}: AppSelectProps) {
   return (
-    <div
-      ref={triggerRef}
-      className={cn('relative', className)}
-      style={style}
+    <SelectPrimitive.Root
+      value={toItem(value)}
+      onValueChange={(next) => onChange(next === EMPTY ? '' : next)}
+      disabled={disabled}
     >
-      <div
+      <SelectPrimitive.Trigger
+        id={id}
+        aria-label={ariaLabel}
         className={cn(
-          'flex items-center justify-between gap-1.5 w-full h-full cursor-pointer',
-          disabled && 'opacity-50 cursor-not-allowed',
+          'flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-left text-sm text-vergex-text outline-none transition-colors hover:border-[var(--line-strong)] hover:duration-0 focus-visible:border-vergex-brand disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:border-vergex-brand',
+          className
         )}
-        onClick={(e) => {
-          e.stopPropagation()
-          if (!disabled) setOpen(!open)
-        }}
       >
-        <span className="truncate">{selected?.label ?? String(value)}</span>
-        <ChevronDown className={cn('w-3 h-3 shrink-0 opacity-50 transition-transform', open && 'rotate-180')} />
-      </div>
-      {open && createPortal(
-        <div
-          ref={dropdownRef}
-          className="fixed z-9999 rounded-sm border border-[rgba(25,36,52,0.14)] bg-nofx-bg-lighter shadow-xl shadow-[rgba(25,36,52,0.18)] max-h-60 overflow-y-auto"
-          style={{ top: pos.top, left: pos.left, minWidth: pos.width }}
+        <span className="min-w-0 truncate">
+          <SelectPrimitive.Value />
+        </span>
+        <SelectPrimitive.Icon asChild>
+          <ChevronDown className="size-4 shrink-0 text-vergex-text-muted" />
+        </SelectPrimitive.Icon>
+      </SelectPrimitive.Trigger>
+      <SelectPrimitive.Portal>
+        <SelectPrimitive.Content
+          position="popper"
+          sideOffset={4}
+          // Above the z-50 dialogs it is usually opened from.
+          className="z-[60] max-h-[min(var(--radix-select-content-available-height),18rem)] min-w-[var(--radix-select-trigger-width)] origin-[var(--radix-select-content-transform-origin)] animate-menu-in overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)] p-1.5 shadow-[var(--shadow-lg)]"
         >
-          {options.map((opt) => (
-            <div
-              key={opt.value}
-              className={cn(
-                'px-3 py-1.5 text-sm cursor-pointer transition-colors whitespace-nowrap',
-                String(opt.value) === String(value)
-                  ? 'bg-[#295be8]/10 text-[#295be8]'
-                  : 'text-[#192434] hover:bg-nofx-bg-deeper',
-              )}
-              onClick={(e) => {
-                e.stopPropagation()
-                onChange(String(opt.value))
-                setOpen(false)
-              }}
-            >
-              {opt.label}
-            </div>
-          ))}
-        </div>,
-        document.body,
-      )}
-    </div>
+          <SelectPrimitive.Viewport>
+            {options.map((option) => (
+              <SelectPrimitive.Item
+                key={option.value}
+                value={toItem(option.value)}
+                lang={option.lang}
+                className="flex h-9 cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 text-sm text-vergex-text outline-none data-[disabled]:pointer-events-none data-[highlighted]:bg-vergex-bg data-[disabled]:opacity-50"
+              >
+                <SelectPrimitive.ItemText>
+                  {option.label}
+                </SelectPrimitive.ItemText>
+                <SelectPrimitive.ItemIndicator className="ml-auto">
+                  <Check
+                    className="size-4 text-vergex-brand"
+                    aria-hidden="true"
+                  />
+                </SelectPrimitive.ItemIndicator>
+              </SelectPrimitive.Item>
+            ))}
+          </SelectPrimitive.Viewport>
+        </SelectPrimitive.Content>
+      </SelectPrimitive.Portal>
+    </SelectPrimitive.Root>
   )
 }

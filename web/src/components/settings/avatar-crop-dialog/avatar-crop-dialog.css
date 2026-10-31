@@ -1,0 +1,51 @@
+/* react-image-crop styled after Google's account photo editor: a solid frame
+   with corner brackets, and a circle marking the part the avatar shows. The
+   frame sits on the photo, so it stays white and black in both themes. */
+.vergex-avatar-crop {
+  --rc-focus-color: var(--brand);
+}
+/* Mirrors the library's marching-ants selector so it outranks it. */
+.vergex-avatar-crop
+  .ReactCrop__crop-selection:not(
+    .ReactCrop--no-animate .ReactCrop__crop-selection
+  ) {
+  animation: none;
+  background-image: none;
+  border: 1px solid rgb(255 255 255 / 0.75);
+}
+.vergex-avatar-crop .ReactCrop__drag-handle,
+.vergex-avatar-crop .ReactCrop__drag-handle:focus {
+  width: 22px;
+  height: 22px;
+  background: none;
+  border: 0 solid rgb(255 255 255);
+}
+.vergex-avatar-crop .ReactCrop__drag-handle:focus-visible {
+  border-color: var(--brand);
+}
+.vergex-avatar-crop .ReactCrop__drag-handle.ord-nw {
+  border-width: 4px 0 0 4px;
+  transform: translate(-4px, -4px);
+}
+.vergex-avatar-crop .ReactCrop__drag-handle.ord-ne {
+  border-width: 4px 4px 0 0;
+  transform: translate(4px, -4px);
+}
+.vergex-avatar-crop .ReactCrop__drag-handle.ord-se {
+  border-width: 0 4px 4px 0;
+  transform: translate(4px, 4px);
+}
+.vergex-avatar-crop .ReactCrop__drag-handle.ord-sw {
+  border-width: 0 0 4px 4px;
+  transform: translate(-4px, 4px);
+}
+/* Shades the frame's corners outside the circle; the clip keeps the shadow
+   inside the frame, where the library's mask already dims the rest. */
+.vergex-avatar-crop-circle {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  box-shadow: 0 0 0 100vmax rgb(0 0 0 / 0.35);
+  clip-path: inset(0);
+  pointer-events: none;
+}

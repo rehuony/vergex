@@ -1,21 +1,24 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App.tsx'
+import { App } from './app'
 import { Toaster } from 'sonner'
-import './index.css'
-import './styles/brand.css'
+import '@/styles/index.css'
+import '@/styles/brand.css'
 import { BrowserRouter } from 'react-router-dom'
+import { initPageScrollbars } from '@/utils/page-scroll'
+
+initPageScrollbars()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
+      {/* Colours come from the theme tokens in styles/brand.css. */}
       <Toaster
-        theme="light"
         closeButton
-        position="top-center"
+        position="bottom-right"
         duration={2200}
         toastOptions={{
-          className: 'nofx-toast',
+          className: 'vergex-toast',
         }}
       />
       <App />

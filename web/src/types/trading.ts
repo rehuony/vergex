@@ -19,10 +19,6 @@ export interface SystemStatus {
   trading_blocked?: boolean
   trading_error?: string
   trading_checked_at?: string
-  /** Claw402 AI fee wallet health, observed by the run loop. */
-  ai_wallet_status?: 'ok' | 'low' | 'empty' | 'unknown'
-  ai_wallet_balance_usdc?: number
-  ai_wallet_checked_at?: string
 }
 
 export interface AccountInfo {
@@ -58,10 +54,10 @@ export interface DecisionAction {
   quantity: number
   leverage: number
   price: number
-  stop_loss?: number      // Stop loss price
-  take_profit?: number    // Take profit price
-  confidence?: number     // AI confidence (0-100)
-  reasoning?: string      // Brief reasoning
+  stop_loss?: number // Stop loss price
+  take_profit?: number // Take profit price
+  confidence?: number // AI confidence (0-100)
+  reasoning?: string // Brief reasoning
   order_id: number
   timestamp: string
   success: boolean
@@ -77,12 +73,14 @@ export interface AccountSnapshot {
 }
 
 export interface DecisionRecord {
+  id: number
   timestamp: string
   cycle_number: number
   system_prompt: string
   input_prompt: string
   cot_trace: string
   decision_json: string
+  raw_response?: string
   account_state: AccountSnapshot
   positions: any[]
   candidate_coins: string[]
@@ -90,6 +88,78 @@ export interface DecisionRecord {
   execution_log: string[]
   success: boolean
   error_message?: string
+}
+
+// Stored totals of one trader. A value is absent until something was recorded.
+export interface TraderMetrics {
+  equity?: number
+  /** Unix seconds of the equity snapshot. */
+  equity_at?: number
+  return_pct?: number
+  total_trades?: number
+  win_rate?: number
+  max_drawdown_pct?: number
+}
+
+export type LaunchCheckStatus = 'ok' | 'failed' | 'warning' | 'skipped'
+
+export interface LaunchCheck {
+  id: string
+  status: LaunchCheckStatus
+  code?: string
+  message?: string
+  required?: number
+  actual?: number
+  asset?: string
+}
+
+export interface LaunchPreflight {
+  ready: boolean
+  checks: LaunchCheck[]
+  min_trading_usdc: number
+}
+
+export type EquityRange = '24h' | '7d' | '30d' | 'all'
+
+export interface EquityPoint {
+  /** Unix seconds. */
+  time: number
+  equity: number
+  unrealized_pnl: number
+}
+
+export interface EquityHistory {
+  points: EquityPoint[]
+  initial_balance: number
+}
+
+export interface TraderOrder {
+  id: number
+  symbol: string
+  side: string
+  position_side: string
+  type: string
+  quantity: number
+  price: number
+  status: string
+  filled_quantity: number
+  avg_fill_price: number
+  commission: number
+  commission_asset: string
+  order_action: string
+  /** Epoch milliseconds. */
+  created_at: number
+}
+
+export interface OrderFill {
+  id: number
+  price: number
+  quantity: number
+  commission: number
+  commission_asset: string
+  realized_pnl: number
+  /** Epoch milliseconds. */
+  created_at: number
 }
 
 export interface Statistics {
@@ -125,32 +195,11 @@ export interface TraderInfo {
   exchange_id?: string
   is_running?: boolean
   startup_warning?: string
-  show_in_competition?: boolean
   strategy_id?: string
   strategy_name?: string
   custom_prompt?: string
-  use_ai500?: boolean
   use_oi_top?: boolean
   system_prompt_template?: string
-}
-
-// Competition related types
-export interface CompetitionTraderData {
-  trader_id: string
-  trader_name: string
-  ai_model: string
-  exchange: string
-  total_equity: number
-  total_pnl: number
-  total_pnl_pct: number
-  position_count: number
-  margin_used_pct: number
-  is_running: boolean
-}
-
-export interface CompetitionData {
-  traders: CompetitionTraderData[]
-  count: number
 }
 
 // Trader Configuration Data for View Modal
@@ -159,10 +208,9 @@ export interface TraderConfigData {
   trader_name: string
   ai_model: string
   exchange_id: string
-  strategy_id?: string  // Strategy ID
-  strategy_name?: string  // Strategy name
+  strategy_id?: string // Strategy ID
+  strategy_name?: string // Strategy name
   is_cross_margin: boolean
-  show_in_competition: boolean  // Whether to show in the competition arena
   scan_interval_minutes: number
   initial_balance: number
   is_running: boolean
@@ -173,7 +221,6 @@ export interface TraderConfigData {
   custom_prompt?: string
   override_base_prompt?: boolean
   system_prompt_template?: string
-  use_ai500?: boolean
   use_oi_top?: boolean
 }
 

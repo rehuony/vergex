@@ -1,4 +1,4 @@
-"""Multivariate TPE Bayesian search over NOFX autopilot risk/throttle params.
+"""Multivariate TPE Bayesian search over Vergex autopilot risk/throttle params.
 
 Optimizes on a train window (first ~70% of history) and reports the untouched
 holdout window, plus full-period metrics and baselines for reference.
