@@ -5,8 +5,11 @@ import {
   cleanup,
   waitFor,
 } from '@testing-library/react'
+import type { ComponentProps } from 'react'
+import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { FrontierAccount } from '@/components/planning/frontier-account'
+import { FrontierAccount as AccountSection } from '@/components/planning/frontier-account'
+import { useAccountWatch } from '@/hooks/planning/use-account-watch'
 import { CloseNotSubmittedError } from '@/api/planning'
 import { positionDecimal } from '@/utils/planning/frontier-account'
 import type { Exchange } from '@/types'
@@ -38,6 +41,17 @@ vi.mock('@/api/helpers', () => ({
     return r.json()
   },
 }))
+// The section as the page uses it, with the watch above it.
+function FrontierAccount(
+  props: Omit<ComponentProps<typeof AccountSection>, 'watch'>
+) {
+  const watch = useAccountWatch(props.account?.id ?? '', props.symbol)
+  return (
+    <MemoryRouter>
+      <AccountSection {...props} watch={watch} />
+    </MemoryRouter>
+  )
+}
 const account = {
   id: 'account',
   name: 'My Binance',
@@ -263,7 +277,7 @@ it('uses USDT for Binance position amounts', async () => {
   expect(screen.queryByText('USDC notional')).toBeNull()
 })
 
-it('reads a saved account without any Autopilot and never creates one', async () => {
+it('reads a saved account without any trader and never creates one', async () => {
   mocks.traders.mockResolvedValue([])
   open()
   expect(
@@ -449,4 +463,28 @@ it('serializes tiny position observations without losing precision or using expo
   expect(positionDecimal(1.23456789e-8)).toBe('0.0000000123456789')
   expect(positionDecimal(1e21)).toBe('1000000000000000000000')
   expect(() => positionDecimal(NaN)).toThrow('Invalid position value')
+})
+
+it('offers only a way to add an account when there is none', () => {
+  render(
+    <FrontierAccount
+      accounts={[]}
+      venue="okx"
+      symbol="BTC-USDT-SWAP"
+      runs={[]}
+      busy={false}
+      onView={vi.fn()}
+      onManual={vi.fn()}
+      onBusy={vi.fn()}
+      onRefresh={vi.fn().mockResolvedValue(undefined)}
+    />
+  )
+  expect(screen.getByText('No OKX account is selected.')).toBeVisible()
+  expect(
+    screen.getByRole('link', { name: 'Add an exchange account' })
+  ).toHaveAttribute('href', '?settings=exchanges')
+  for (const name of ['Refresh', 'Buy / Long', 'Sell / Short']) {
+    expect(screen.queryByRole('button', { name })).toBeNull()
+  }
+  expect(mocks.positions).not.toHaveBeenCalled()
 })

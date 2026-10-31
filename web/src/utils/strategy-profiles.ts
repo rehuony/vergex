@@ -1,6 +1,6 @@
 import type { AIStrategyConfig, StrategyConfig } from '@/types'
 
-// Autopilot strategy settings the strategy page edits: candle choices, coin
+// Strategy settings the strategy page edits: candle choices, coin
 // list limits and the risk profiles that set several limits at once.
 
 export const TIMEFRAMES = ['1m', '3m', '5m', '15m', '1h', '4h']

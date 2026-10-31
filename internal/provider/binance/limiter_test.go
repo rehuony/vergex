@@ -141,3 +141,33 @@ func TestDataClientParsesKlinesAndReportsRateLimits(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestTradingReadsPassABusyIPAndAFullBackgroundBudget(t *testing.T) {
+	now := time.Date(2026, 1, 1, 0, 0, 30, 0, time.UTC)
+	l := testLimiter(&now)
+	if wait := l.reserve(BudgetWeight, DefaultWeightBudget); wait != 0 {
+		t.Fatalf("background waited %v", wait)
+	}
+	if wait := l.reserve(BudgetTrading, 2); wait != 0 {
+		t.Fatalf("a long catch-up queued a trading read for %v", wait)
+	}
+
+	header := http.Header{}
+	header.Set("X-MBX-USED-WEIGHT-1M", "1300")
+	l.Observe(http.StatusOK, header)
+	if wait := l.reserve(BudgetData, 1); wait != 30*time.Second {
+		t.Fatalf("background should wait out the minute, waited %v", wait)
+	}
+	if wait := l.reserve(BudgetTrading, 2); wait != 0 {
+		t.Fatalf("heavy use queued a trading read for %v", wait)
+	}
+	if status := l.Status(); status.PausedUntil.IsZero() || status.Reason == "" {
+		t.Fatalf("status = %+v, should report the pause", status)
+	}
+
+	// When the exchange itself says to stop, everyone stops.
+	l.Observe(http.StatusTooManyRequests, http.Header{})
+	if wait := l.reserve(BudgetTrading, 2); wait <= 0 {
+		t.Fatal("a trading read went out through a 429")
+	}
+}

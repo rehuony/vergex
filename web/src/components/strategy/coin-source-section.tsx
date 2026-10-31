@@ -1,6 +1,6 @@
 import { t, type Language } from '@/i18n/translations'
 import { Segmented } from '@/components/common/segmented'
-import { SettingRow } from '@/components/settings/setting-row'
+import { SettingRow } from '@/components/common/setting-row'
 import { AppSelect } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import type { AIStrategyConfig, CoinSourceConfig } from '@/types'

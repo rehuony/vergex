@@ -3,13 +3,15 @@ package store
 import (
 	"testing"
 	"time"
+
+	"vergex/internal/testdb"
 )
 
 func newReconcileTestStore(t *testing.T) *Store {
 	t.Helper()
-	st, err := New(t.TempDir() + "/vergex.db")
+	st, err := NewMigrated(testdb.Open(t))
 	if err != nil {
-		t.Fatalf("store.New failed: %v", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	return st

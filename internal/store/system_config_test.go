@@ -1,11 +1,15 @@
 package store
 
-import "testing"
+import (
+	"testing"
+
+	"vergex/internal/testdb"
+)
 
 func TestDeleteSystemConfigRemovesKey(t *testing.T) {
-	st, err := New(t.TempDir() + "/vergex.db")
+	st, err := NewMigrated(testdb.Open(t))
 	if err != nil {
-		t.Fatalf("New failed: %v", err)
+		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 

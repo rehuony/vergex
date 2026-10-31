@@ -227,7 +227,9 @@ const modelTestTimeout = 30 * time.Second
 
 // newModelTestClient builds the client a model test calls; tests replace it.
 var newModelTestClient = func(providerID string) llm.AIClient {
-	return llm.NewAIClientByProvider(providerID, llm.WithTimeout(modelTestTimeout), llm.WithMaxRetries(1))
+	client := llm.NewAIClientByProvider(providerID, llm.WithTimeout(modelTestTimeout), llm.WithMaxRetries(1))
+	llm.TagUsage(client, llm.OwnerTest)
+	return client
 }
 
 // handleTestModelConfig sends one short prompt with the form's settings and

@@ -50,12 +50,12 @@ describe('language preference', () => {
       </MemoryRouter>
     )
 
-    expect(screen.getByRole('button', { name: 'Autopilot' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Traders' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /Account menu/ }))
     fireEvent.click(screen.getByRole('button', { name: /^Language/ }))
     fireEvent.click(screen.getByRole('button', { name: '简体中文' }))
 
-    expect(screen.getByRole('button', { name: '自动交易' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '交易员' })).toBeTruthy()
     expect(
       screen
         .getByRole('button', { name: '简体中文' })

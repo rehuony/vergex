@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -37,9 +38,9 @@ type TraderOrder struct {
 	PriceProtect      bool    `gorm:"column:price_protect;default:false" json:"price_protect"`
 	OrderAction       string  `gorm:"column:order_action;default:''" json:"order_action"`
 	RelatedPositionID int64   `gorm:"column:related_position_id;default:0" json:"related_position_id"`
-	CreatedAt         int64   `gorm:"column:created_at" json:"created_at"` // Unix milliseconds UTC
-	UpdatedAt         int64   `gorm:"column:updated_at" json:"updated_at"` // Unix milliseconds UTC
-	FilledAt          int64   `gorm:"column:filled_at" json:"filled_at"`   // Unix milliseconds UTC
+	CreatedAt         int64   `gorm:"column:created_at" json:"created_at"`                          // Unix milliseconds UTC
+	UpdatedAt         int64   `gorm:"column:updated_at;index:idx_orders_updated" json:"updated_at"` // Unix milliseconds UTC
+	FilledAt          int64   `gorm:"column:filled_at" json:"filled_at"`                            // Unix milliseconds UTC
 }
 
 // TableName returns the table name for TraderOrder
@@ -112,7 +113,19 @@ func (s *OrderStore) CreateOrder(order *TraderOrder) error {
 		return nil
 	}
 
-	return s.db.Create(order).Error
+	err = s.db.Create(order).Error
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		// The order sync and the trading loop can record the same order at once.
+		existing, err := s.GetOrderByExchangeID(order.ExchangeID, order.ExchangeOrderID)
+		if err != nil || existing == nil {
+			return fmt.Errorf("failed to read duplicate order: %w", err)
+		}
+		order.ID = existing.ID
+		order.CreatedAt = existing.CreatedAt
+		order.UpdatedAt = existing.UpdatedAt
+		return nil
+	}
+	return err
 }
 
 // UpdateOrderStatus updates order status
@@ -145,7 +158,17 @@ func (s *OrderStore) CreateFill(fill *TraderFill) error {
 		return nil
 	}
 
-	return s.db.Create(fill).Error
+	err = s.db.Create(fill).Error
+	if errors.Is(err, gorm.ErrDuplicatedKey) {
+		existing, err := s.GetFillByExchangeTradeID(fill.ExchangeID, fill.ExchangeTradeID)
+		if err != nil || existing == nil {
+			return fmt.Errorf("failed to read duplicate fill: %w", err)
+		}
+		fill.ID = existing.ID
+		fill.CreatedAt = existing.CreatedAt
+		return nil
+	}
+	return err
 }
 
 // GetFillByExchangeTradeID gets fill by exchange trade ID
@@ -185,6 +208,20 @@ func (s *OrderStore) GetTraderOrders(traderID string, limit int) ([]*TraderOrder
 		return nil, fmt.Errorf("failed to query orders: %w", err)
 	}
 	return orders, nil
+}
+
+// UpdatedSince returns the orders updated at or after a time, oldest change first.
+func (s *OrderStore) UpdatedSince(sinceMs int64, limit int) ([]*TraderOrder, error) {
+	var orders []*TraderOrder
+	err := s.db.Where("updated_at >= ?", sinceMs).Order("updated_at ASC").Limit(limit).Find(&orders).Error
+	return orders, err
+}
+
+// FillsAfter returns the fills past an ID and no older than a time, oldest first.
+func (s *OrderStore) FillsAfter(id, sinceMs int64, limit int) ([]*TraderFill, error) {
+	var fills []*TraderFill
+	err := s.db.Where("id > ? AND created_at >= ?", id, sinceMs).Order("id ASC").Limit(limit).Find(&fills).Error
+	return fills, err
 }
 
 // RejectedSince returns orders the exchange rejected after sinceMs, oldest first.

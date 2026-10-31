@@ -54,9 +54,13 @@ func (e *Engine) Start(ctx context.Context) {
 		ticker := time.NewTicker(engineTick)
 		defer ticker.Stop()
 		for {
+			// Candles from the stream are forecast the moment they are stored; the
+			// ticker catches those the hydrator fetched.
 			select {
 			case <-ctx.Done():
 				return
+			case <-e.market.CandlesWritten():
+				e.Tick(ctx)
 			case <-ticker.C:
 				e.Tick(ctx)
 			}
@@ -66,38 +70,39 @@ func (e *Engine) Start(ctx context.Context) {
 
 // Tick does one round of work.
 func (e *Engine) Tick(ctx context.Context) {
-	version, err := e.Store.ActiveVersion(e.now())
+	strategy, err := e.Store.ActiveStrategy(e.now())
 	if err != nil {
-		logger.Warnf("Forecast: read the active version: %v", err)
+		logger.Warnf("Forecast: read the active strategy: %v", err)
 		servicestate.Set(servicestate.Forecast, servicestate.Failed, err.Error())
 		return
 	}
 	servicestate.Set(servicestate.Forecast, servicestate.Running, "")
-	created := e.record(version)
+	created := e.record(strategy)
 	e.verify()
-	e.calibrateIfDue(version)
+	e.calibrateIfDue(strategy)
 	e.alert(ctx, created)
 }
 
 // record forecasts every candle that closed since the last round.
-func (e *Engine) record(version *Version) []Record {
+func (e *Engine) record(strategy *Strategy) []Record {
 	series, err := e.market.Store.ListSeries()
 	if err != nil {
 		logger.Warnf("Forecast: list series: %v", err)
 		return nil
 	}
-	latest, err := e.Store.LatestOpenTimes(version.ID)
+	latest, err := e.Store.LatestOpenTimes(strategy.ID)
 	if err != nil {
 		logger.Warnf("Forecast: read latest records: %v", err)
 		return nil
 	}
-	curves, err := e.Store.Calibrations(version.ID)
+	curves, err := e.Store.Calibrations(strategy.ID)
 	if err != nil {
 		logger.Warnf("Forecast: read calibrations: %v", err)
 	}
 	var created []Record
 	for _, row := range series {
-		if row.Status != marketdata.StatusActive || row.LastClosedTime == 0 {
+		// Trading keeps series of its own at intervals Forecast has no settings for.
+		if row.Status != marketdata.StatusActive || row.LastClosedTime == 0 || intervalMillis(row.Interval) == 0 {
 			continue
 		}
 		step := marketdata.IntervalMillis(row.Interval)
@@ -109,7 +114,7 @@ func (e *Engine) record(version *Version) []Record {
 			start = max(last+step, row.LastClosedTime-(maxCatchUpBars-1)*step)
 		}
 		for at := start; at <= row.LastClosedTime; at += step {
-			record, err := e.forecast(version, row, at, curves[row.Interval])
+			record, err := e.forecast(strategy, row, at, curves[row.Interval])
 			if err != nil {
 				e.setSkipped(row.ID, err.Error())
 				continue
@@ -138,19 +143,8 @@ func (e *Engine) setSkipped(seriesID int64, reason string) {
 	}
 }
 
-func toKlines(candles []marketdata.Candle) []market.Kline {
-	klines := make([]market.Kline, len(candles))
-	for i, c := range candles {
-		klines[i] = market.Kline{
-			OpenTime: c.OpenTime, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close, Volume: c.Volume,
-			QuoteVolume: c.QuoteVolume, Trades: int(c.Trades), TakerBuyBaseVolume: c.TakerBuyVolume, TakerBuyQuoteVolume: c.TakerBuyQuote,
-		}
-	}
-	return klines
-}
-
 // evaluateAt forecasts a series at one candle from local data.
-func (e *Engine) evaluateAt(version *Version, series *marketdata.Series, at int64) (Result, error) {
+func (e *Engine) evaluateAt(strategy *Strategy, series *marketdata.Series, at int64) (Result, error) {
 	candles, err := e.market.Store.Window(series, at, WindowBars)
 	if err != nil {
 		if errors.Is(err, marketdata.ErrNotEnoughHistory) {
@@ -163,7 +157,7 @@ func (e *Engine) evaluateAt(version *Version, series *marketdata.Series, at int6
 		return Result{}, err
 	}
 	step := marketdata.IntervalMillis(series.Interval)
-	return Evaluate(version.Config, series.Interval, toKlines(candles), DerivativesAt(readings, at, step))
+	return Evaluate(strategy.Config, series.Interval, marketdata.ToKlines(candles, series.Interval), DerivativesAt(readings, at, step))
 }
 
 func readingsFrom(store *marketdata.Store, symbol string, from, to int64) (Readings, error) {
@@ -188,8 +182,8 @@ func readingsFrom(store *marketdata.Store, symbol string, from, to int64) (Readi
 	return readings, nil
 }
 
-func (e *Engine) forecast(version *Version, series *marketdata.Series, at int64, curve []Knot) (*Record, error) {
-	result, err := e.evaluateAt(version, series, at)
+func (e *Engine) forecast(strategy *Strategy, series *marketdata.Series, at int64, curve []Knot) (*Record, error) {
+	result, err := e.evaluateAt(strategy, series, at)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +194,7 @@ func (e *Engine) forecast(version *Version, series *marketdata.Series, at int64,
 		display = ApplyCalibration(curve, result.ProbFull)
 	}
 	return &Record{
-		VersionID: version.ID, SeriesID: series.ID, OpenTime: at, Symbol: series.Symbol, Interval: series.Interval,
+		StrategyID: strategy.ID, SeriesID: series.ID, OpenTime: at, Symbol: series.Symbol, Interval: series.Interval,
 		Close: result.Close, ProbCandles: result.ProbCandles, ProbFull: result.ProbFull, DisplayProb: display, Calibrated: calibrated,
 		Direction: result.Direction, Confidence: result.Confidence, ExpectedMovePct: result.ExpectedMovePct,
 		Support: result.Support, Resistance: result.Resistance, Regime: result.Regime, Horizon: result.Horizon,
@@ -263,7 +257,7 @@ func Judge(record *Record, targetClose float64, now int64) {
 	}
 }
 
-func (e *Engine) calibrateIfDue(version *Version) {
+func (e *Engine) calibrateIfDue(strategy *Strategy) {
 	e.mu.Lock()
 	due := e.now().Sub(e.calibrated) >= calibrateEvery
 	if due {
@@ -274,7 +268,7 @@ func (e *Engine) calibrateIfDue(version *Version) {
 		return
 	}
 	for _, interval := range Intervals {
-		if err := e.Calibrate(version, interval); err != nil {
+		if err := e.Calibrate(strategy, interval); err != nil {
 			logger.Warnf("Forecast: calibrate %s: %v", interval, err)
 		}
 	}
@@ -282,8 +276,8 @@ func (e *Engine) calibrateIfDue(version *Version) {
 
 // Calibrate rebuilds an interval's curve from verified forecasts that do not
 // overlap, once there are enough of them.
-func (e *Engine) Calibrate(version *Version, interval string) error {
-	records, err := e.Store.VerifiedRecords(version.ID, interval)
+func (e *Engine) Calibrate(strategy *Strategy, interval string) error {
+	records, err := e.Store.VerifiedRecords(strategy.ID, interval)
 	if err != nil {
 		return err
 	}
@@ -292,7 +286,7 @@ func (e *Engine) Calibrate(version *Version, interval string) error {
 		return nil
 	}
 	return e.Store.saveCalibration(Calibration{
-		VersionID: version.ID, Interval: interval, Samples: len(points),
+		StrategyID: strategy.ID, Interval: interval, Samples: len(points),
 		Knots: encodeKnots(FitCalibration(points)), BuiltAt: e.now().UnixMilli(),
 	})
 }
@@ -405,7 +399,7 @@ func (e *Engine) Candles(symbol, interval string, from, to int64) ([]market.Klin
 	if err != nil {
 		return nil, err
 	}
-	return toKlines(candles), nil
+	return marketdata.ToKlines(candles, interval), nil
 }
 
 // Readings reads local derivatives history, for backtests.
@@ -415,10 +409,10 @@ func (e *Engine) Readings(symbol string, from, to int64) (Readings, error) {
 
 // StartBacktest runs a backtest in the background, one at a time. It reads only
 // the local store and never requests anything from the exchange.
-func (e *Engine) StartBacktest(ctx context.Context, versionID int64, options BacktestOptions) (*Backtest, error) {
-	version, err := e.Store.VersionByID(versionID)
+func (e *Engine) StartBacktest(ctx context.Context, strategyID int64, options BacktestOptions) (*Backtest, error) {
+	strategy, err := e.Store.StrategyByID(strategyID)
 	if err != nil {
-		return nil, errors.New("strategy version not found")
+		return nil, errors.New("strategy strategy not found")
 	}
 	e.mu.Lock()
 	if e.backtesting {
@@ -428,7 +422,7 @@ func (e *Engine) StartBacktest(ctx context.Context, versionID int64, options Bac
 	e.backtesting = true
 	e.mu.Unlock()
 
-	run, err := e.Store.CreateBacktest(versionID, options, e.now())
+	run, err := e.Store.CreateBacktest(strategyID, options, e.now())
 	if err != nil {
 		e.mu.Lock()
 		e.backtesting = false
@@ -441,7 +435,7 @@ func (e *Engine) StartBacktest(ctx context.Context, versionID int64, options Bac
 			e.backtesting = false
 			e.mu.Unlock()
 		}()
-		report, err := RunBacktest(ctx, e, version.Config, options, func(done, _ int) {
+		report, err := RunBacktest(ctx, e, strategy.Config, options, func(done, _ int) {
 			if err := e.Store.updateBacktestProgress(run.ID, done); err != nil {
 				logger.Warnf("Forecast: %v", err)
 			}
@@ -457,6 +451,15 @@ func (e *Engine) StartBacktest(ctx context.Context, versionID int64, options Bac
 	return run, nil
 }
 
+// Why a coin has no forecast yet.
+const (
+	PendingFetching         = "fetching"
+	PendingWaiting          = "waiting"
+	PendingNotEnoughHistory = "not_enough_history"
+	PendingNotContinuous    = "not_continuous"
+	PendingUnavailable      = "unavailable" // The exchange has no such coin.
+)
+
 // Signal is one row of the signal table: a series and its latest forecast.
 type Signal struct {
 	Symbol   string   `json:"symbol"`
@@ -470,12 +473,12 @@ type Signal struct {
 }
 
 // Signals lists every tracked coin at an interval with its latest forecast.
-func (e *Engine) Signals(version *Version, interval string, prices map[string]float64) ([]Signal, error) {
+func (e *Engine) Signals(strategy *Strategy, interval string, prices map[string]float64) ([]Signal, error) {
 	series, err := e.market.Store.ListSeries()
 	if err != nil {
 		return nil, err
 	}
-	records, err := e.Store.LatestRecords(version.ID, interval)
+	records, err := e.Store.LatestRecords(strategy.ID, interval)
 	if err != nil {
 		return nil, err
 	}
@@ -498,11 +501,11 @@ func (e *Engine) Signals(version *Version, interval string, prices map[string]fl
 		case signal.Record != nil:
 			signal.Stale = now-signal.Record.OpenTime > 3*step
 		case row.LastClosedTime == 0:
-			signal.Pending = "fetching"
+			signal.Pending = PendingFetching
 		default:
-			signal.Pending = "waiting"
+			signal.Pending = PendingWaiting
 			if e.SeriesSkipReason(row.ID) == ErrNotEnoughHistory.Error() {
-				signal.Pending = "not_enough_history"
+				signal.Pending = PendingNotEnoughHistory
 			}
 		}
 		signals = append(signals, signal)
@@ -520,10 +523,16 @@ type Detail struct {
 	Result     *Result     `json:"result"`
 	Latest     *Record     `json:"latest"`
 	Records    []Record    `json:"records"`
-	Hits       int64       `json:"hits"`
-	Misses     int64       `json:"misses"`
+	Stats      RecordStats `json:"stats"`
 	Candles    []CandleRow `json:"candles"`
 	LastClosed int64       `json:"last_closed"`
+	// Forming is the candle still open, while the stream is delivering it. Forecasts
+	// only ever use closed candles.
+	Forming *CandleRow `json:"forming"`
+	// Projection draws the forecast as candles. See Project.
+	Projection []CandleRow `json:"projection"`
+	// Indicators is there when asked for.
+	Indicators *Indicators `json:"indicators,omitempty"`
 }
 
 // CandleRow is a candle for the chart.
@@ -538,19 +547,27 @@ type CandleRow struct {
 
 const detailCandles = 300
 
+// DetailOptions says what extras to work out for a detail.
+type DetailOptions struct {
+	Indicators bool
+}
+
 // Detail opens a coin, putting it first in the queue if it is not ready, and
 // works out its factors with the same function that made the forecast.
-func (e *Engine) Detail(version *Version, symbol, interval string, prices map[string]float64) (*Detail, error) {
+func (e *Engine) Detail(strategy *Strategy, symbol, interval string, prices map[string]float64, options DetailOptions) (*Detail, error) {
 	series, err := e.market.Open(symbol, interval)
 	if err != nil {
 		return nil, err
 	}
-	detail := &Detail{Symbol: symbol, Interval: interval, Records: []Record{}, Candles: []CandleRow{}, LastClosed: series.LastClosedTime}
+	detail := &Detail{Symbol: symbol, Interval: interval, Records: []Record{}, Candles: []CandleRow{}, Projection: []CandleRow{}, LastClosed: series.LastClosedTime}
 	if price, ok := prices[symbol]; ok {
 		detail.Price = &price
 	}
 	if series.LastClosedTime == 0 {
-		detail.Pending = "fetching"
+		detail.Pending = PendingFetching
+		if series.FailCount > 0 {
+			detail.Pending = PendingUnavailable
+		}
 		return detail, nil
 	}
 	step := marketdata.IntervalMillis(interval)
@@ -561,17 +578,20 @@ func (e *Engine) Detail(version *Version, symbol, interval string, prices map[st
 	for _, candle := range candles {
 		detail.Candles = append(detail.Candles, CandleRow{Time: candle.OpenTime / 1000, Open: candle.Open, High: candle.High, Low: candle.Low, Close: candle.Close, Volume: candle.Volume})
 	}
-	result, err := e.evaluateAt(version, series, series.LastClosedTime)
+	if live, ok := e.market.FormingCandle(symbol, interval, series.LastClosedTime); ok {
+		detail.Forming = &CandleRow{Time: live.OpenTime / 1000, Open: live.Open, High: live.High, Low: live.Low, Close: live.Close, Volume: live.Volume}
+	}
+	result, err := e.evaluateAt(strategy, series, series.LastClosedTime)
 	switch {
 	case errors.Is(err, ErrNotEnoughHistory):
-		detail.Pending = "not_enough_history"
+		detail.Pending = PendingNotEnoughHistory
 	case err != nil:
-		detail.Pending = "not_continuous"
+		detail.Pending = PendingNotContinuous
 	default:
 		detail.Ready = true
 		detail.Result = &result
 	}
-	records, err := e.Store.RecentRecords(version.ID, series.ID, recentRecordRows)
+	records, err := e.Store.RecentRecords(strategy.ID, series.ID, recentRecordRows)
 	if err != nil {
 		return nil, err
 	}
@@ -579,11 +599,95 @@ func (e *Engine) Detail(version *Version, symbol, interval string, prices map[st
 	if len(records) > 0 {
 		detail.Latest = &records[0]
 	}
-	detail.Hits, detail.Misses, err = e.Store.HitStats(version.ID, series.ID)
+	detail.Stats, err = e.Store.RecordStats(strategy.ID, series.ID)
 	if err != nil {
 		return nil, err
 	}
+	if detail.Result != nil {
+		prob := detail.Result.ProbFull
+		if detail.Latest != nil && detail.Latest.OpenTime == series.LastClosedTime {
+			prob = detail.Latest.DisplayProb
+		}
+		detail.Projection = Project(*detail.Result, prob, series.LastClosedTime, step)
+	}
+	if options.Indicators {
+		if err := e.addIndicators(detail, series, step); err != nil {
+			return nil, err
+		}
+	}
 	return detail, nil
+}
+
+// addIndicators reads enough candles before the shown ones to warm up, so the first
+// point on the chart means the same as the last.
+func (e *Engine) addIndicators(detail *Detail, series *marketdata.Series, step int64) error {
+	from := series.LastClosedTime - (detailCandles+WindowBars-1)*step
+	candles, err := e.market.Store.Range(series.ID, from, series.LastClosedTime)
+	if err != nil {
+		return err
+	}
+	indicators := IndicatorSeries(marketdata.ToKlines(candles, series.Interval), detailCandles)
+	detail.Indicators = &indicators
+	return nil
+}
+
+// Overlay is what another page's chart shows of a coin's forecast under the strategy
+// in use. It holds less than a Detail, since that chart has candles of its own.
+type Overlay struct {
+	Symbol   string `json:"symbol"`
+	Interval string `json:"interval"`
+	// Pending says why there is nothing to show yet.
+	Pending     string      `json:"pending,omitempty"`
+	Direction   string      `json:"direction,omitempty"`
+	DisplayProb float64     `json:"display_prob"`
+	Calibrated  bool        `json:"calibrated"`
+	Stats       RecordStats `json:"stats"`
+	Projection  []CandleRow `json:"projection"`
+}
+
+// OverlayFor opens a coin, starting it if it is not tracked, and works out what to
+// draw. A series that has fallen behind shows nothing rather than a projection that
+// starts in the past.
+func (e *Engine) OverlayFor(strategy *Strategy, symbol, interval string) (*Overlay, error) {
+	series, err := e.market.Open(symbol, interval)
+	if err != nil {
+		return nil, err
+	}
+	overlay := &Overlay{Symbol: symbol, Interval: interval, Projection: []CandleRow{}}
+	step := marketdata.IntervalMillis(interval)
+	switch {
+	case series.LastClosedTime == 0 && series.FailCount > 0:
+		overlay.Pending = PendingUnavailable
+		return overlay, nil
+	case series.LastClosedTime == 0 || e.now().UnixMilli()-series.LastClosedTime > 3*step:
+		overlay.Pending = PendingFetching
+		return overlay, nil
+	}
+	result, err := e.evaluateAt(strategy, series, series.LastClosedTime)
+	switch {
+	case errors.Is(err, ErrNotEnoughHistory):
+		overlay.Pending = PendingNotEnoughHistory
+		return overlay, nil
+	case err != nil:
+		overlay.Pending = PendingNotContinuous
+		return overlay, nil
+	}
+	overlay.Direction = result.Direction
+	overlay.DisplayProb = result.ProbFull
+	records, err := e.Store.RecentRecords(strategy.ID, series.ID, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(records) > 0 && records[0].OpenTime == series.LastClosedTime {
+		overlay.DisplayProb = records[0].DisplayProb
+		overlay.Calibrated = records[0].Calibrated
+	}
+	overlay.Stats, err = e.Store.RecordStats(strategy.ID, series.ID)
+	if err != nil {
+		return nil, err
+	}
+	overlay.Projection = Project(result, overlay.DisplayProb, series.LastClosedTime, step)
+	return overlay, nil
 }
 
 // Coverage is what local history holds for a coin at an interval.

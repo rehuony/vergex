@@ -6,7 +6,9 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useExchangeConfigs, useModelConfigs } from '@/hooks/use-connections'
+import { nativeMarket } from '@/utils/planning/frontier-account'
 import {
   defaultMarket,
   frontierVenues,
@@ -23,12 +25,27 @@ interface FrontierMarketOptions {
 
 const NO_ACCOUNTS: Exchange[] = []
 const NO_MODELS: AIModel[] = []
+const MARKET_NAME = /^[A-Z0-9\p{Script=Han}-]{1,40}$/u
+
+// What the address asks for. Anything it cannot use is ignored.
+function readMarketLink(params: URLSearchParams) {
+  const venue = params.get('venue') ?? ''
+  const symbol = (params.get('symbol') ?? '').toUpperCase()
+  const validVenue = frontierVenues.includes(venue) ? venue : undefined
+  return {
+    venue: validVenue,
+    symbol: MARKET_NAME.test(symbol)
+      ? nativeMarket(symbol, validVenue ?? 'binance')
+      : undefined,
+    account: params.get('account') ?? undefined,
+  }
+}
 
 // useFrontierMarket holds what Frontier works on: the enabled AI models and
 // trading accounts, the chosen model and account, and the open venue and
 // market. Connections come from settings through the shared cache, so a change
-// saved there applies here at once. On load it opens the preferred account's
-// venue unless the user already chose a market.
+// saved there applies here at once. On load it opens what the address names, or
+// else the preferred account's venue unless the user already chose a market.
 export function useFrontierMarket({
   setError,
   onAccountSwitch,
@@ -48,13 +65,17 @@ export function useFrontierMarket({
     [aiModels.data]
   )
   const configsLoaded = Boolean(exchanges.data && aiModels.data)
+  const [params] = useSearchParams()
+  const [link] = useState(() => readMarketLink(params))
   const [exchangeID, setExchangeID] = useState('')
   const [modelID, setModelID] = useState('')
-  const [venue, setVenue] = useState('binance')
-  const requestedVenue = useRef('binance')
-  const marketChosen = useRef(false)
+  const [venue, setVenue] = useState(link.venue ?? 'binance')
+  const requestedVenue = useRef(venue)
+  const marketChosen = useRef(
+    Boolean(link.venue || link.symbol || link.account)
+  )
   const initialized = useRef(false)
-  const [symbol, setSymbol] = useState('BTCUSDT')
+  const [symbol, setSymbol] = useState(link.symbol ?? defaultMarket(venue))
 
   useEffect(() => {
     const failure = exchanges.error || aiModels.error
@@ -68,7 +89,18 @@ export function useFrontierMarket({
     )
     if (!initialized.current) {
       initialized.current = true
+      const linked = accounts.find((a) => a.id === link.account)
+      if (linked && linked.exchange_type !== requestedVenue.current) {
+        requestedVenue.current = linked.exchange_type
+        setVenue(linked.exchange_type)
+        setSymbol((old) =>
+          link.symbol
+            ? nativeMarket(old, linked.exchange_type)
+            : defaultMarket(linked.exchange_type)
+        )
+      }
       const preferred =
+        linked ||
         accounts.find(
           (a) =>
             a.id === preferredTradingAccount(accounts, requestedVenue.current)

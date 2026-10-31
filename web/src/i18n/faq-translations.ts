@@ -51,17 +51,17 @@ const english: FAQCategory[] = [
         blocks: [
           {
             type: 'p',
-            text: 'Vergex is an open-source, self-hosted AI trading terminal. Its Autopilot mode runs an AI agent on a schedule: it reads the candidate coins from your strategy, market data and your account state, then decides and executes on your connected exchange — all on your own machine, with your keys never leaving your server.',
+            text: 'Vergex is an open-source, self-hosted AI trading terminal. A trader runs an AI agent on a schedule: it reads the candidate coins from your strategy, market data and your account state, then decides and executes on your connected exchange — all on your own machine, with your keys never leaving your server.',
           },
           {
             type: 'p',
-            text: 'Beyond the Autopilot you can build custom strategies under Autopilot → Strategies and run multiple AI traders side by side.',
+            text: 'You can build custom strategies on the Strategies page and run several traders side by side.',
           },
         ],
       },
       {
         id: 'what-do-i-need',
-        question: 'What do I need before launching the Autopilot?',
+        question: 'What do I need before starting a trader?',
         blocks: [
           {
             type: 'p',
@@ -182,8 +182,8 @@ const english: FAQCategory[] = [
     icon: TrendingUp,
     items: [
       {
-        id: 'autopilot-pipeline',
-        question: 'How does the Autopilot strategy work, step by step?',
+        id: 'trader-pipeline',
+        question: 'How does a trader work, step by step?',
         blocks: [
           {
             type: 'p',
@@ -224,7 +224,7 @@ const english: FAQCategory[] = [
         blocks: [
           {
             type: 'p',
-            text: 'The Autopilot runs a scan cycle every 5–15 minutes depending on how you launched it (configurable per trader, minimum 3 minutes). The first cycle starts right after launch; a single cycle usually takes 30–60 seconds because the AI reads the full market context before deciding.',
+            text: 'A trader runs a scan cycle every 5–15 minutes depending on how you launched it (configurable per trader, minimum 3 minutes). The first cycle starts right after launch; a single cycle usually takes 30–60 seconds because the AI reads the full market context before deciding.',
           },
         ],
       },
@@ -304,7 +304,7 @@ const english: FAQCategory[] = [
           {
             type: 'list',
             items: [
-              'Stop: use Stop on the trader’s page, or Stop all on the Autopilot page. Stopping halts the decision loop; open positions remain open and are yours to manage.',
+              'Stop: use Stop on the trader’s page, or Stop all on the Traders page. Stopping halts the decision loop; open positions remain open and are yours to manage.',
               'Manual close: close a position from the Positions tab on its trader’s page, or from Positions and orders on Frontier. Manual closes sync back into the position history.',
               'Emergencies: you can always manage positions directly on the exchange; Vergex never locks you out of your own account.',
             ],
@@ -326,7 +326,7 @@ const english: FAQCategory[] = [
         blocks: [
           {
             type: 'p',
-            text: 'Autopilot → Strategies edits everything. An AI strategy has four sections:',
+            text: 'The Strategies page edits everything. An AI strategy has four sections:',
           },
           {
             type: 'list',
@@ -403,11 +403,11 @@ const english: FAQCategory[] = [
     items: [
       {
         id: 'frontier-what',
-        question: 'What is Frontier, and how does it differ from Autopilot?',
+        question: 'What is Frontier, and how does it differ from a trader?',
         blocks: [
           {
             type: 'p',
-            text: 'Frontier plans one trade at a time with you. You discuss a market with the AI on a live chart, compare entry plans and approve one. It is not a running strategy, which is what Autopilot is, and it is not a backtester.',
+            text: 'Frontier plans one trade at a time with you. You discuss a market with the AI on a live chart, compare entry plans and approve one. It is not a running strategy, which is what a trader is, and it is not a backtester.',
           },
         ],
       },
@@ -628,7 +628,7 @@ const english: FAQCategory[] = [
             type: 'list',
             items: [
               'Needs attention: problems such as safe mode, a rejected order or a Frontier plan that needs reconciling.',
-              'Headline numbers: total equity, traders running, services healthy, positions, open orders and Autopilot P/L today.',
+              'Headline numbers: total equity, traders running, services healthy, positions, open orders and traders P/L today.',
               'Orchestration: which AI models, traders, Frontier plans, accounts and background services are connected, and their state.',
               'Positions and recent orders across every trader and Frontier plan.',
             ],

@@ -3,12 +3,12 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"vergex/internal/forecast"
 	"vergex/internal/marketdata"
+	"vergex/internal/testdb"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,11 +16,10 @@ import (
 func forecastServer(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	marketStore, err := marketdata.Open(filepath.Join(t.TempDir(), "market.db"))
+	marketStore, err := marketdata.NewStore(testdb.Open(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { marketStore.Close() })
 	store, err := forecast.NewStore(marketStore.DB())
 	if err != nil {
 		t.Fatal(err)
@@ -28,9 +27,9 @@ func forecastServer(t *testing.T) *gin.Engine {
 	service := marketdata.NewService(marketStore)
 	s := &Server{marketData: service, forecast: forecast.NewEngine(store, service, nil)}
 	r := gin.New()
-	r.GET("/versions", s.handleForecastVersions)
-	r.POST("/versions", s.handleCreateForecastVersion)
-	r.POST("/versions/:id/activate", s.handleActivateForecastVersion)
+	r.GET("/versions", s.handleForecastStrategies)
+	r.POST("/versions", s.handleCreateForecastStrategy)
+	r.POST("/versions/:id/activate", s.handleActivateForecastStrategy)
 	r.PUT("/settings", s.handleUpdateForecastSettings)
 	r.POST("/backtests", s.handleCreateForecastBacktest)
 	r.GET("/signals", s.handleForecastSignals)
@@ -58,7 +57,7 @@ func TestForecastEndpointsAreUnavailableWithoutTheEngine(t *testing.T) {
 
 func TestForecastVersionsAreValidated(t *testing.T) {
 	r := forecastServer(t)
-	if w := send(r, http.MethodGet, "/versions", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"active_version_id":1`) {
+	if w := send(r, http.MethodGet, "/versions", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"active_strategy_id":1`) {
 		t.Fatalf("versions: %d %s", w.Code, w.Body.String())
 	}
 	bad := `{"config":{"scorer":"weighted","factors":{},"adx_threshold":25,"slope":3,"direction_threshold":0.05,"horizons":{"15m":4,"1h":4,"4h":4,"1d":4}}}`
@@ -84,10 +83,10 @@ func TestForecastInputsAreChecked(t *testing.T) {
 	if w := send(r, http.MethodPut, "/settings", `{"alert_threshold":80}`); w.Code != http.StatusOK {
 		t.Fatalf("threshold = %d %s", w.Code, w.Body.String())
 	}
-	if w := send(r, http.MethodPost, "/backtests", `{"version_id":1,"symbols":["bad symbol"],"intervals":["1h"],"from":1,"to":2}`); w.Code != http.StatusBadRequest {
+	if w := send(r, http.MethodPost, "/backtests", `{"strategy_id":1,"symbols":["bad symbol"],"intervals":["1h"],"from":1,"to":2}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("a bad symbol = %d", w.Code)
 	}
-	if w := send(r, http.MethodPost, "/backtests", `{"version_id":1,"symbols":["BTCUSDT"],"intervals":["3m"],"from":1,"to":2}`); w.Code != http.StatusBadRequest {
+	if w := send(r, http.MethodPost, "/backtests", `{"strategy_id":1,"symbols":["BTCUSDT"],"intervals":["3m"],"from":1,"to":2}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("a bad interval = %d", w.Code)
 	}
 }

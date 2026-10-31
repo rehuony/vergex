@@ -189,6 +189,17 @@ func (s *Server) handlePositionHistory(c *gin.Context) {
 		limit = l
 	}
 
+	// An older page is only more of what was already read.
+	if before, err := strconv.ParseInt(c.Query("before"), 10, 64); err == nil && before > 0 {
+		positions, err := s.store.Position().GetClosedPositionsBefore(trader.ID, before, limit)
+		if err != nil {
+			SafeBadRequest(c, "Invalid position ID")
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"positions": positions})
+		return
+	}
+
 	// Refresh from the exchange when the trader is loaded; the closed positions
 	// already in the database are returned either way.
 	if at, loadErr := s.traderManager.GetTrader(trader.ID); loadErr == nil {

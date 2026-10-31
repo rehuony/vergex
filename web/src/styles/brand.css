@@ -380,32 +380,64 @@ html {
 
 /* Page frame: every app page fills the width inside the shared gutter. */
 .vergex-page {
-  padding: 32px var(--page-gutter) 48px;
+  padding: 24px var(--page-gutter) 48px;
   min-width: 0;
 }
-.vergex-page-header {
+/* A list page's only header: section tabs on the left, controls on the right. */
+.vergex-page-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px 24px;
-  margin-bottom: 24px;
+  justify-content: flex-end;
+  gap: 8px 24px;
+  margin-bottom: 16px;
 }
-.vergex-page-title {
+.vergex-page-bar:has(.vergex-page-tabs) {
+  border-bottom: 1px solid var(--line);
+}
+.vergex-page-bar .vergex-page-tabs {
+  flex: 1 1 auto;
+  margin-bottom: -1px;
+  border-bottom: 0;
+}
+.vergex-page-bar .vergex-page-tabs a {
+  margin-bottom: 0;
+}
+.vergex-page-bar:has(.vergex-page-tabs) .vergex-page-actions {
+  margin-bottom: 8px;
+}
+.vergex-page-leading {
+  margin-right: auto;
+  max-width: 100%;
+}
+/* A detail page's first row: back, name, state, what it is made of, controls. */
+.vergex-page-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  min-height: 40px;
+}
+.vergex-page-identity h1 {
   min-width: 0;
-}
-.vergex-page-title h1 {
+  overflow: hidden;
   margin: 0;
   color: var(--ink);
-  font-size: 28px;
+  font-size: 20px;
   font-weight: 600;
-  letter-spacing: -0.6px;
-  line-height: 1.2;
+  line-height: 28px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.vergex-page-title p {
-  margin: 6px 0 0;
+.vergex-page-meta {
+  min-width: 0;
+  overflow: hidden;
+  margin-left: 8px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .vergex-page-actions {
   display: flex;
@@ -413,10 +445,13 @@ html {
   align-items: center;
   gap: 8px;
 }
+.vergex-page-identity .vergex-page-actions {
+  margin-left: auto;
+}
 .vergex-page-tabs {
   display: flex;
   gap: 4px;
-  margin: -8px 0 24px;
+  margin-bottom: 16px;
   border-bottom: 1px solid var(--line);
   /* The active underline overlaps the border by 1px; clip it vertically. */
   overflow-x: auto;
@@ -453,16 +488,19 @@ html {
     padding: 10px;
   }
   .vergex-page {
-    padding-top: 24px;
+    padding-top: 16px;
   }
-  .vergex-page-header {
-    margin-bottom: 20px;
+  .vergex-page-leading {
+    width: 100%;
   }
-  .vergex-page-title h1 {
-    font-size: 24px;
+  .vergex-page-bar .vergex-page-actions {
+    flex: 1 1 100%;
+    justify-content: flex-end;
   }
-  .vergex-page-title p {
-    font-size: 13px;
+  .vergex-page-meta {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
   }
 }
 
@@ -474,9 +512,6 @@ html {
   background: var(--canvas);
   font-family: var(--font-sans);
   font-size: 14px;
-}
-.vergex-shell .planning-chart {
-  height: clamp(400px, calc(100dvh - 420px), 660px);
 }
 .planning-chart-root {
   display: flex;

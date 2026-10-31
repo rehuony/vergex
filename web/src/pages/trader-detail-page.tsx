@@ -7,18 +7,22 @@ import { api } from '@/api'
 import { confirmToast } from '@/components/common/notify'
 import { Page, type PageTab } from '@/components/common/page'
 import { Panel, PanelState } from '@/components/common/panel'
+import { SettingsLink } from '@/components/settings/settings-link'
 import { DecisionFunnel } from '@/components/trader/decision-funnel'
 import { DecisionLog } from '@/components/trader/decision-log'
 import { EdgeProfile } from '@/components/trader/edge-profile'
 import { EquityCurve } from '@/components/trader/equity-curve'
 import { GridRiskPanel } from '@/components/trader/grid-risk-panel'
 import { OpenPositions } from '@/components/trader/open-positions'
-import { RecentCloses } from '@/components/trader/recent-closes'
+import {
+  CLOSES_PAGE_SIZE,
+  RecentCloses,
+} from '@/components/trader/recent-closes'
 import { StartTraderDialog } from '@/components/trader/start-trader-dialog'
 import { SymbolBreakdown } from '@/components/trader/symbol-breakdown'
 import { TraderBanners } from '@/components/trader/trader-banners'
 import { TraderConfigModal } from '@/components/trader/trader-config-modal'
-import { parseScanMinutes } from '@/components/trader/trader-format'
+import { parseScanMinutes } from '@/utils/trader-format'
 import { TraderMetrics } from '@/components/trader/trader-metrics'
 import { TraderOrders } from '@/components/trader/trader-orders'
 import { useTraderData } from '@/components/trader/use-trader-data'
@@ -27,12 +31,17 @@ import {
   getExchangeDisplayName,
   getTraderModelLabel,
 } from '@/constants/model-providers'
-import { buildTraderPath, ROUTES } from '@/constants/route-paths'
+import {
+  buildStrategyPath,
+  buildTraderPath,
+  ROUTES,
+} from '@/constants/route-paths'
 import { useLanguage } from '@/contexts/language-context'
 import { useExchangeConfigs, useModelConfigs } from '@/hooks/use-connections'
 import { t } from '@/i18n/translations'
 import type { CreateTraderRequest, TraderConfigData, TraderInfo } from '@/types'
 import { cn } from '@/utils/cn'
+import { pollEvery } from '@/utils/poll'
 import { findTraderBySlug, getTraderSlug } from '@/utils/trader-slug'
 
 function TraderSections({
@@ -45,25 +54,30 @@ function TraderSections({
   const { language } = useLanguage()
   const id = trader.trader_id
   const { status, account, positions } = useTraderData(id)
+  const { data: storedMetrics } = useSWR(
+    'trader-metrics',
+    () => api.getTraderMetrics(true),
+    pollEvery(30000)
+  )
   const { data: stats } = useSWR(
     ['full-stats', id],
     () => api.getFullStats(id, true),
-    { refreshInterval: 30000, shouldRetryOnError: false }
+    pollEvery(30000)
   )
-  const { data: history } = useSWR(
+  const { data: history, error: historyError } = useSWR(
     ['pos-history', id],
-    () => api.getPositionHistory(id, 50, true),
-    { refreshInterval: 60000, shouldRetryOnError: false }
+    () => api.getPositionHistory(id, CLOSES_PAGE_SIZE, true),
+    pollEvery(60000)
   )
   const { data: config } = useSWR(
     ['trader-config', id],
     () => api.getTraderConfig(id, true),
-    { refreshInterval: 120000, shouldRetryOnError: false }
+    pollEvery(120000)
   )
   const { data: latest } = useSWR(
     ['decisions-latest', id],
     () => api.getLatestDecisions(id, 1, true),
-    { refreshInterval: 30000, shouldRetryOnError: false }
+    pollEvery(30000)
   )
   const latestDecision = latest?.[0]
   const scanMinutes =
@@ -80,6 +94,8 @@ function TraderSections({
         <>
           <TraderMetrics
             account={account.data}
+            accountFailed={Boolean(account.error)}
+            stored={storedMetrics?.[id]}
             stats={stats}
             positions={positions.data}
             running={status.data?.is_running}
@@ -107,7 +123,12 @@ function TraderSections({
             failed={Boolean(positions.error)}
             language={language}
           />
-          <RecentCloses trades={history?.positions} language={language} />
+          <RecentCloses
+            traderId={id}
+            trades={history?.positions}
+            failed={Boolean(historyError)}
+            language={language}
+          />
         </>
       )}
       {section === 'decisions' && (
@@ -151,7 +172,7 @@ export function TraderDetailPage() {
   const { data: config } = useSWR(
     trader ? ['trader-config', trader.trader_id] : null,
     () => api.getTraderConfig(trader!.trader_id, true),
-    { refreshInterval: 120000, shouldRetryOnError: false }
+    pollEvery(120000)
   )
   const scanMinutes = config?.scan_interval_minutes
   const [editing, setEditing] = useState<TraderConfigData | null>(null)
@@ -160,8 +181,8 @@ export function TraderDetailPage() {
 
   const back = (
     <Link
-      to={ROUTES.autopilot}
-      aria-label={t('autopilotNav', language)}
+      to={ROUTES.traders}
+      aria-label={t('tradersNav', language)}
       className="-ml-1 grid size-9 shrink-0 place-items-center rounded-lg text-vergex-text-muted hover:bg-vergex-bg hover:text-vergex-text"
     >
       <ChevronLeft size={20} aria-hidden="true" />
@@ -170,14 +191,7 @@ export function TraderDetailPage() {
 
   if (!trader) {
     return (
-      <Page
-        title={
-          <span className="flex items-center gap-1">
-            {back}
-            {t('autopilotNav', language)}
-          </span>
-        }
-      >
+      <Page title={t('tradersNav', language)} detail={{ back }}>
         <Panel>
           {!traders && !error ? (
             <PanelState role="status">{t('loading', language)}</PanelState>
@@ -266,7 +280,7 @@ export function TraderDetailPage() {
       await api.deleteTrader(id)
       toast.success(t('aiTradersToast.deleted', language))
       await mutate()
-      navigate(ROUTES.autopilot)
+      navigate(ROUTES.traders)
     } catch {
       toast.error(t('deleteTraderFailed', language))
     }
@@ -280,19 +294,18 @@ export function TraderDetailPage() {
   const description = [modelLabel, accountLabel, trader.strategy_name]
     .filter(Boolean)
     .join(' · ')
+  const metaLink = 'hover:text-vergex-text hover:underline'
 
   return (
     <>
       <Page
-        title={
-          <span className="flex min-w-0 items-center gap-1">
-            {back}
-            <span className="truncate" title={trader.trader_name}>
-              {trader.trader_name}
-            </span>
+        title={trader.trader_name}
+        detail={{
+          back,
+          status: (
             <span
               className={cn(
-                'ml-2 shrink-0 rounded-md px-2 py-0.5 text-xs font-medium',
+                'shrink-0 rounded-md px-2 py-0.5 text-xs font-medium',
                 running
                   ? 'bg-vergex-success/10 text-vergex-success'
                   : 'bg-vergex-bg text-vergex-text-muted'
@@ -300,9 +313,30 @@ export function TraderDetailPage() {
             >
               {running ? label('running') : label('stopped')}
             </span>
-          </span>
-        }
-        description={description}
+          ),
+          meta: (
+            <span title={description}>
+              <SettingsLink section="models" className={metaLink}>
+                {modelLabel}
+              </SettingsLink>
+              {' · '}
+              <SettingsLink section="exchanges" className={metaLink}>
+                {accountLabel}
+              </SettingsLink>
+              {trader.strategy_id && trader.strategy_name && (
+                <>
+                  {' · '}
+                  <Link
+                    to={buildStrategyPath(trader.strategy_id)}
+                    className={metaLink}
+                  >
+                    {trader.strategy_name}
+                  </Link>
+                </>
+              )}
+            </span>
+          ),
+        }}
         tabs={tabs}
         actions={
           <>

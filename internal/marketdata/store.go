@@ -1,23 +1,20 @@
-// Package marketdata keeps candles and derivatives data in a database of its
-// own and fills it within Binance's rate limits. Calculations read only this
-// local store; only the hydrator talks to the exchange.
+// Package marketdata keeps candles and derivatives data in tables of its own and
+// fills them within Binance's rate limits. Calculations read only this local
+// store; only the hydrator talks to the exchange.
 package marketdata
 
 import (
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"vergex/internal/provider/binance"
 
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
-	"gorm.io/gorm/logger"
 )
 
 const ExchangeBinance = "binance"
@@ -143,38 +140,45 @@ var (
 	TopIntervals   = []string{"1h", "4h", "1d"}
 )
 
+// intervalMillis holds what can be kept locally. Trading and charts can ask for any
+// of these; the lists above are what collection keeps on its own.
 var intervalMillis = map[string]int64{
+	"1m":  60 * 1000,
+	"3m":  3 * 60 * 1000,
+	"5m":  5 * 60 * 1000,
 	"15m": 15 * 60 * 1000,
+	"30m": 30 * 60 * 1000,
 	"1h":  60 * 60 * 1000,
+	"2h":  2 * 60 * 60 * 1000,
 	"4h":  4 * 60 * 60 * 1000,
+	"6h":  6 * 60 * 60 * 1000,
+	"8h":  8 * 60 * 60 * 1000,
+	"12h": 12 * 60 * 60 * 1000,
 	"1d":  24 * 60 * 60 * 1000,
 }
 
 // IntervalMillis returns an interval's length, or 0 if it is not supported.
 func IntervalMillis(interval string) int64 { return intervalMillis[interval] }
 
+// IsHistoryInterval reports an interval kept for the long term, which backtests
+// use and deep history can be loaded for.
+func IsHistoryInterval(interval string) bool {
+	return slices.Contains(WatchIntervals, interval)
+}
+
+// shortCandleKeep is how long candles under 15 minutes are kept. Trading only reads
+// the recent ones, and over a year they would dwarf everything else.
+const shortCandleKeep = 90 * 24 * time.Hour
+
+var shortIntervals = []string{"1m", "3m", "5m"}
+
 // Store is the market database.
 type Store struct {
 	db *gorm.DB
 }
 
-// Open opens the SQLite market database at path, separate from the main one so
-// bulk candle writes never queue up orders and positions. WAL and
-// synchronous=NORMAL suit data that can be fetched again.
-func Open(path string) (*Store, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, fmt.Errorf("create market data directory: %w", err)
-	}
-	dsn := "file:" + path + "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000&_txlock=immediate"
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		return nil, fmt.Errorf("open market database: %w", err)
-	}
-	return NewStore(db)
-}
-
-// NewStore prepares the market tables on a connection, including a PostgreSQL
-// one kept apart from the main connection pool.
+// NewStore prepares the market tables on a connection, normally a pool kept apart
+// from the main one so bulk candle writes never queue up orders and positions.
 func NewStore(db *gorm.DB) (*Store, error) {
 	if err := db.AutoMigrate(&Series{}, &Candle{}, &Gap{}, &Derivative{}, &Settings{}); err != nil {
 		return nil, fmt.Errorf("migrate market tables: %w", err)
@@ -281,8 +285,24 @@ func (s *Store) EarliestDue() (int64, error) {
 	return *earliest, nil
 }
 
-func (s *Store) saveSeries(series *Series) error {
-	return s.db.Save(series).Error
+// saveSeries stores a series. The water mark only moves forward: the hydrator and
+// the stream writer work side by side, and whichever holds the older copy must not
+// undo the other.
+func (s *Store) saveSeries(series *Series) error { return saveSeriesOn(s.db, series) }
+
+func saveSeriesOn(db *gorm.DB, series *Series) error {
+	return db.Model(&Series{}).Where("id = ?", series.ID).Updates(map[string]any{
+		"tier":             series.Tier,
+		"status":           series.Status,
+		"priority":         series.Priority,
+		"next_due_at":      series.NextDueAt,
+		"first_open_time":  series.FirstOpenTime,
+		"last_closed_time": gorm.Expr("GREATEST(last_closed_time, ?)", series.LastClosedTime),
+		"fail_count":       series.FailCount,
+		"last_error":       series.LastError,
+		"last_opened_at":   series.LastOpenedAt,
+		"updated_at":       series.UpdatedAt,
+	}).Error
 }
 
 func toRow(seriesID int64, c binance.Candle) Candle {
@@ -304,7 +324,7 @@ func (s *Store) appendCandles(series *Series, candles []binance.Candle, gap *Gap
 				return err
 			}
 		}
-		return tx.Save(series).Error
+		return saveSeriesOn(tx, series)
 	})
 }
 
@@ -317,6 +337,12 @@ func insertCandles(tx *gorm.DB, seriesID int64, candles []binance.Candle) error 
 		rows = append(rows, toRow(seriesID, candle))
 	}
 	return tx.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(rows, 500).Error
+}
+
+// purgeShortCandles removes candles under 15 minutes from before the cutoff.
+func (s *Store) purgeShortCandles(before int64) error {
+	return s.db.Where("open_time < ? AND series_id IN (?)", before,
+		s.db.Model(&Series{}).Select("id").Where("interval_name IN ?", shortIntervals)).Delete(&Candle{}).Error
 }
 
 // markOpened records that the user asked for a series.

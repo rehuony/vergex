@@ -78,7 +78,6 @@ export function FAQLayout() {
   return (
     <Page
       title={t('helpNav', language)}
-      actionsClassName="max-md:w-full"
       actions={
         <div className="w-full md:w-72">
           <FAQSearchBar

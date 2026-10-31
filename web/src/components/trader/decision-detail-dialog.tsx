@@ -8,7 +8,7 @@ import { StoredText } from '@/components/common/stored-text'
 import { cn } from '@/utils/cn'
 import { LogLine } from './decision-log'
 import { actionSide, fmtDateTime } from './decision-format'
-import { baseLabel, fmtPx } from './trader-format'
+import { baseLabel, fmtPx } from '@/utils/trader-format'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (

@@ -1,6 +1,6 @@
 # Frontier
 
-Frontier is a user-initiated planning workspace: you discuss a trade with the AI on a live chart, compare entry plans, and approve one plan for live execution. It is not a continuously running strategy (that is Autopilot) and not a backtester.
+Frontier is a user-initiated planning workspace: you discuss a trade with the AI on a live chart, compare entry plans, and approve one plan for live execution. It is not a continuously running strategy (that is a trader) and not a backtester.
 
 ## Workflow
 
@@ -22,6 +22,8 @@ The chart and the assistant fill the first screen. Below them:
 | Positions and orders | The selected account's positions and open orders, closing a position, and manual entry |
 | History | Finished plans with what each realized, earlier drafts and past conversations |
 
+The address says what is open, as `/frontier?venue=&symbol=&account=&plan=&tab=`, so a view can be linked to and survives a reload. `plan` opens that plan's own market and account and fits it on the chart. What the address cannot use is ignored.
+
 A plan's realized P/L comes from the exchange's closed P/L for the account, read only while History is open. A close counts for a plan when it is on the same symbol and within the plan's lifetime, so a manual close between plans counts for none. It looks back 30 days and at the exchange's own record limit (500 on Binance, 100 on OKX); a plan outside that shows a dash.
 
 ## Entry structures and limits
@@ -36,7 +38,7 @@ A plan's realized P/L comes from the exchange's closed P/L for the account, read
 - Leverage 1–20x (default 5x), subject to venue limits.
 - Every child and the aggregate must pass exact-decimal fee/slippage, net reward/risk, tick/step, minimum quantity, minimum notional, budget and book-liquidity checks.
 - With an account connected, sizing is automatic: 1% of equity is the planned stop-risk ceiling and 95% of free margin, after reserving estimated costs, sets the leveraged notional ceiling. Venue minimums, liquidity and rounding can reduce size. A stop that would consume 80% of initial margin is rejected.
-- Equity, available balance, fees, a fresh order book and account identity are rechecked at execution. Existing positions or pending orders on the symbol block execution. An account leased by an unresolved plan cannot start an Autopilot trader.
+- Equity, available balance, fees, a fresh order book and account identity are rechecked at execution. Existing positions or pending orders on the symbol block execution. An account leased by an unresolved plan cannot start a trader.
 
 ## Protection and expiry
 
@@ -61,8 +63,12 @@ A plan's realized P/L comes from the exchange's closed P/L for the account, read
 
 ## Chart
 
-The chart (`web/src/components/planning/planning-chart/`, lightweight-charts) loads history from `/api/planning/candles`, streams updates from `/api/planning/feed` (SSE, every ~3 s), loads older candles when scrolling back and refetches history instead of drawing across gaps. It draws plan levels and risk/reward zones, comparison lanes, and AI drawings (`horizontal_line`, `trend_line`, `rectangle`).
+The chart (`web/src/components/planning/planning-chart/`, lightweight-charts) loads history from `/api/planning/candles`, streams updates from `/api/planning/feed` (SSE: live candles from the market stream, or polling every 3 seconds while no stream is up), loads older candles when scrolling back and refetches history instead of drawing across gaps. It draws plan levels and risk/reward zones, comparison lanes, and AI drawings (`horizontal_line`, `trend_line`, `rectangle`).
+
+The **Forecast** switch on the chart overlays this coin's [forecast](forecast.md) under the strategy in use, off until asked for since this chart is for live trades, and remembered on this browser. It draws the same simulated candles as the Forecast page, with the score, the hit rate and how often price rose anyway above them. An OKX USDT swap shows the Binance coin's forecast and says so, since Forecast reads only Binance. Below 15m, or on any other market, it says why there is nothing to show. A coin that is not tracked starts fetching when the switch is on. Comparing plans hides the overlay, and it never moves plan levels or zones, nor does it reach the assistant.
+
+Frontier reads one read-only endpoint, `/api/forecast/overlay/:symbol`, and choosing a strategy stays on the Forecast page.
 
 ## Verification boundary
 
-Automated tests use local HTTP exchange fixtures and temporary databases, never funded accounts or real orders. Passing tests do not prove that an account has trading permission or that a live order succeeds; validate with a small account (exchange testnets are not supported).
+Automated tests use local HTTP exchange fixtures and temporary database schemas, never funded accounts or real orders. Passing tests do not prove that an account has trading permission or that a live order succeeds; validate with a small account (exchange testnets are not supported).

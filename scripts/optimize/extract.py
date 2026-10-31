@@ -1,4 +1,4 @@
-"""Extract a replayable dataset from data/data.db.
+"""Extract a replayable dataset from the PostgreSQL database.
 
 Reads decision_records and emits three CSVs under scripts/optimize/data/:
   cycles.csv    - one row per decision cycle (timestamp, recorded equity)
@@ -6,7 +6,8 @@ Reads decision_records and emits three CSVs under scripts/optimize/data/:
   candles.csv   - deduplicated per-symbol 15m OHLCV parsed from input prompts
   prices.csv    - per-cycle current_price for every symbol present in the prompt
 
-Run:  .venv/bin/python extract.py [--db ../../data/data.db]
+Run:  .venv/bin/python extract.py --dsn postgresql://vergex:PASSWORD@127.0.0.1:5432/vergex
+Needs the psycopg package.
 """
 
 import argparse
@@ -14,8 +15,9 @@ import csv
 import json
 import os
 import re
-import sqlite3
 from datetime import datetime, timedelta, timezone
+
+import psycopg
 
 SECTION_RE = re.compile(r"^=== (\S+) Market Data ===$")
 CURRENT_PRICE_RE = re.compile(r"^current_price = ([\d.eE+-]+)$")
@@ -101,12 +103,12 @@ def parse_decisions(raw):
 def main():
     ap = argparse.ArgumentParser()
     here = os.path.dirname(os.path.abspath(__file__))
-    ap.add_argument("--db", default=os.path.join(here, "..", "..", "data", "data.db"))
+    ap.add_argument("--dsn", required=True, help="PostgreSQL connection URL")
     ap.add_argument("--out", default=os.path.join(here, "data"))
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
-    conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
+    conn = psycopg.connect(args.dsn)
     rows = conn.execute(
         "SELECT id, timestamp, input_prompt, decisions FROM decision_records"
         " ORDER BY timestamp"

@@ -4,98 +4,96 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 	"vergex/internal/logger"
-	"vergex/internal/provider/coinank/coinank_api"
-	"vergex/internal/provider/coinank/coinank_enum"
+	"vergex/internal/provider/binance"
+	"vergex/internal/provider/okx"
 )
 
-// Note: Kline data now uses free/open API (coinank_api.Kline) which doesn't require authentication
+// LiveSource supplies candles and prices from the live streams and local history.
+type LiveSource interface {
+	// Recent returns Binance's latest candles, oldest first; the last may still be open.
+	Recent(ctx context.Context, symbol, interval string, limit int) ([]Kline, error)
+	// WatchMark keeps a symbol's mark price coming for a few minutes.
+	WatchMark(exchange, symbol string)
+	// Mark returns a symbol's mark price if a stream delivered it just now.
+	Mark(exchange, symbol string) (float64, bool)
+}
 
-// getKlinesFromCoinAnk fetches kline data from CoinAnk API (replacement for WSMonitorCli)
-func getKlinesFromCoinAnk(symbol, interval, exchange string, limit int) ([]Kline, error) {
-	// Map interval string to coinank enum
-	var coinankInterval coinank_enum.Interval
-	switch interval {
-	case "1m":
-		coinankInterval = coinank_enum.Minute1
-	case "3m":
-		coinankInterval = coinank_enum.Minute3
-	case "5m":
-		coinankInterval = coinank_enum.Minute5
-	case "15m":
-		coinankInterval = coinank_enum.Minute15
-	case "30m":
-		coinankInterval = coinank_enum.Minute30
-	case "1h":
-		coinankInterval = coinank_enum.Hour1
-	case "2h":
-		coinankInterval = coinank_enum.Hour2
-	case "4h":
-		coinankInterval = coinank_enum.Hour4
-	case "6h":
-		coinankInterval = coinank_enum.Hour6
-	case "8h":
-		coinankInterval = coinank_enum.Hour8
-	case "12h":
-		coinankInterval = coinank_enum.Hour12
-	case "1d":
-		coinankInterval = coinank_enum.Day1
-	case "3d":
-		coinankInterval = coinank_enum.Day3
-	case "1w":
-		coinankInterval = coinank_enum.Week1
-	default:
-		return nil, fmt.Errorf("unsupported interval: %s", interval)
+const klineReadWait = 20 * time.Second
+
+var (
+	liveSource atomic.Pointer[LiveSource]
+	// restKlines answers until a LiveSource is set, or if there is none.
+	restKlines = binance.NewDataClient(binance.NewLimiter())
+)
+
+// SetLiveSource says where candles and live prices come from from now on.
+func SetLiveSource(source LiveSource) { liveSource.Store(&source) }
+
+// WatchMark keeps a symbol's live mark price coming for a few minutes.
+func WatchMark(exchange, symbol string) {
+	if source := liveSource.Load(); source != nil {
+		(*source).WatchMark(exchange, symbol)
 	}
+}
 
-	// Map exchange string to coinank enum
-	var coinankExchange coinank_enum.Exchange
-	switch strings.ToLower(exchange) {
-	case "okx":
-		coinankExchange = coinank_enum.Okex
-	default:
-		// Binance data for Binance and any other value
-		coinankExchange = coinank_enum.Binance
+// MarkPrice returns a symbol's live mark price, if there is a current one.
+func MarkPrice(exchange, symbol string) (float64, bool) {
+	if source := liveSource.Load(); source != nil {
+		return (*source).Mark(exchange, symbol)
 	}
+	return 0, false
+}
 
-	// Call CoinAnk free/open API (no authentication required)
-	ctx := context.Background()
-	ts := time.Now().UnixMilli()
-	// Use "To" side to search backward from current time (get historical klines)
-	coinankKlines, err := coinank_api.Kline(ctx, symbol, coinankExchange, ts, coinank_enum.To, limit, coinankInterval)
-	if err != nil || len(coinankKlines) == 0 {
-		// If exchange-specific data fails or returns empty, fallback to Binance
-		if coinankExchange != coinank_enum.Binance {
-			if err != nil {
-				logger.Warnf("⚠️ CoinAnk %s data failed, falling back to Binance: %v", exchange, err)
-			} else {
-				logger.Warnf("⚠️ CoinAnk %s %s data empty for %s, falling back to Binance", exchange, interval, symbol)
-			}
-			coinankKlines, err = coinank_api.Kline(ctx, symbol, coinank_enum.Binance, ts, coinank_enum.To, limit, coinankInterval)
-			if err != nil {
-				return nil, fmt.Errorf("CoinAnk API error (fallback): %w", err)
-			}
-		} else if err != nil {
-			return nil, fmt.Errorf("CoinAnk API error: %w", err)
+// getKlines returns a symbol's latest candles, the last possibly still open. OKX
+// traders see OKX's candles, read directly since they are cheap and always current,
+// and Binance's if OKX has none.
+func getKlines(symbol, interval, exchange string, limit int) ([]Kline, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), klineReadWait)
+	defer cancel()
+	if strings.EqualFold(exchange, "okx") {
+		candles, err := okx.Klines(ctx, symbol, interval, limit)
+		if err == nil && len(candles) > 0 {
+			return fromOKX(candles, interval), nil
 		}
+		logger.Warnf("⚠️ OKX %s candles for %s unavailable, falling back to Binance: %v", interval, symbol, err)
 	}
+	if source := liveSource.Load(); source != nil {
+		return (*source).Recent(ctx, symbol, interval, limit)
+	}
+	candles, err := restKlines.TradingKlines(ctx, symbol, interval, limit)
+	if err != nil {
+		return nil, err
+	}
+	return FromBinance(candles, interval), nil
+}
 
-	// Convert coinank kline format to market.Kline format
-	klines := make([]Kline, len(coinankKlines))
-	for i, ck := range coinankKlines {
+// FromBinance converts candles read from the exchange.
+func FromBinance(candles []binance.Candle, interval string) []Kline {
+	step := int64(parseTimeframeToMinutes(interval)) * 60 * 1000
+	klines := make([]Kline, len(candles))
+	for i, c := range candles {
 		klines[i] = Kline{
-			OpenTime:  ck.StartTime,
-			Open:      ck.Open,
-			High:      ck.High,
-			Low:       ck.Low,
-			Close:     ck.Close,
-			Volume:    ck.Volume,
-			CloseTime: ck.EndTime,
+			OpenTime: c.OpenTime, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close, Volume: c.Volume,
+			CloseTime: c.OpenTime + step - 1, QuoteVolume: c.QuoteVolume, Trades: int(c.Trades),
+			TakerBuyBaseVolume: c.TakerBuyVolume, TakerBuyQuoteVolume: c.TakerBuyQuote,
 		}
 	}
+	return klines
+}
 
-	return klines, nil
+func fromOKX(candles []okx.Candle, interval string) []Kline {
+	step := int64(parseTimeframeToMinutes(interval)) * 60 * 1000
+	klines := make([]Kline, len(candles))
+	for i, c := range candles {
+		klines[i] = Kline{
+			OpenTime: c.OpenTime, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close, Volume: c.Volume,
+			CloseTime: c.OpenTime + step - 1, QuoteVolume: c.QuoteVolume,
+		}
+	}
+	return klines
 }
 
 // calculateTimeframeSeries calculates series data for a single timeframe
@@ -354,7 +352,7 @@ func GetBoxData(symbol string) (*BoxData, error) {
 	var klines []Kline
 	var err error
 
-	klines, err = getKlinesFromCoinAnk(symbol, "1h", "binance", LongBoxPeriod)
+	klines, err = getKlines(symbol, "1h", "binance", LongBoxPeriod)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to get 1h klines: %w", err)

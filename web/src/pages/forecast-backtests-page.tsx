@@ -5,7 +5,6 @@ import { api } from '@/api'
 import { FORECAST_INTERVALS, type BacktestRun } from '@/api/forecast'
 import { SymbolsField } from '@/components/common/form-fields'
 import { notify } from '@/components/common/notify'
-import { Page } from '@/components/common/page'
 import { Panel, PanelState } from '@/components/common/panel'
 import { Segmented } from '@/components/common/segmented'
 import {
@@ -18,8 +17,8 @@ import {
   fmtPct,
   fmtTime,
 } from '@/components/forecast/forecast-format'
-import { forecastTabs } from '@/components/forecast/forecast-tabs'
-import { SettingActions, SettingRow } from '@/components/settings/setting-row'
+import { ForecastFrame } from '@/components/forecast/forecast-frame'
+import { SettingActions, SettingRow } from '@/components/common/setting-row'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AppSelect } from '@/components/ui/select'
@@ -41,9 +40,9 @@ export function ForecastBacktestsPage() {
     t(`forecast.${key}`, language, params)
   const [params] = useSearchParams()
 
-  const { data: versions } = useSWR(
-    'forecast-versions',
-    api.getForecastVersions,
+  const { data: strategies } = useSWR(
+    'forecast-strategies',
+    api.getForecastStrategies,
     { revalidateOnFocus: false }
   )
   const { data: settings } = useSWR(
@@ -67,7 +66,9 @@ export function ForecastBacktestsPage() {
     }
   )
 
-  const [versionId, setVersionId] = useState(Number(params.get('version')) || 0)
+  const [strategyId, setStrategyId] = useState(
+    Number(params.get('strategy')) || 0
+  )
   const [symbols, setSymbols] = useState<string[] | null>(null)
   const [intervals, setIntervals] = useState<string[]>(['1h', '4h'])
   const [range, setRange] = useState<Range>('12')
@@ -75,7 +76,7 @@ export function ForecastBacktestsPage() {
   const [openRun, setOpenRun] = useState<number | null>(null)
 
   const chosenSymbols = symbols ?? settings?.watchlist.slice(0, 5) ?? []
-  const version = versionId || versions?.active_version_id || 0
+  const strategy = strategyId || strategies?.active_strategy_id || 0
 
   const coverageKey =
     chosenSymbols.length && intervals.length
@@ -111,7 +112,7 @@ export function ForecastBacktestsPage() {
     setBusy(true)
     try {
       const started = await api.startForecastBacktest({
-        version_id: version,
+        strategy_id: strategy,
         symbols: chosenSymbols,
         intervals,
         from: wanted,
@@ -145,6 +146,9 @@ export function ForecastBacktestsPage() {
   }
 
   const list: BacktestRun[] = runs?.backtests ?? []
+  const strategyNames = Object.fromEntries(
+    (strategies?.strategies ?? []).map((item) => [item.id, item.name])
+  )
   const shown =
     list.find((item) => item.id === openRun) ??
     list.find((item) => item.status === 'finished')
@@ -163,26 +167,20 @@ export function ForecastBacktestsPage() {
       : undefined
 
   return (
-    <Page
-      title={t('forecastNav', language)}
-      description={label('backtestsDescription')}
-      tabs={forecastTabs(language)}
-    >
+    <ForecastFrame language={language}>
       <div className="flex min-w-0 flex-col gap-4">
         <Panel title={label('newBacktest')}>
           <div className="border-t border-[var(--line)] px-4">
-            <SettingRow label={label('version')} htmlFor="bt-version">
+            <SettingRow label={label('strategy')} htmlFor="bt-strategy">
               <AppSelect
-                id="bt-version"
+                id="bt-strategy"
                 className="h-9 max-sm:h-10"
-                value={version}
-                options={(versions?.versions ?? []).map((item) => ({
+                value={strategy}
+                options={(strategies?.strategies ?? []).map((item) => ({
                   value: item.id,
-                  label:
-                    label('versionName', { id: item.id }) +
-                    (item.note ? ` · ${item.note}` : ''),
+                  label: item.name,
                 }))}
-                onChange={(id) => setVersionId(Number(id))}
+                onChange={(id) => setStrategyId(Number(id))}
               />
             </SettingRow>
             <SettingRow label={label('coins')} htmlFor="bt-symbols">
@@ -229,10 +227,7 @@ export function ForecastBacktestsPage() {
                 onChange={setRange}
               />
             </SettingRow>
-            <SettingActions
-              message={message}
-              messageTone={backfilling ? 'muted' : 'danger'}
-            >
+            <SettingActions message={message} messageTone="muted">
               {missing.length > 0 && (
                 <Button
                   type="button"
@@ -253,7 +248,7 @@ export function ForecastBacktestsPage() {
                 disabled={
                   busy ||
                   running ||
-                  !version ||
+                  !strategy ||
                   chosenSymbols.length === 0 ||
                   intervals.length === 0
                 }
@@ -306,7 +301,7 @@ export function ForecastBacktestsPage() {
                       >
                         <td className={cellClass}>
                           <div className="font-medium text-vergex-text">
-                            {label('versionName', { id: item.version_id })}
+                            {strategyNames[item.strategy_id] ?? '—'}
                           </div>
                           <div className="text-xs text-vergex-text-muted">
                             {fmtTime(item.created_at)}
@@ -387,6 +382,6 @@ export function ForecastBacktestsPage() {
           />
         )}
       </div>
-    </Page>
+    </ForecastFrame>
   )
 }

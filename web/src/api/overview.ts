@@ -15,6 +15,7 @@ export interface OverviewModel {
   name: string
   provider: string
   model?: string
+  host?: string
 }
 
 export interface OverviewTrader {
@@ -34,14 +35,6 @@ export interface OverviewRun {
   updated_at: string
 }
 
-export type ServiceState = 'running' | 'off' | 'degraded' | 'failed'
-
-export interface OverviewService {
-  name: string
-  state: ServiceState
-  detail?: string
-}
-
 export interface OverviewPosition {
   exchange_id: string
   /** Empty when Frontier manages the position. */
@@ -56,24 +49,13 @@ export interface OverviewPosition {
   leverage: number
 }
 
-export interface OverviewOrder {
-  /** Empty for a Frontier order. */
-  trader_id?: string
-  symbol: string
-  action: string
-  status: string
-  quantity: number
-  price: number
-  /** Epoch milliseconds. */
-  created_at: number
-}
-
 export interface OverviewAttention {
   kind: string
   name?: string
   detail?: string
   trader_id?: string
   exchange_id?: string
+  plan_id?: string
 }
 
 export interface Overview {
@@ -82,12 +64,14 @@ export interface Overview {
   models: OverviewModel[]
   traders: OverviewTrader[]
   runs: OverviewRun[]
-  services: OverviewService[]
+  /** Absent when market data is unavailable. */
+  market?: { coins: number; live: boolean }
+  /** The forecast strategy in use. Absent when Forecast is unavailable. */
+  forecast?: { name: string; coins: number }
+  telegram_bound: boolean
   positions: OverviewPosition[]
   positions_partial: boolean
-  open_orders: number | null
   realized_today: number | null
-  orders: OverviewOrder[]
   attention: OverviewAttention[]
 }
 

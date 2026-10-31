@@ -9,7 +9,7 @@ vergex is a personal, self-hosted AI trading system, forked from an upstream pro
 - **Markets:** crypto only, on Binance USDT-M futures and OKX USDT perpetuals.
 - **Models:** direct calls with your own API key to DeepSeek, OpenAI, Claude, Qwen, Gemini, Grok, Kimi or MiniMax, with an optional custom base URL. There is no paid gateway, paid data source, referral tagging or telemetry.
 - **Users:** single user. The first account registered is the only one.
-- **Features:** Autopilot (automated trading), Frontier (AI-assisted planning of individual trades), grid trading, a Telegram assistant and Forecast (experimental signals, not connected to trading).
+- **Features:** Traders (automated trading on a strategy), Frontier (AI-assisted planning of individual trades), grid trading, a Telegram assistant and Forecast (experimental signals, not connected to trading).
 - **Deployment:** local builds only, with Docker Compose and the Makefile. Remote access adds nginx on the host: see [docs/deployment.md](docs/deployment.md).
 
 ## Commands
@@ -17,9 +17,12 @@ vergex is a personal, self-hosted AI trading system, forked from an upstream pro
 Run these after every change:
 
 ```bash
+make run-postgresql   # the Go tests need PostgreSQL
 go build ./... && go vet ./... && go test ./...
 cd web && pnpm build && pnpm test && pnpm lint
 ```
+
+A Go test that needs a database uses `testdb.Open(t)` or `storetest.New(t)`, which give it a schema of its own in the `<DB_NAME>_test` database of the PostgreSQL in `.env`, or on `VERGEX_TEST_DATABASE_URL`. It fails rather than skips when there is no database.
 
 The Makefile is the entry point for everything else, and `make help` lists it. Targets come in pairs (`run-backend`/`run-frontend`, `build-*`, `test-*`, `lint-*`, `fmt-*`, `deps-*`), and `make dev`, `build`, `test` and `lint` cover both sides.
 
@@ -36,7 +39,7 @@ This is a clean rewrite with no old deployments or data to support, so the code 
 - New Binance and OKX orders use the `vergex` clientOrderId prefix. Lookups of persisted Frontier orders accept only that prefix; any other is a route mismatch.
 - Position history and statistics query the current trader ID only and do not chain other traders' records.
 - `NormalizeProductSchema` turns unknown or removed coin source types into `static`. Nothing migrates them at startup.
-- The database only migrates incrementally, with GORM AutoMigrate.
+- PostgreSQL is the only database. It only migrates incrementally, with GORM AutoMigrate.
 - Use `vergex` in all new code, copy, logs and storage keys. Upstream is named only in the README's License section, as AGPL requires of modified versions, and in the fork record ([docs/fork.md](docs/fork.md)).
 - Environment variables use the `VERGEX_*` prefix: `VERGEX_BIND_ADDRESS` (default `127.0.0.1`), `VERGEX_FRONTEND_PORT` (default 8000), and `VERGEX_BACKEND_PORT` (default 3000, used only when the backend port mapping is enabled).
 
@@ -53,15 +56,15 @@ This is a clean rewrite with no old deployments or data to support, so the code 
 
 ## Stack and runtime
 
-- **Backend:** Go (module `vergex`), Gin, GORM with SQLite (mattn/go-sqlite3, needs CGO) or PostgreSQL, Starlark for Frontier calculators. Logging is logrus, always through `internal/logger`.
+- **Backend:** Go (module `vergex`), Gin, GORM with PostgreSQL, Starlark for Frontier calculators. Logging is logrus, always through `internal/logger`.
 - **Frontend:** React 18, TypeScript, Vite, Tailwind v4, SWR, lightweight-charts, Vitest, ESLint with Prettier. The package manager is pnpm (`corepack enable`; the version is pinned in `web/package.json`).
 
 | Where | Backend | Frontend |
 | :---- | :------ | :------- |
 | Docker Compose | Service, container and image `vergex-backend`. Listens on 3000 (`API_SERVER_PORT`) in the container; not published on the host by default | Service, container and image `vergex-frontend`. nginx on port 80 serves static files and proxies `/api/`; published on `VERGEX_BIND_ADDRESS:VERGEX_FRONTEND_PORT` (default `127.0.0.1:8000`) |
-| Local development | `make run-backend` on 3000 | `make run-frontend` (Vite) on 8000, proxying `/api` to 3000 |
+| Local development | `make run-backend` on 3000, on PostgreSQL from `make run-postgresql` | `make run-frontend` (Vite) on 8000, proxying `/api` to 3000 |
 
-Both containers share the `vergex-network` network.
+Both containers and `vergex-postgres` share the `vergex-network` network. `.env` configures the database, which runs in that one container for `make up` and from source alike. `make up` keeps it on the internal network; `make run-postgresql` also publishes it on `127.0.0.1` at `DB_PORT` for the backend and tests running from source.
 
 ## Repository layout
 
@@ -71,7 +74,7 @@ Both containers share the `vergex-network` network.
 | `internal/` | All backend Go packages, private to this module under Go's `internal` rule |
 | `web/` | Frontend. The Frontier chart is `web/src/components/planning/planning-chart/`, on the surface shared with Forecast in `web/src/components/market-chart/`; the page's components are in `web/src/components/planning/` |
 | `docker/` | Dockerfiles for both images and the frontend container's `nginx.conf` |
-| `scripts/` | `env-keys.sh` generates keys for `make init` and `make regen-keys`; `optimize/` is an offline Autopilot parameter search in Python |
+| `scripts/` | `env-keys.sh` generates keys for `make init` and `make regen-keys`; `optimize/` is an offline strategy parameter search in Python |
 | `docs/` | Documentation |
 
 Packages under `internal/`:
@@ -81,15 +84,15 @@ Packages under `internal/`:
 | `api/` | All HTTP endpoints, JWT auth, rate limiting; `handler_planning*.go` serves Frontier |
 | `manager/` | Trader lifecycle: load from the database, assemble an AutoTrader, start and stop |
 | `trader/` | AutoTrader main loop (`auto_trader_*.go`), risk control, grid, position sync |
-| `trader/binance`, `trader/okx` | Exchange adapters for Autopilot orders and Frontier execution |
+| `trader/binance`, `trader/okx` | Exchange adapters for trader orders and Frontier execution |
 | `trader/execution`, `trader/types`, `trader/syncloop` | Execution order types, exchange interfaces, order sync loop |
 | `kernel/` | Strategy engine: coin selection, market data, system and user prompts, parsing and validating AI decisions; grid engine |
-| `market/` | Candles and indicators (CoinAnk free API, falling back to Binance) |
-| `provider/binance` | Rankings from Binance public data (volume, price change, open-interest change), crypto perpetuals only; a request budget (`limiter.go`) and candle and derivatives reads for local market data |
-| `provider/okx` | Tradable OKX USDT perpetuals, used to filter candidates for OKX traders |
-| `provider/coinank` | CoinAnk market data client (`coinank_api`) and enums (`coinank_enum`) |
-| `marketdata/` | Candles and derivatives in their own database (`market.db`): the hydrator fills them within the request budget, and everything else reads them locally |
-| `forecast/` | Forecast: `Evaluate` (factors, regime, score), versions, records, verification, calibration, alerts and backtests, in the market database |
+| `market/` | Candles and indicators for trading; reads a `LiveSource`, which `marketdata` provides |
+| `provider/binance` | Rankings from Binance public data (volume, price change, open-interest change), crypto perpetuals only; a request budget (`limiter.go`), candle and derivatives reads, and the market stream (`stream.go`) |
+| `provider/okx` | Tradable OKX USDT perpetuals, used to filter candidates for OKX traders; candles and the candle and mark price streams |
+| `provider/wsfeed` | One WebSocket connection to a changing set of topics, with what differs between exchanges behind a `Protocol` |
+| `marketdata/` | Live data and local candles. `Hub` holds the latest from the streams, `Writer` stores finished candles, `subscriptions` decides what the streams carry, and the hydrator fills the rest within the request budget. Candles and derivatives live in `market_*` tables on their own connection pool |
+| `forecast/` | Forecast: `Evaluate` (factors, regime, score), strategies, records, verification, calibration, alerts and backtests, in the market database |
 | `llm/` | Model clients and provider registry, request building, SSE streaming, token usage callback |
 | `pricing/` | models.dev price cache and cost estimates |
 | `planning/` | Frontier: `harness` (AI chat and tools), `core` (plan compiler, risk and reward), `live` (execution after approval, reconciliation), `market` (market data and discovery), `forge` (Starlark entry calculators), `plugins` (public data such as funding rate and open interest), `model` (adapter over `llm`) |
@@ -98,12 +101,13 @@ Packages under `internal/`:
 | `auth/`, `crypto/`, `security/`, `safe/` | JWT; AES storage and RSA transport encryption; SSRF checks; safe goroutine start |
 | `config/`, `logger/` | `.env` and environment settings; logrus-based logging |
 | `servicestate/` | What each background service last reported, for the Dashboard |
+| `activity/` | The Dashboard's event feed: reads the database and turns new rows into AI, order, money and market events |
 
 ## Core flows
 
-### Autopilot
+### Traders
 
-Details are in [docs/autopilot.md](docs/autopilot.md). The entry point is `runCycle` in `internal/trader/auto_trader_loop.go`:
+Details are in [docs/traders.md](docs/traders.md). The entry point is `runCycle` in `internal/trader/auto_trader_loop.go`:
 
 1. Check the running state, hot-reload the strategy, check risk pauses.
 2. Build the trading context: account, positions, candidates. `kernel.StrategyEngine.GetCandidateCoins` produces candidates from `static`, `volume_top`, `gainers`, `losers`, `oi_top`, `oi_low` or the combined `mixed`. Rankings come from `provider/binance`; OKX traders filter them with `provider/okx`.
@@ -128,11 +132,13 @@ Details are in [docs/frontier.md](docs/frontier.md).
 
 ### Market data
 
-Details are in [docs/market-data.md](docs/market-data.md). Binance's rate limits are per IP and shared with live trading, so only `marketdata.Hydrator` and the derivative collector ask the exchange for this data, through `binance.Limiter`. Calculations and backtests read `market.db` and never make requests. Do not call the exchange from them.
+Details are in [docs/market-data.md](docs/market-data.md). Binance's rate limits are per IP and shared with live trading, so live data comes from the streams, and REST through `binance.Limiter` only starts history, fills holes and answers trading when the stream cannot vouch for its data. Calculations and backtests read the local market tables and never make requests. Do not call the exchange from them.
+
+Nothing downstream may hold a stream up: `wsfeed` and `Hub` drop rather than wait, and a lost candle leaves its series behind for the hydrator. Whatever trading reads must carry its age, and go to the exchange when it is too old rather than be used silently.
 
 ### Forecast
 
-Details are in [docs/forecast.md](docs/forecast.md). `forecast.Evaluate` is pure and takes the data up to a candle, so live forecasts and backtests agree. Keep it that way: anything it reads must come through its arguments, and a change to what it computes raises `EngineVersion`. Saved versions never change. Nothing in `trader/` or `planning/` reads forecasts.
+Details are in [docs/forecast.md](docs/forecast.md). `forecast.Evaluate` is pure and takes the data up to a candle, so live forecasts and backtests agree. Keep it that way: anything it reads must come through its arguments, and a change to what it computes raises `EngineVersion`. Saved strategies never change: a different idea is saved as a new one. Nothing in `trader/` or `planning/` reads forecasts: Frontier's chart can overlay one through `/api/forecast/overlay/:symbol`, assembled in `internal/api`, and its web code uses `api/forecast` and the shared chart surface, not `components/forecast`.
 
 ## Telegram assistant
 
@@ -190,13 +196,13 @@ Go code decides whether to run it, not the model. The user's next message must b
 
 ### Pages and scrolling
 
-- **Pages** use `components/common/page.tsx`: title, description, top-right actions and section tabs. Content fills the width, with side gutters from `--page-gutter` to match the top bar.
+- **Pages** use `components/common/page.tsx`. A list page shows no title or description, which the top bar makes redundant: section tabs and actions share one row, and the title is only read by assistive technology. A detail page passes `detail` for one row with the back link, name, state, context and actions. `leading` puts a search box at the start of the actions row. Content fills the width, with side gutters from `--page-gutter` to match the top bar.
 - **Page scrollbars** are drawn by OverlayScrollbars (`utils/page-scroll.ts`) on platforms where native scrollbars take up width: they float and appear while scrolling. Platforms with floating native scrollbars are left alone. Because `html` is what scrolls, lock the page with `lockPageScroll()`, never by changing `overflow` on `body`.
 - **Other scroll areas** use `components/ui/scroll-area.tsx` (`ScrollArea`), with the same floating scrollbar and no width taken from content. Put padding in `ScrollArea`'s own `className`; the library moves it to the scroll viewport.
 
 ### Panels
 
-A functional area of a page is a `Panel` from `components/common/panel.tsx`, and its loading, empty and error states are a centred `PanelState`. A choice between a few options shown side by side is `Segmented` from `components/common/segmented.tsx`, tabs inside a page are `SectionTabs` from `components/common/section-tabs.tsx`, and a floating panel is `Popover` from `components/ui/popover.tsx`. The Dashboard stays read-only: actions belong on the page a row opens.
+A functional area of a page is a `Panel` from `components/common/panel.tsx`, and its loading, empty and error states are a centred `PanelState`. A choice between a few options shown side by side is `Segmented` from `components/common/segmented.tsx`, tabs inside a page are `SectionTabs` from `components/common/section-tabs.tsx`, and a floating panel is `Popover` from `components/ui/popover.tsx`. The Dashboard stays read-only: actions belong on the page a row opens. Its scene moves only when a real event happens: nothing may animate without one.
 
 ### Dialogs
 
@@ -208,6 +214,7 @@ Use `components/common/dialog.tsx`, and never hand-write a `fixed inset-0` overl
 - **Global element defaults** for `button`, `input`, `select` and `textarea` belong in `@layer base`; rules outside a layer beat the Tailwind classes on components.
 - **Selects** use `AppSelect` from `components/ui/select.tsx` (Radix Select, popover styled like the account menu). A Radix popover in a dialog closes only itself on Esc: it sets `defaultPrevented`, and `Dialog` then stays open.
 - **Switches** use `Switch` from `components/ui/switch.tsx`, a button with `role="switch"`.
+- **Search boxes** above long lists use `SearchField` from `components/common/search-field.tsx`, filtering as you type.
 - **Number and symbol inputs** in setting rows use `NumberField`, `PeriodsField` and `SymbolsField` from `components/common/form-fields.tsx`, and `FieldGrid` lays rows out in two columns on wide pages.
 - **Pointer cursor** is applied to clickable controls globally (`styles/index.css`, `@layer base`), so don't add `cursor-pointer` to each one.
 
@@ -215,7 +222,7 @@ Use `components/common/dialog.tsx`, and never hand-write a `fixed inset-0` overl
 
 AI models and exchange accounts are configured only in the Settings dialog; they have no pages of their own. Elsewhere, open a section with `SettingsLink` or `useOpenSettings()` (`?settings=models`, `?settings=exchanges`). Read this data through `hooks/use-connections.ts`, which shares one SWR cache so saved changes appear at once.
 
-Settings sections lay out with `components/settings/setting-row.tsx`:
+Settings sections, and other forms laid out the same way, use `components/common/setting-row.tsx`:
 
 - **`SettingRow`** for each field: a 160px name column and a 36px-tall control filling the rest, with dividers between rows and no helper text under fields.
 - **`SettingActions`** ends a group that saves together. Buttons sit on the right. Validation and result messages go in a single line on the left of the bar (`messageTone` sets error, success or in progress, as with the AI model test result), never under an input, so the layout doesn't jump.

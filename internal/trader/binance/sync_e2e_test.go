@@ -1,10 +1,10 @@
 package binance
 
 import (
-	"os"
 	"testing"
 	"time"
 	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 )
 
 // TestBinanceSyncE2E tests the complete sync flow end-to-end
@@ -14,14 +14,7 @@ func TestBinanceSyncE2E(t *testing.T) {
 	// Get credentials from environment
 	apiKey, secretKey := getBinanceTestCredentials(t)
 
-	// Create test database using full store initialization (includes table creation)
-	testDBPath := "/tmp/test_binance_sync.db"
-	os.Remove(testDBPath) // Clean up previous test
-
-	st, err := store.New(testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to init test store: %v", err)
-	}
+	st := storetest.New(t)
 	db := st.GormDB()
 
 	// Create trader
@@ -33,12 +26,11 @@ func TestBinanceSyncE2E(t *testing.T) {
 	exchangeType := "binance"
 
 	t.Logf("🧪 Running end-to-end sync test...")
-	t.Logf("   DB Path: %s", testDBPath)
 
 	// Run sync
 	t.Logf("\n📥 Running SyncOrdersFromBinance...")
 	startTime := time.Now()
-	err = trader.SyncOrdersFromBinance(traderID, exchangeID, exchangeType, st)
+	err := trader.SyncOrdersFromBinance(traderID, exchangeID, exchangeType, st)
 	elapsed := time.Since(startTime)
 
 	if err != nil {
@@ -135,7 +127,6 @@ func TestBinanceSyncE2E(t *testing.T) {
 	}
 
 	// Cleanup
-	os.Remove(testDBPath)
 	t.Logf("\n✅ E2E test completed successfully!")
 }
 
@@ -146,13 +137,7 @@ func TestBinanceSyncWithExistingData(t *testing.T) {
 	// Get credentials from environment
 	apiKey, secretKey := getBinanceTestCredentials(t)
 
-	testDBPath := "/tmp/test_binance_sync_existing.db"
-	os.Remove(testDBPath)
-
-	st, err := store.New(testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to init test store: %v", err)
-	}
+	st := storetest.New(t)
 	db := st.GormDB()
 	orderStore := st.Order()
 
@@ -197,7 +182,7 @@ func TestBinanceSyncWithExistingData(t *testing.T) {
 
 	// Run sync - it should detect the future time and fall back
 	t.Logf("\n📥 Running sync (should detect future time and fall back)...")
-	err = trader.SyncOrdersFromBinance(traderID, exchangeID, exchangeType, st)
+	err := trader.SyncOrdersFromBinance(traderID, exchangeID, exchangeType, st)
 	if err != nil {
 		t.Fatalf("❌ Sync failed: %v", err)
 	}
@@ -214,5 +199,4 @@ func TestBinanceSyncWithExistingData(t *testing.T) {
 		t.Logf("   ❌ No real trades synced - the bug might still exist")
 	}
 
-	os.Remove(testDBPath)
 }

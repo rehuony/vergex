@@ -9,16 +9,14 @@ import (
 	"vergex/internal/planning"
 	"vergex/internal/planning/live"
 	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 )
 
-// openResetTestStore opens a fresh SQLite store with the Frontier tables that
+// openResetTestStore opens a fresh store with the Frontier tables that
 // the server creates on first use.
 func openResetTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.New(filepath.Join(t.TempDir(), "vergex.db"))
-	if err != nil {
-		t.Fatalf("store.New: %v", err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { st.Close() })
 	if err := st.GormDB().AutoMigrate(&planning.Draft{}, &planning.Conversation{}, &planning.Preferences{}, &live.Run{}, &live.Lease{}); err != nil {
 		t.Fatalf("migrate planning tables: %v", err)
@@ -32,10 +30,10 @@ func TestResetTablesCoverEveryTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetTables: %v", err)
 	}
+	if len(tables) == 0 {
+		t.Fatal("found no tables")
+	}
 	for _, table := range tables {
-		if table == "sqlite_sequence" {
-			continue
-		}
 		if !slices.Contains(resetTables, table) {
 			t.Errorf("reset-account leaves table %q untouched; add it to resetTables", table)
 		}

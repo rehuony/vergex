@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 	"vergex/internal/trader"
 )
 
@@ -299,10 +300,7 @@ func TestConcurrentAccess(t *testing.T) {
 }
 
 func TestEnsureUserTradersLoadedBacksOffAfterFailure(t *testing.T) {
-	st, err := store.New(t.TempDir() + "/vergex.db")
-	if err != nil {
-		t.Fatalf("store.New failed: %v", err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 
 	const userID = "user-1"

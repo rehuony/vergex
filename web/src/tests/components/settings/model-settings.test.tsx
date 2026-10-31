@@ -113,7 +113,7 @@ it('keeps the saved key when an edit leaves it blank', async () => {
   )
 })
 
-it('will not remove a model an Autopilot uses', async () => {
+it('will not remove a model a trader uses', async () => {
   mocks.traders.mockResolvedValue([
     { trader_id: 't1', trader_name: 'Alpha', ai_model: 'ai' },
   ])
@@ -123,7 +123,7 @@ it('will not remove a model an Autopilot uses', async () => {
   await new Promise((resolve) => setTimeout(resolve, 0))
   fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
   expect(
-    await screen.findByText('Used by Alpha. Delete those Autopilots first.')
+    await screen.findByText('Used by Alpha. Delete those traders first.')
   ).toBeVisible()
   expect(mocks.confirm).not.toHaveBeenCalled()
   expect(mocks.update).not.toHaveBeenCalled()

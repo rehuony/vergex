@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Page } from '@/components/common/page'
 import { SectionTabs } from '@/components/common/section-tabs'
 import {
@@ -23,7 +24,6 @@ import {
   saveBatch,
   workspaceKey,
   type PlanBatch,
-  type AccountObservation,
 } from '@/utils/planning/frontier-workspace'
 import {
   findBlockingRun,
@@ -36,6 +36,7 @@ import { ManualEntryDialog } from '@/components/planning/manual-entry-dialog'
 import { FrontierToolbar } from '@/components/planning/frontier-toolbar'
 import { FrontierNotices } from '@/components/planning/frontier-notices'
 import { FrontierChartPanel } from '@/components/planning/frontier-chart-panel'
+import { FrontierForecast } from '@/components/planning/frontier-forecast'
 import { FrontierPlanDeck } from '@/components/planning/frontier-plan-deck'
 import { SelectedPlanDetails } from '@/components/planning/selected-plan-details'
 import { SelectedPlanActions } from '@/components/planning/selected-plan-actions'
@@ -43,6 +44,7 @@ import { FrontierAdvanced } from '@/components/planning/frontier-advanced'
 import { FrontierAssistant } from '@/components/planning/frontier-assistant'
 import { useOpenSettings } from '@/components/settings/use-open-settings'
 import { useAccountCheck } from '@/hooks/planning/use-account-check'
+import { useAccountWatch } from '@/hooks/planning/use-account-watch'
 import { useFrontierMarket } from '@/hooks/planning/use-frontier-market'
 import {
   usePlanningData,
@@ -57,13 +59,16 @@ import './trading-planning-page.css'
 
 type FrontierTab = 'plans' | 'positions' | 'history'
 
+const readTab = (value: string | null): FrontierTab =>
+  value === 'positions' || value === 'history' ? value : 'plans'
+
 export function TradingPlanningPage() {
   const { language } = useLanguage()
   const label = (key: string) => t(`frontier.${key}`, language)
-  const [tab, setTab] = useState<FrontierTab>('plans')
-  const [observation, setObservation] = useState<AccountObservation | null>(
-    null
-  )
+  const [params, setParams] = useSearchParams()
+  const [tab, setTab] = useState(() => readTab(params.get('tab')))
+  const [linkedPlan, setLinkedPlan] = useState(() => params.get('plan'))
+  const focusLinkedPlan = useRef(false)
   const openSettings = useOpenSettings()
   const [limits, setLimits] = useState<Constraints>(defaultLimits)
   const [selected, setSelected] = useState(''),
@@ -96,6 +101,8 @@ export function TradingPlanningPage() {
     setSymbol,
   } = market
   const accountCheck = useAccountCheck(exchangeID, venue)
+  const accountWatch = useAccountWatch(exchangeID, symbol)
+  const observation = accountWatch.observation
   const { data, reload, history, refreshHistory, preferences, setPreferences } =
     usePlanningData(setError)
   const account = accounts.find((a) => a.id === exchangeID)
@@ -138,15 +145,16 @@ export function TradingPlanningPage() {
   const run = selectedRun
   const clock = Date.parse(data.now) || Date.now()
   const blockingRun = findBlockingRun(data.runs, exchangeID, clock)
-  const { chart, price, setPrice } = useFrontierChart(
-    venue,
-    symbol,
-    current,
-    compare,
-    data.records,
-    run?.state,
-    setError
-  )
+  const { chart, price, setPrice, interval, scene, onForecast } =
+    useFrontierChart(
+      venue,
+      symbol,
+      current,
+      compare,
+      data.records,
+      run?.state,
+      setError
+    )
   const assistant = usePlanningAssistant({
     busy,
     setBusy,
@@ -203,6 +211,68 @@ export function TradingPlanningPage() {
     setOrderNotice('')
     trades.setTradeCheckError(null)
   }, [exchangeID])
+  // The address says what is open, so it can be linked to and survives a reload.
+  useEffect(() => {
+    if (!market.configsLoaded) return
+    const link = {
+      venue,
+      symbol,
+      account: exchangeID,
+      plan: selected || linkedPlan || '',
+      tab: tab === 'plans' ? '' : tab,
+    }
+    setParams(
+      (old) => {
+        const next = new URLSearchParams(old)
+        for (const [name, value] of Object.entries(link)) {
+          if (value) next.set(name, value)
+          else next.delete(name)
+        }
+        return next
+      },
+      { replace: true }
+    )
+  }, [
+    market.configsLoaded,
+    venue,
+    symbol,
+    exchangeID,
+    selected,
+    linkedPlan,
+    tab,
+  ])
+  // A plan named by a link opens its own market and account once they are known.
+  useEffect(() => {
+    if (!linkedPlan || !market.configsLoaded || !data.now) return
+    setLinkedPlan(null)
+    const linkedRun = data.runs.find((r) => r.plan_id === linkedPlan)
+    const plan = data.records[linkedPlan]?.plan ?? linkedRun?.plan
+    if (!plan) return
+    const owner = linkedRun?.exchange_id ?? data.accounts[linkedPlan]
+    marketChosen.current = true
+    requestedVenue.current = plan.snapshot.venue
+    setVenue(plan.snapshot.venue)
+    if (accounts.some((a) => a.id === owner)) setExchangeID(owner)
+    setSymbol(nativeMarket(plan.snapshot.symbol, plan.snapshot.venue))
+    setSelected(linkedPlan)
+    setCompare([])
+    focusLinkedPlan.current = true
+  }, [linkedPlan, market.configsLoaded, data.now])
+  // It fits on the chart showing its market, which may still be coming up.
+  useEffect(() => {
+    if (!focusLinkedPlan.current || !current || !chart.current) return
+    const shown = chart.current.context()
+    if (shown.venue !== current.plan.snapshot.venue) return
+    if (
+      shown.symbol !==
+      nativeMarket(current.plan.snapshot.symbol, current.plan.snapshot.venue)
+    )
+      return
+    focusLinkedPlan.current = false
+    void chart.current
+      .plot(current.plan, current.state, [])
+      .then(() => chart.current?.focusPlan())
+  }, [current, scene])
   function requestReview(plan: Plan) {
     if (exchangeID) void reviewWithAccount(plan)
     else openSettings('exchanges')
@@ -211,7 +281,6 @@ export function TradingPlanningPage() {
   function resetAccountWorkspace() {
     setReview(null)
     setBuilder(false)
-    setObservation(null)
     setLimits(defaultLimits)
     setError('')
     setOrderNotice('')
@@ -251,7 +320,6 @@ export function TradingPlanningPage() {
     setExchangeID(id)
     if (market.configsLoaded) rememberAccount(nextVenue, id)
     setLimits(defaultLimits)
-    setObservation(null)
     setReview(null)
     setBuilder(false)
     setError('')
@@ -327,11 +395,7 @@ export function TradingPlanningPage() {
     (r) => !deckPlans.some((p) => p.id === r.plan.id)
   )
   return (
-    <Page
-      className="planning-page"
-      title="Frontier"
-      description={label('description')}
-    >
+    <Page className="planning-page" title="Frontier">
       <FrontierToolbar
         venue={venue}
         accounts={accounts}
@@ -375,7 +439,7 @@ export function TradingPlanningPage() {
         trace={assistant.trace}
         onDismissError={() => setError('')}
       />
-      <div className="grid gap-3 lg:h-[max(520px,calc(100dvh-252px))] lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="grid gap-3 lg:h-[max(520px,calc(100dvh-160px))] lg:grid-cols-[minmax(0,1fr)_380px]">
         <FrontierChartPanel
           plan={current?.plan}
           comparing={compare.length}
@@ -385,6 +449,17 @@ export function TradingPlanningPage() {
             setCompare(comparisonPlans.slice(0, 4).map((p) => p.id))
           }}
           onExitCompare={() => setCompare([])}
+          overlay={
+            <FrontierForecast
+              chart={chart}
+              venue={venue}
+              symbol={symbol}
+              interval={interval}
+              scene={scene}
+              comparing={compare.length >= 2}
+              hovering={onForecast}
+            />
+          }
         />
         <FrontierAssistant
           busy={busy}
@@ -438,8 +513,8 @@ export function TradingPlanningPage() {
           ]}
           className="!mt-0 !mb-4"
         />
-        {/* Hidden, not unmounted: the account section keeps checking the
-            exchange, and the order blocker above relies on what it observes. */}
+        {/* Hidden, not unmounted: the account section remembers its close
+            attempts, which must survive a look at another section. */}
         <div role="tabpanel" hidden={tab !== 'plans'}>
           <FrontierPlanDeck
             batch={currentBatch}
@@ -481,7 +556,7 @@ export function TradingPlanningPage() {
               onManual={manualEntry}
               onBusy={setBusy}
               onRefresh={reload}
-              onObserve={setObservation}
+              watch={accountWatch}
               onCheck={checkPreviousTrade}
             />
           </div>

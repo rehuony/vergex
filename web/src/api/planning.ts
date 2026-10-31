@@ -96,10 +96,24 @@ export interface ChartContext {
   visible_from?: number
   visible_to?: number
 }
+export interface ForecastCandle {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
 export interface PlanningChart {
   context(): ChartContext
   whenReady(): Promise<void>
   setContext(venue: string, symbol: string, resolution?: string): Promise<void>
+  setForecast(
+    venue: string,
+    symbol: string,
+    interval: string,
+    rows: ForecastCandle[]
+  ): void
   plot(p: Plan | null, phase?: string, compare?: Plan[]): Promise<void>
   focusPlan(): Promise<void>
   draw(drawings: Drawing[], source: string, interval: string): Promise<void>

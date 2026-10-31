@@ -1,4 +1,24 @@
 services:
+  # Database. Reached only over the internal network.
+  vergex-postgres:
+    image: postgres:17-alpine
+    container_name: vergex-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${DB_USER:-vergex}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?run make init to generate DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME:-vergex}
+      - TZ=${TZ:-Asia/Shanghai}
+    volumes:
+      - vergex-postgres:/var/lib/postgresql/data
+    networks:
+      - vergex-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   # Backend service (API and core logic)
   vergex-backend:
     build:
@@ -21,6 +41,12 @@ services:
     environment:
       - TZ=${TZ:-Asia/Shanghai}
       - AI_MAX_TOKENS=8000
+      # Set DB_HOST and DB_PORT in .env to use an existing PostgreSQL server.
+      - DB_HOST=${DB_HOST:-vergex-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+    depends_on:
+      vergex-postgres:
+        condition: service_healthy
     networks:
       - vergex-network
     healthcheck:
@@ -50,6 +76,9 @@ services:
       timeout: 10s
       retries: 3
       start_period: 5s
+
+volumes:
+  vergex-postgres:
 
 networks:
   vergex-network:

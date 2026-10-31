@@ -1,5 +1,5 @@
 import { t, type Language } from '@/i18n/translations'
-import { SettingRow } from '@/components/settings/setting-row'
+import { SettingRow } from '@/components/common/setting-row'
 import type { AIStrategyConfig, PromptSectionsConfig } from '@/types'
 import { textAreaClass } from '@/components/common/form-fields'
 

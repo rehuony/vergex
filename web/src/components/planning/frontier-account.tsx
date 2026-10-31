@@ -1,7 +1,6 @@
 import { apiKeyVenues, venueName } from '@/utils/planning/frontier-accounts'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api'
-import { getAuthHeaders, handleJSONResponse } from '@/api/helpers'
 import {
   planningAPI,
   CloseNotSubmittedError,
@@ -17,21 +16,13 @@ import {
 } from '@/utils/planning/frontier-account'
 import { accountLabel } from '@/utils/planning/frontier-accounts'
 import { Dialog } from '@/components/common/dialog'
-import { Button } from '@/components/ui/button'
+import { PanelState } from '@/components/common/panel'
+import { SettingsLink } from '@/components/settings/settings-link'
+import { Button, buttonVariants } from '@/components/ui/button'
+import type { AccountWatch } from '@/hooks/planning/use-account-watch'
 import type { Exchange } from '@/types'
-import type { AccountObservation } from '@/utils/planning/frontier-workspace'
 import { useFrontierLabel } from './use-frontier-label'
 
-interface OpenOrder {
-  order_id: string
-  symbol: string
-  side: string
-  type: string
-  price: number
-  stop_price: number
-  quantity: number
-  status: string
-}
 const format = (value: number | string) =>
   Number(value).toLocaleString('en-US', { maximumFractionDigits: 8 })
 const amount = (value: number) =>
@@ -67,7 +58,7 @@ export function FrontierAccount({
   onBusy,
   onRefresh,
   onCheck,
-  onObserve,
+  watch,
 }: {
   account?: Exchange
   accounts: Exchange[]
@@ -80,138 +71,37 @@ export function FrontierAccount({
   onBusy: (value: boolean) => void
   onRefresh: () => Promise<void>
   onCheck?: (run: LiveRun) => Promise<void>
-  onObserve?: (snapshot: AccountObservation | null) => void
+  watch: AccountWatch
 }) {
   const label = useFrontierLabel('account')
-  const [snapshot, setSnapshot] = useState<{
-    accountID: string
-    positions: AccountPosition[]
-    at: string
-  } | null>(null)
-  const [orders, setOrders] = useState<{
-    accountID: string
-    symbol: string
-    rows: OpenOrder[]
-  } | null>(null)
-  const [loading, setLoading] = useState(false),
-    [error, setError] = useState(''),
-    [orderError, setOrderError] = useState('')
-  const [binding, setBinding] = useState<{
-    id: string
-    accountID: string
-    running: boolean
-  } | null>(null)
   const [confirm, setConfirm] = useState<AccountPosition | null>(null),
     [notice, setNotice] = useState('')
   const [attempted, setAttempted] = useState<Set<string>>(new Set())
   const attemptLatch = useRef(new Set<string>())
-  const generation = useRef(0),
-    inFlight = useRef(false)
   const accountID = account?.id || ''
-  const refresh = useCallback(async () => {
-    if (!accountID || inFlight.current) return
-    const version = generation.current
-    inFlight.current = true
-    setLoading(true)
-    try {
-      const traders = (await api.getTraders(true)).filter(
-        (t) => t.exchange_id === accountID
-      )
-      const traderID = traders[0]?.trader_id
-      if (version !== generation.current) return
-      setBinding(
-        traderID
-          ? {
-              id: traderID,
-              accountID,
-              running: traders.some((t) => t.is_running),
-            }
-          : null
-      )
-      const values = accountPositions(
-        await api.getPositions(undefined, true, accountID)
-      )
-      if (version !== generation.current) return
-      setSnapshot({
-        accountID,
-        positions: values,
-        at: new Date().toISOString(),
-      })
-      for (const attempt of attemptLatch.current) {
-        if (
-          attempt.startsWith(accountID + '/') &&
-          !values.some(
-            (p) => attempt === accountID + '/' + p.symbol + '/' + p.side
-          )
-        )
-          attemptLatch.current.delete(attempt)
-      }
-      setAttempted(new Set(attemptLatch.current))
-      setError('')
-      const orderRequest = new AbortController()
-      const orderDeadline = setTimeout(() => orderRequest.abort(), 30000)
-      try {
-        const query = new URLSearchParams({ exchange_id: accountID, symbol })
-        const response = await fetch('/api/open-orders?' + query, {
-          headers: getAuthHeaders(),
-          signal: orderRequest.signal,
-        })
-        const rows = await handleJSONResponse<OpenOrder[]>(response)
-        if (
-          !Array.isArray(rows) ||
-          rows.some(
-            (o) =>
-              !o ||
-              typeof o.order_id !== 'string' ||
-              !o.order_id ||
-              typeof o.type !== 'string' ||
-              !Number.isFinite(Number(o.quantity))
-          )
-        )
-          throw new Error('Incomplete order response')
-        if (version !== generation.current) return
-        setOrders({ accountID, symbol, rows })
-        setOrderError('')
-      } catch {
-        if (version === generation.current) {
-          setOrders(null)
-          setOrderError(label('ordersUnverified'))
-        }
-      } finally {
-        clearTimeout(orderDeadline)
-      }
-    } catch (e) {
-      if (version === generation.current)
-        setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      if (version === generation.current) {
-        setLoading(false)
-        inFlight.current = false
-      }
-    }
-  }, [accountID, symbol, label])
+  const { snapshot, orders, binding, loading, error, ordersFailed, refresh } =
+    watch
+  const orderError = ordersFailed ? label('ordersUnverified') : ''
+
   useEffect(() => {
-    generation.current++
-    inFlight.current = false
-    setSnapshot((old) => (old?.accountID === accountID ? old : null))
-    setOrders(null)
-    setError('')
-    setBinding((old) => (old?.accountID === accountID ? old : null))
     setConfirm(null)
     setNotice('')
-    let cancelled = false
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async () => {
-      if (!document.hidden) await refresh()
-      if (!cancelled) timer = setTimeout(poll, 10000)
+  }, [accountID, symbol])
+
+  // A close attempt stays latched until the exchange shows the position gone.
+  useEffect(() => {
+    if (snapshot?.accountID !== accountID) return
+    for (const attempt of attemptLatch.current) {
+      if (
+        attempt.startsWith(accountID + '/') &&
+        !snapshot.positions.some(
+          (p) => attempt === accountID + '/' + p.symbol + '/' + p.side
+        )
+      )
+        attemptLatch.current.delete(attempt)
     }
-    void poll()
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-      generation.current++
-    }
-  }, [refresh])
+    setAttempted(new Set(attemptLatch.current))
+  }, [snapshot, accountID])
 
   const positions = snapshot?.accountID === accountID ? snapshot.positions : []
   const currentBinding = binding?.accountID === accountID ? binding : null
@@ -230,24 +120,6 @@ export function FrontierAccount({
         Number(a.state === 'needs_attention')
     )
   const key = (p: AccountPosition) => accountID + '/' + p.symbol + '/' + p.side
-  useEffect(() => {
-    onObserve?.(
-      !error && snapshot?.accountID === accountID
-        ? {
-            accountID,
-            symbol,
-            positions: snapshot.positions,
-            orders:
-              !orderError &&
-              orders?.accountID === accountID &&
-              orders.symbol === symbol
-                ? orders.rows
-                : null,
-            checkedAt: Date.parse(snapshot.at),
-          }
-        : null
-    )
-  }, [accountID, symbol, snapshot, orders, error, orderError, onObserve])
 
   async function closePosition() {
     if (
@@ -278,7 +150,7 @@ export function FrontierAccount({
       )
         throw new Error(label('bindingChanged'))
       if (traders.some((t) => t.exchange_id === accountID && t.is_running))
-        throw new Error(label('stopAutopilotFirst'))
+        throw new Error(label('stopTraderFirst'))
       await closeAccountPosition(accountID, venue, position, runs, {
         stop: (run) =>
           planningAPI('stop', { id: run.id, hash: run.approval_hash }),
@@ -340,6 +212,22 @@ export function FrontierAccount({
     }
   }
 
+  if (!account) {
+    return (
+      <section className="frontier-account" aria-label={label('heading')}>
+        <PanelState role="status">
+          {label('noAccount', { venue: venueName(venue) })}
+          <SettingsLink
+            section="exchanges"
+            className={buttonVariants({ variant: 'secondary', size: 'sm' })}
+          >
+            {label('addAccount')}
+          </SettingsLink>
+        </PanelState>
+      </section>
+    )
+  }
+
   return (
     <section className="frontier-account" aria-label={label('heading')}>
       <header>
@@ -350,22 +238,16 @@ export function FrontierAccount({
               {snapshot?.accountID === accountID ? positions.length : '—'}
             </span>
           </h2>
-          <p>
-            {account
-              ? `${accountLabel(account, accounts)} · ${venueName(venue)}`
-              : label('selectAccount')}
-          </p>
+          <p>{`${accountLabel(account, accounts)} · ${venueName(venue)}`}</p>
         </div>
         <div className="frontier-account-actions">
-          {accountID && (
-            <a href={exchangeURL(venue)} target="_blank" rel="noreferrer">
-              {label('openExchange')}
-            </a>
-          )}
+          <a href={exchangeURL(venue)} target="_blank" rel="noreferrer">
+            {label('openExchange')}
+          </a>
           <Button
             size="sm"
             className="h-8 text-xs"
-            disabled={!accountID || busy || loading}
+            disabled={busy || loading}
             onClick={() => void refresh()}
           >
             {loading ? label('checking') : label('refresh')}
@@ -374,9 +256,7 @@ export function FrontierAccount({
             variant="success"
             size="sm"
             className="h-8 bg-vergex-success/10 text-xs font-semibold"
-            disabled={
-              !accountID || busy || !!currentBinding?.running || hasPosition
-            }
+            disabled={busy || !!currentBinding?.running || hasPosition}
             onClick={() => onManual('long')}
           >
             {label('buyLong')}
@@ -385,9 +265,7 @@ export function FrontierAccount({
             variant="danger"
             size="sm"
             className="h-8 bg-vergex-danger/10 text-xs font-semibold"
-            disabled={
-              !accountID || busy || !!currentBinding?.running || hasPosition
-            }
+            disabled={busy || !!currentBinding?.running || hasPosition}
             onClick={() => onManual('short')}
           >
             {label('sellShort')}
@@ -395,7 +273,7 @@ export function FrontierAccount({
         </div>
       </header>
       {currentBinding?.running && (
-        <p className="frontier-notice">{label('autopilotRunning')}</p>
+        <p className="frontier-notice">{label('traderRunning')}</p>
       )}
       {hasPosition && <small>{label('hasPosition', { symbol })}</small>}
       {hasPosition &&
@@ -418,175 +296,170 @@ export function FrontierAccount({
       )}
       {error && (
         <p role="alert" className="frontier-notice">
-          {label('positionsUnavailable', { error })}{' '}
-          {label(snapshot ? 'staleValues' : 'noAssumption')}
+          {label(snapshot ? 'positionsStale' : 'positionsUnread', { error })}
         </p>
       )}
-      {accountID && (
-        <>
-          <div className="frontier-account-subhead">
-            <span>{label('allMarkets')}</span>
-            <span>
-              {snapshot?.accountID === accountID
-                ? label(error ? 'lastReceived' : 'received', {
-                    time: new Date(snapshot.at).toLocaleTimeString(),
-                  })
-                : label('waiting')}
-            </span>
-          </div>
-          {positions.length > 0 ? (
+      <div className="frontier-account-subhead">
+        <span>{label('allMarkets')}</span>
+        <span>
+          {snapshot?.accountID === accountID
+            ? label(error ? 'lastReceived' : 'received', {
+                time: new Date(snapshot.at).toLocaleTimeString(),
+              })
+            : label('waiting')}
+        </span>
+      </div>
+      {positions.length > 0 ? (
+        <div className="frontier-table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>{label('market')}</th>
+                <th>{label('positionValue')}</th>
+                <th title={label('marginTitle')}>{label('estMargin')}</th>
+                <th>{label('quantity')}</th>
+                <th>{label('avgEntry')}</th>
+                <th>{label('markPrice')}</th>
+                <th>{label('unrealized')}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {positions.map((p) => (
+                <tr key={p.symbol + p.side}>
+                  <td>
+                    <strong>{nativeMarket(p.symbol, venue)}</strong>
+                    <span className={'frontier-position-badge ' + p.side}>
+                      {label(p.side === 'long' ? 'long' : 'short')}{' '}
+                      <b>{p.leverage}x</b>
+                    </span>
+                  </td>
+                  <td className="frontier-position-value">
+                    <strong>{amount(p.quantity * p.mark)}</strong>
+                    <small>{label('notional')}</small>
+                  </td>
+                  <td
+                    className="frontier-position-margin"
+                    title={label('marginCellTitle')}
+                  >
+                    <strong>
+                      ≈ {amount((p.quantity * p.mark) / p.leverage)}
+                    </strong>
+                    <small>{label('estimated')}</small>
+                  </td>
+                  <td>
+                    {format(p.quantity)}{' '}
+                    <small>
+                      {nativeMarket(p.symbol, venue).replace(/USDT$/, '')}
+                    </small>
+                  </td>
+                  <td>{format(p.entry)}</td>
+                  <td>{format(p.mark)}</td>
+                  <td className={p.pnl >= 0 ? 'target-text' : 'stop-text'}>
+                    {p.pnl >= 0 ? '+' : ''}
+                    {amount(p.pnl)} USDT
+                  </td>
+                  <td>
+                    {!currentBinding && !apiKeyVenues.includes(venue) ? (
+                      <a
+                        href={exchangeURL(venue)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {label('closeOnExchange')}
+                      </a>
+                    ) : (
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        className="h-7 px-2.5 text-xs"
+                        disabled={
+                          busy ||
+                          !!error ||
+                          !!currentBinding?.running ||
+                          attempted.has(key(p))
+                        }
+                        onClick={() => setConfirm(p)}
+                      >
+                        {attempted.has(key(p))
+                          ? label('verifyClose')
+                          : label('closePosition')}
+                      </Button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : snapshot?.accountID === accountID && !error ? (
+        <p className="frontier-flat">{label('noPositions')}</p>
+      ) : loading ? (
+        <p>{label('readingPositions')}</p>
+      ) : null}
+      {positions.length > 0 && (
+        <p className="frontier-margin-note">{label('marginNote')}</p>
+      )}
+      {open.filter((o) => /STOP|TAKE_PROFIT/.test(o.type)).length > 0 && (
+        <div className="frontier-protection">
+          <strong>{label('exitOrders', { symbol })}</strong>
+          {open
+            .filter((o) => /STOP|TAKE_PROFIT/.test(o.type))
+            .map((o) => (
+              <span key={o.order_id}>
+                {o.type.includes('TAKE_PROFIT')
+                  ? label('takeProfit')
+                  : label('stopLoss')}{' '}
+                <b>{format(o.stop_price || o.price)}</b> · {label('size')}{' '}
+                {format(o.quantity)}
+              </span>
+            ))}
+        </div>
+      )}
+      <details className="frontier-native-orders" open>
+        <summary>
+          {label('exchangeOrders', { symbol })} ·{' '}
+          {orders?.accountID === accountID && orders.symbol === symbol
+            ? open.length
+            : label('notVerified')}
+        </summary>
+        {orderError ? (
+          <p>{orderError}</p>
+        ) : orders?.accountID === accountID && orders.symbol === symbol ? (
+          open.length ? (
             <div className="frontier-table-scroll">
               <table>
                 <thead>
                   <tr>
-                    <th>{label('market')}</th>
-                    <th>{label('positionValue')}</th>
-                    <th title={label('marginTitle')}>{label('estMargin')}</th>
-                    <th>{label('quantity')}</th>
-                    <th>{label('avgEntry')}</th>
-                    <th>{label('markPrice')}</th>
-                    <th>{label('unrealized')}</th>
-                    <th />
+                    <th>{label('type')}</th>
+                    <th>{label('side')}</th>
+                    <th>{label('priceTrigger')}</th>
+                    <th>{label('sizeHead')}</th>
+                    <th>{label('status')}</th>
+                    <th>{label('orderId')}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {positions.map((p) => (
-                    <tr key={p.symbol + p.side}>
-                      <td>
-                        <strong>{nativeMarket(p.symbol, venue)}</strong>
-                        <span className={'frontier-position-badge ' + p.side}>
-                          {label(p.side === 'long' ? 'long' : 'short')}{' '}
-                          <b>{p.leverage}x</b>
-                        </span>
-                      </td>
-                      <td className="frontier-position-value">
-                        <strong>{amount(p.quantity * p.mark)}</strong>
-                        <small>{label('notional')}</small>
-                      </td>
-                      <td
-                        className="frontier-position-margin"
-                        title={label('marginCellTitle')}
-                      >
-                        <strong>
-                          ≈ {amount((p.quantity * p.mark) / p.leverage)}
-                        </strong>
-                        <small>{label('estimated')}</small>
-                      </td>
-                      <td>
-                        {format(p.quantity)}{' '}
-                        <small>
-                          {nativeMarket(p.symbol, venue).replace(/USDT$/, '')}
-                        </small>
-                      </td>
-                      <td>{format(p.entry)}</td>
-                      <td>{format(p.mark)}</td>
-                      <td className={p.pnl >= 0 ? 'target-text' : 'stop-text'}>
-                        {p.pnl >= 0 ? '+' : ''}
-                        {amount(p.pnl)} USDT
-                      </td>
-                      <td>
-                        {!currentBinding && !apiKeyVenues.includes(venue) ? (
-                          <a
-                            href={exchangeURL(venue)}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {label('closeOnExchange')}
-                          </a>
-                        ) : (
-                          <Button
-                            variant="danger"
-                            size="sm"
-                            className="h-7 px-2.5 text-xs"
-                            disabled={
-                              busy ||
-                              !!error ||
-                              !!currentBinding?.running ||
-                              attempted.has(key(p))
-                            }
-                            onClick={() => setConfirm(p)}
-                          >
-                            {attempted.has(key(p))
-                              ? label('verifyClose')
-                              : label('closePosition')}
-                          </Button>
-                        )}
-                      </td>
+                  {open.map((o) => (
+                    <tr key={o.order_id}>
+                      <td>{o.type}</td>
+                      <td>{o.side}</td>
+                      <td>{format(o.stop_price || o.price)}</td>
+                      <td>{format(o.quantity)}</td>
+                      <td>{o.status}</td>
+                      <td>{o.order_id}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          ) : snapshot?.accountID === accountID && !error ? (
-            <p className="frontier-flat">{label('noPositions')}</p>
-          ) : loading ? (
-            <p>{label('readingPositions')}</p>
-          ) : null}
-          {positions.length > 0 && (
-            <p className="frontier-margin-note">{label('marginNote')}</p>
-          )}
-          {open.filter((o) => /STOP|TAKE_PROFIT/.test(o.type)).length > 0 && (
-            <div className="frontier-protection">
-              <strong>{label('exitOrders', { symbol })}</strong>
-              {open
-                .filter((o) => /STOP|TAKE_PROFIT/.test(o.type))
-                .map((o) => (
-                  <span key={o.order_id}>
-                    {o.type.includes('TAKE_PROFIT')
-                      ? label('takeProfit')
-                      : label('stopLoss')}{' '}
-                    <b>{format(o.stop_price || o.price)}</b> · {label('size')}{' '}
-                    {format(o.quantity)}
-                  </span>
-                ))}
-            </div>
-          )}
-          <details className="frontier-native-orders" open>
-            <summary>
-              {label('exchangeOrders', { symbol })} ·{' '}
-              {orders?.accountID === accountID && orders.symbol === symbol
-                ? open.length
-                : label('notVerified')}
-            </summary>
-            {orderError ? (
-              <p>{orderError}</p>
-            ) : orders?.accountID === accountID && orders.symbol === symbol ? (
-              open.length ? (
-                <div className="frontier-table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>{label('type')}</th>
-                        <th>{label('side')}</th>
-                        <th>{label('priceTrigger')}</th>
-                        <th>{label('sizeHead')}</th>
-                        <th>{label('status')}</th>
-                        <th>{label('orderId')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {open.map((o) => (
-                        <tr key={o.order_id}>
-                          <td>{o.type}</td>
-                          <td>{o.side}</td>
-                          <td>{format(o.stop_price || o.price)}</td>
-                          <td>{format(o.quantity)}</td>
-                          <td>{o.status}</td>
-                          <td>{o.order_id}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : (
-                <p>{label('noOpenOrders', { symbol })}</p>
-              )
-            ) : (
-              <p>{label('ordersNotVerified')}</p>
-            )}
-          </details>
-        </>
-      )}
+          ) : (
+            <p>{label('noOpenOrders', { symbol })}</p>
+          )
+        ) : (
+          <p>{label('ordersNotVerified')}</p>
+        )}
+      </details>
       {importantRuns.map((run) => {
         const entries = run.orders.filter((o) => o.role === 'entry')
         const filled = entries.reduce((sum, o) => sum + Number(o.filled), 0)

@@ -7,6 +7,7 @@ import { t, type Language } from '@/i18n/translations'
 import type { EquityPoint, EquityRange } from '@/types'
 import { Panel, PanelState } from '@/components/common/panel'
 import { Segmented } from '@/components/common/segmented'
+import { pollEvery } from '@/utils/poll'
 
 const RANGES: EquityRange[] = ['24h', '7d', '30d', 'all']
 
@@ -126,8 +127,7 @@ export function EquityCurve({
     ['equity', traderId, range],
     () => api.getEquity(traderId, range, true),
     {
-      refreshInterval: 60000,
-      shouldRetryOnError: false,
+      ...pollEvery(60000),
       keepPreviousData: true,
     }
   )

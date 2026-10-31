@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 	"vergex/internal/logger"
+	"vergex/internal/market"
 )
 
 const (
@@ -23,21 +24,50 @@ func shouldDrawdownClose(pricePnLPct, drawdownPct float64) bool {
 	return pricePnLPct > drawdownClosePriceGainPct && drawdownPct >= drawdownCloseGivebackPct
 }
 
-// startDrawdownMonitor starts drawdown monitoring
+const (
+	drawdownCheckEvery = time.Minute
+	drawdownMarkEvery  = time.Second
+	// drawdownConfirmGap keeps a close that keeps failing from asking the exchange
+	// for positions every second.
+	drawdownConfirmGap = 5 * time.Second
+)
+
+// heldPosition is what the monitor needs of a position between reads.
+type heldPosition struct {
+	symbol     string
+	side       string
+	entryPrice float64
+	leverage   int
+}
+
+// startDrawdownMonitor starts drawdown monitoring. Positions are read from the
+// exchange every minute, and that check alone decides to close. Between reads the
+// live mark price keeps each position's peak current and can call that check within
+// a second of a giveback. If the stream stops, the minute check carries on alone.
 func (at *AutoTrader) startDrawdownMonitor() {
 	at.monitorWg.Add(1)
 	go func() {
 		defer at.monitorWg.Done()
 
-		ticker := time.NewTicker(1 * time.Minute) // Check every minute
-		defer ticker.Stop()
+		check := time.NewTicker(drawdownCheckEvery)
+		defer check.Stop()
+		marks := time.NewTicker(drawdownMarkEvery)
+		defer marks.Stop()
 
-		logger.Info("📊 Started position drawdown monitoring (check every minute)")
+		logger.Info("📊 Started position drawdown monitoring (every minute, and on live mark prices)")
 
+		var held []heldPosition
+		var lastCheck time.Time
 		for {
 			select {
-			case <-ticker.C:
-				at.checkPositionDrawdown()
+			case <-check.C:
+				held = at.checkPositionDrawdown(held)
+				lastCheck = time.Now()
+			case <-marks.C:
+				if at.marksCallForCheck(held) && time.Since(lastCheck) >= drawdownConfirmGap {
+					held = at.checkPositionDrawdown(held)
+					lastCheck = time.Now()
+				}
 			case <-at.stopMonitorCh:
 				logger.Info("⏹ Stopped position drawdown monitoring")
 				return
@@ -46,24 +76,75 @@ func (at *AutoTrader) startDrawdownMonitor() {
 	}()
 }
 
-// checkPositionDrawdown checks position drawdown situation
-func (at *AutoTrader) checkPositionDrawdown() {
+// marksCallForCheck applies live mark prices to the held positions' peaks and
+// reports whether any of them now looks due to close.
+func (at *AutoTrader) marksCallForCheck(held []heldPosition) bool {
+	due := false
+	for _, pos := range held {
+		mark, ok := market.MarkPrice(at.exchange, pos.symbol)
+		if !ok {
+			continue
+		}
+		pricePnLPct, _, _, drawdownPct := at.trackDrawdown(pos, mark)
+		if shouldDrawdownClose(pricePnLPct, drawdownPct) {
+			due = true
+		}
+	}
+	return due
+}
+
+// trackDrawdown works out where a position stands at a mark price and remembers a
+// new peak.
+func (at *AutoTrader) trackDrawdown(pos heldPosition, markPrice float64) (pricePnLPct, currentPnLPct, peakPnLPct, drawdownPct float64) {
+	// Price-basis move drives the close decision so the trigger point does
+	// not tighten as leverage grows; the margin-basis (leveraged) value is
+	// only kept for the peak cache shown alongside margin-based PnL% in
+	// prompts.
+	if pos.side == "long" {
+		pricePnLPct = ((markPrice - pos.entryPrice) / pos.entryPrice) * 100
+	} else {
+		pricePnLPct = ((pos.entryPrice - markPrice) / pos.entryPrice) * 100
+	}
+	currentPnLPct = pricePnLPct * float64(pos.leverage)
+
+	// Construct unique position identifier (distinguish long/short)
+	posKey := pos.symbol + "_" + pos.side
+
+	// Get historical peak profit for this position
+	at.peakPnLCacheMutex.RLock()
+	peakPnLPct, exists := at.peakPnLCache[posKey]
+	at.peakPnLCacheMutex.RUnlock()
+
+	if !exists {
+		// If no historical peak record, use current P&L as initial value
+		peakPnLPct = currentPnLPct
+	}
+	at.UpdatePeakPnL(pos.symbol, pos.side, currentPnLPct)
+
+	// Calculate drawdown (magnitude of decline from peak)
+	if peakPnLPct > 0 && currentPnLPct < peakPnLPct {
+		drawdownPct = ((peakPnLPct - currentPnLPct) / peakPnLPct) * 100
+	}
+	return pricePnLPct, currentPnLPct, peakPnLPct, drawdownPct
+}
+
+// checkPositionDrawdown reads positions from the exchange and closes what has given
+// back too much. It returns the positions for the live marks to watch until the next
+// read, or the previous ones if the read failed.
+func (at *AutoTrader) checkPositionDrawdown(previous []heldPosition) []heldPosition {
 	// Get current positions
 	positions, err := at.trader.GetPositions()
 	if err != nil {
 		logger.Infof("❌ Drawdown monitoring: failed to get positions: %v", err)
-		return
+		return previous
 	}
 
-	for _, pos := range positions {
-		symbol := pos["symbol"].(string)
-		side := pos["side"].(string)
-		entryPrice := pos["entryPrice"].(float64)
-		markPrice := pos["markPrice"].(float64)
-		quantity := pos["positionAmt"].(float64)
-		if quantity < 0 {
-			quantity = -quantity // Short position quantity is negative, convert to positive
-		}
+	held := make([]heldPosition, 0, len(positions))
+	for _, row := range positions {
+		symbol := row["symbol"].(string)
+		side := row["side"].(string)
+		entryPrice := row["entryPrice"].(float64)
+		markPrice := row["markPrice"].(float64)
 
 		// Guard: skip if entry price is zero (prevents division by zero panic)
 		if entryPrice <= 0 {
@@ -73,44 +154,11 @@ func (at *AutoTrader) checkPositionDrawdown() {
 
 		// Calculate current P&L percentage
 		leverage := 10 // Default value
-		if lev, ok := pos["leverage"].(float64); ok {
+		if lev, ok := row["leverage"].(float64); ok {
 			leverage = int(lev)
 		}
-
-		// Price-basis move drives the close decision so the trigger point does
-		// not tighten as leverage grows; the margin-basis (leveraged) value is
-		// only kept for the peak cache shown alongside margin-based PnL% in
-		// prompts.
-		var pricePnLPct float64
-		if side == "long" {
-			pricePnLPct = ((markPrice - entryPrice) / entryPrice) * 100
-		} else {
-			pricePnLPct = ((entryPrice - markPrice) / entryPrice) * 100
-		}
-		currentPnLPct := pricePnLPct * float64(leverage)
-
-		// Construct unique position identifier (distinguish long/short)
-		posKey := symbol + "_" + side
-
-		// Get historical peak profit for this position
-		at.peakPnLCacheMutex.RLock()
-		peakPnLPct, exists := at.peakPnLCache[posKey]
-		at.peakPnLCacheMutex.RUnlock()
-
-		if !exists {
-			// If no historical peak record, use current P&L as initial value
-			peakPnLPct = currentPnLPct
-			at.UpdatePeakPnL(symbol, side, currentPnLPct)
-		} else {
-			// Update peak cache
-			at.UpdatePeakPnL(symbol, side, currentPnLPct)
-		}
-
-		// Calculate drawdown (magnitude of decline from peak)
-		var drawdownPct float64
-		if peakPnLPct > 0 && currentPnLPct < peakPnLPct {
-			drawdownPct = ((peakPnLPct - currentPnLPct) / peakPnLPct) * 100
-		}
+		pos := heldPosition{symbol: symbol, side: side, entryPrice: entryPrice, leverage: leverage}
+		pricePnLPct, currentPnLPct, peakPnLPct, drawdownPct := at.trackDrawdown(pos, markPrice)
 
 		// Check close position condition: price move > +5% and drawdown >= 40%
 		if shouldDrawdownClose(pricePnLPct, drawdownPct) {
@@ -124,13 +172,17 @@ func (at *AutoTrader) checkPositionDrawdown() {
 				logger.Infof("✅ Drawdown close position succeeded: %s %s", symbol, side)
 				// Clear cache for this position after closing
 				at.ClearPeakPnLCache(symbol, side)
+				continue
 			}
 		} else if pricePnLPct > drawdownClosePriceGainPct {
 			// Record situations close to close position condition (for debugging)
 			logger.Infof("📊 Drawdown monitoring: %s %s | Price move: %.2f%% | Profit: %.2f%% | Peak: %.2f%% | Drawdown: %.2f%%",
 				symbol, side, pricePnLPct, currentPnLPct, peakPnLPct, drawdownPct)
 		}
+		market.WatchMark(at.exchange, symbol)
+		held = append(held, pos)
 	}
+	return held
 }
 
 // emergencyClosePosition emergency close position function

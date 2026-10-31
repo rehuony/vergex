@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"vergex/internal/activity"
 	"vergex/internal/auth"
 	"vergex/internal/crypto"
 	"vergex/internal/forecast"
@@ -18,6 +20,7 @@ import (
 	"vergex/internal/store"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // Server HTTP API server
@@ -37,6 +40,7 @@ type Server struct {
 	telegramReloadCh          chan<- struct{} // signal Telegram bot to reload
 	marketData                *marketdata.Service
 	forecast                  *forecast.Engine
+	activity                  *activity.Feed
 	authLimiter               *ipRateLimiter // per-IP throttle for login/register
 	overview                  overviewCache
 }
@@ -208,9 +212,12 @@ func (s *Server) setupRoutes() {
 			s.route(protected, "GET", "/server-ip", "Get server public IP (for exchange whitelist)", s.handleGetServerIP)
 
 			// AI trader management
-			s.routeWithSchema(protected, "GET", "/overview", "Read-only overview of accounts, traders, services, positions and orders",
-				`Returns accounts, models, traders, active Frontier plans, services, positions (normalized), the open order count, realized P/L today (UTC), recent orders and what needs attention. Cached for 15 seconds, because it reads from the exchanges.`,
+			s.routeWithSchema(protected, "GET", "/overview", "Read-only overview of accounts, traders, services and positions",
+				`Returns accounts, models and their hosts, traders, active Frontier plans, services, what market data follows, the forecast strategy in use, whether Telegram is bound, positions (normalized), realized P/L today (UTC) and what needs attention. Cached for 15 seconds, because it reads from the exchanges.`,
 				s.handleOverview)
+			s.routeWithSchema(protected, "GET", "/activity/stream", "Stream of AI calls, orders, money and market reads",
+				`Server-sent events. The first message has type "snapshot" with the recent events; then "events" with new ones, and "totals" every 20 seconds. Each carries {"seq","at","events":[...],"totals":{"<from>><to>":{"h1":{...},"h24":{...}}}}. Reads the database only.`,
+				s.handleActivityStream)
 			s.routeWithSchema(protected, "GET", "/my-traders/metrics", "Stored equity and trade totals of each trader",
 				`Returns: {"<trader_id>":{"equity":<float>,"equity_at":<unix seconds>,"return_pct":<float>,"total_trades":<int>,"win_rate":<float>,"max_drawdown_pct":<float>}}. A value is absent when no data was recorded yet. Reads the database only.`,
 				s.handleTraderMetrics)
@@ -328,9 +335,11 @@ Both fields are required. After saving, the user must send /start in Telegram to
 			// Forecast
 			s.route(protected, "GET", "/forecast/signals", "List the latest forecast of each tracked coin (?interval=1h)", s.handleForecastSignals)
 			s.route(protected, "GET", "/forecast/detail/:symbol", "Get one coin's forecast, factors and record (?interval=1h)", s.handleForecastDetail)
-			s.route(protected, "GET", "/forecast/versions", "List forecast strategy versions", s.handleForecastVersions)
-			s.route(protected, "POST", "/forecast/versions", "Save a new forecast strategy version", s.handleCreateForecastVersion)
-			s.route(protected, "POST", "/forecast/versions/:id/activate", "Use a forecast strategy version", s.handleActivateForecastVersion)
+			s.route(protected, "GET", "/forecast/overlay/:symbol", "Get what a chart draws of a coin's forecast (?interval=1h)", s.handleForecastOverlay)
+			s.route(protected, "GET", "/forecast/strategies", "List forecast strategies", s.handleForecastStrategies)
+			s.route(protected, "POST", "/forecast/strategies", "Save a new forecast strategy", s.handleCreateForecastStrategy)
+			s.route(protected, "DELETE", "/forecast/strategies/:id", "Delete a forecast strategy not in use", s.handleDeleteForecastStrategy)
+			s.route(protected, "POST", "/forecast/strategies/:id/activate", "Use a forecast strategy", s.handleActivateForecastStrategy)
 			s.route(protected, "GET", "/forecast/settings", "Get forecast settings", s.handleGetForecastSettings)
 			s.route(protected, "PUT", "/forecast/settings", "Update forecast settings", s.handleUpdateForecastSettings)
 			s.route(protected, "GET", "/forecast/coverage", "Report local history (?symbols=&intervals=)", s.handleForecastCoverage)
@@ -434,7 +443,7 @@ Returns: {"balance":<float>,"equity":<float>,"unrealized_pnl":<float>,"initial_b
 Returns: [{"symbol":"<string>","side":"long|short","size":<float>,"entry_price":<float>,"mark_price":<float>,"unrealized_pnl":<float>,"leverage":<int>}]`,
 				s.handlePositions)
 			s.routeWithSchema(protected, "GET", "/positions/history", "Closed position history",
-				`Query: ?trader_id=<EXACT trader_id from GET /api/my-traders>&limit=<int, default 20>`,
+				`Query: ?trader_id=<EXACT trader_id from GET /api/my-traders>&limit=<int, default 100, max 500>&before=<position id, for older pages, which return only positions>`,
 				s.handlePositionHistory)
 			s.routeWithSchema(protected, "GET", "/trades", "Trade records",
 				`Query: ?trader_id=<EXACT trader_id from GET /api/my-traders>&limit=<int, default 20>`,
@@ -728,6 +737,14 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// A token outlives its account after reset-account or a new database, and
+		// would otherwise open an empty session for a user that does not exist.
+		if _, err := s.store.User().GetByID(claims.UserID); errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Account no longer exists, please login again"})
+			c.Abort()
+			return
+		}
+
 		// Store user information in context
 		c.Set("user_id", claims.UserID)
 		c.Set("email", claims.Email)
@@ -792,6 +809,11 @@ func (s *Server) SetMarketData(service *marketdata.Service) {
 // that it is unavailable.
 func (s *Server) SetForecast(engine *forecast.Engine) {
 	s.forecast = engine
+}
+
+// SetActivity attaches the Dashboard's event feed.
+func (s *Server) SetActivity(feed *activity.Feed) {
+	s.activity = feed
 }
 
 // SetTelegramReloadCh sets the channel used to signal the Telegram bot to reload

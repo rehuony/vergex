@@ -146,7 +146,7 @@ func (s *Server) closeFuturesAccount(ctx context.Context, user string, in accoun
 		}
 		traders, err := s.store.Trader().ListByExchangeID(user, account.ID)
 		if err != nil {
-			return out, errors.New("Could not verify Autopilot state")
+			return out, errors.New("Could not verify trader state")
 		}
 		for _, trader := range traders {
 			running := trader.IsRunning
@@ -157,7 +157,7 @@ func (s *Server) closeFuturesAccount(ctx context.Context, user string, in accoun
 				}
 			}
 			if running {
-				return out, errors.New("Stop Autopilot on this account before closing manually")
+				return out, errors.New("Stop the trader on this account before closing manually")
 			}
 		}
 	}

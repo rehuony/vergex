@@ -184,6 +184,6 @@ func TestArchiveMetricsKeepHourlyReadings(t *testing.T) {
 
 func backfillStore(t *testing.T, exchange *fakeExchange) (*Store, *Hydrator) {
 	t.Helper()
-	h, store, _ := hydratorFixture(t, marketPath(t), exchange)
+	h, store, _ := hydratorFixture(t, exchange)
 	return store, h
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -24,22 +25,23 @@ const (
 	OutcomeNeutral = "neutral" // No direction was called, or price did not move.
 )
 
-// Version is an immutable strategy version. Editing saves a new one.
-type Version struct {
+// Strategy is a saved forecast strategy. It cannot change: another idea is saved as
+// a new strategy, so its records always describe one set of rules.
+type Strategy struct {
 	ID            int64  `gorm:"primaryKey;autoIncrement" json:"id"`
-	Note          string `json:"note"`
+	Name          string `gorm:"not null;uniqueIndex" json:"name"`
 	EngineVersion int    `gorm:"not null" json:"engine_version"`
 	ConfigJSON    string `gorm:"column:config;type:text;not null" json:"-"`
 	Config        Config `gorm:"-" json:"config"`
 	CreatedAt     int64  `gorm:"not null" json:"created_at"`
 }
 
-func (Version) TableName() string { return "forecast_strategy_versions" }
+func (Strategy) TableName() string { return "forecast_strategies" }
 
 // Settings is the single row of forecast settings.
 type Settings struct {
-	ID              uint  `gorm:"primaryKey" json:"-"`
-	ActiveVersionID int64 `json:"active_version_id"`
+	ID               uint  `gorm:"primaryKey" json:"-"`
+	ActiveStrategyID int64 `json:"active_strategy_id"`
 	// AlertThreshold is the score at or beyond which a signal alerts: 70 means 70
 	// and above upwards, 30 and below downwards.
 	AlertThreshold int `json:"alert_threshold"`
@@ -52,13 +54,13 @@ const DefaultAlertThreshold = 70
 
 // Record is one forecast and, later, how it turned out.
 type Record struct {
-	ID        int64   `gorm:"primaryKey;autoIncrement" json:"id"`
-	VersionID int64   `gorm:"not null;uniqueIndex:idx_forecast_record_key,priority:1;index:idx_forecast_record_latest,priority:1" json:"version_id"`
-	SeriesID  int64   `gorm:"not null;uniqueIndex:idx_forecast_record_key,priority:2;index:idx_forecast_record_latest,priority:3" json:"series_id"`
-	OpenTime  int64   `gorm:"not null;uniqueIndex:idx_forecast_record_key,priority:3;index:idx_forecast_record_latest,priority:4" json:"open_time"`
-	Symbol    string  `gorm:"not null" json:"symbol"`
-	Interval  string  `gorm:"column:interval_name;not null;index:idx_forecast_record_latest,priority:2" json:"interval"`
-	Close     float64 `gorm:"not null" json:"close"`
+	ID         int64   `gorm:"primaryKey;autoIncrement" json:"id"`
+	StrategyID int64   `gorm:"not null;uniqueIndex:idx_forecast_record_key,priority:1;index:idx_forecast_record_latest,priority:1" json:"strategy_id"`
+	SeriesID   int64   `gorm:"not null;uniqueIndex:idx_forecast_record_key,priority:2;index:idx_forecast_record_latest,priority:3" json:"series_id"`
+	OpenTime   int64   `gorm:"not null;uniqueIndex:idx_forecast_record_key,priority:3;index:idx_forecast_record_latest,priority:4" json:"open_time"`
+	Symbol     string  `gorm:"not null" json:"symbol"`
+	Interval   string  `gorm:"column:interval_name;not null;index:idx_forecast_record_latest,priority:2" json:"interval"`
+	Close      float64 `gorm:"not null" json:"close"`
 	// ProbCandles uses candles only; ProbFull adds derivatives.
 	ProbCandles float64 `gorm:"not null" json:"prob_candles"`
 	ProbFull    float64 `gorm:"not null" json:"prob_full"`
@@ -83,13 +85,13 @@ type Record struct {
 
 func (Record) TableName() string { return "forecast_records" }
 
-// Calibration is a version's curve for one interval.
+// Calibration is a strategy's curve for one interval.
 type Calibration struct {
-	VersionID int64  `gorm:"primaryKey;autoIncrement:false"`
-	Interval  string `gorm:"column:interval_name;primaryKey"`
-	Samples   int    `gorm:"not null"`
-	Knots     string `gorm:"type:text;not null"`
-	BuiltAt   int64  `gorm:"not null"`
+	StrategyID int64  `gorm:"primaryKey;autoIncrement:false"`
+	Interval   string `gorm:"column:interval_name;primaryKey"`
+	Samples    int    `gorm:"not null"`
+	Knots      string `gorm:"type:text;not null"`
+	BuiltAt    int64  `gorm:"not null"`
 }
 
 func (Calibration) TableName() string { return "forecast_calibrations" }
@@ -113,7 +115,7 @@ const (
 // Backtest is one run.
 type Backtest struct {
 	ID          int64           `gorm:"primaryKey;autoIncrement" json:"id"`
-	VersionID   int64           `gorm:"not null" json:"version_id"`
+	StrategyID  int64           `gorm:"not null" json:"strategy_id"`
 	OptionsJSON string          `gorm:"column:options;type:text;not null" json:"-"`
 	Options     BacktestOptions `gorm:"-" json:"options"`
 	Status      string          `gorm:"not null" json:"status"`
@@ -135,18 +137,22 @@ type Store struct {
 
 // NewStore prepares the forecast tables.
 func NewStore(db *gorm.DB) (*Store, error) {
-	if err := db.AutoMigrate(&Version{}, &Settings{}, &Record{}, &Calibration{}, &AlertArm{}, &Backtest{}); err != nil {
+	if err := db.AutoMigrate(&Strategy{}, &Settings{}, &Record{}, &Calibration{}, &AlertArm{}, &Backtest{}); err != nil {
 		return nil, fmt.Errorf("migrate forecast tables: %w", err)
 	}
 	return &Store{db: db}, nil
 }
 
-func (v *Version) decode() error {
+func (v *Strategy) decode() error {
 	return json.Unmarshal([]byte(v.ConfigJSON), &v.Config)
 }
 
-// CreateVersion saves a new immutable version.
-func (s *Store) CreateVersion(config Config, note string, now time.Time) (*Version, error) {
+// CreateStrategy saves a new strategy under a name of its own.
+func (s *Store) CreateStrategy(config Config, name string, now time.Time) (*Strategy, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, errors.New("a strategy needs a name")
+	}
 	if err := config.Validate(); err != nil {
 		return nil, err
 	}
@@ -154,37 +160,77 @@ func (s *Store) CreateVersion(config Config, note string, now time.Time) (*Versi
 	if err != nil {
 		return nil, err
 	}
-	version := &Version{Note: note, EngineVersion: EngineVersion, ConfigJSON: string(body), Config: config, CreatedAt: now.UnixMilli()}
-	if err := s.db.Create(version).Error; err != nil {
+	strategy := &Strategy{Name: name, EngineVersion: EngineVersion, ConfigJSON: string(body), Config: config, CreatedAt: now.UnixMilli()}
+	if err := s.db.Create(strategy).Error; err != nil {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
+			return nil, errors.New("a strategy with this name already exists")
+		}
 		return nil, err
 	}
-	return version, nil
+	return strategy, nil
 }
 
-// Versions lists every version, newest first.
-func (s *Store) Versions() ([]*Version, error) {
-	var versions []*Version
-	if err := s.db.Order("id DESC").Find(&versions).Error; err != nil {
+// Refusals when deleting a strategy.
+var (
+	ErrStrategyInUse  = errors.New("the strategy in use cannot be deleted")
+	ErrStrategyBusy   = errors.New("a backtest of this strategy is running")
+	ErrStrategyAbsent = errors.New("strategy not found")
+)
+
+// DeleteStrategy removes a strategy not in use, with its records, curves and backtests.
+func (s *Store) DeleteStrategy(id int64, now time.Time) error {
+	settings, err := s.LoadSettings(now)
+	if err != nil {
+		return err
+	}
+	if settings.ActiveStrategyID == id {
+		return ErrStrategyInUse
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var running int64
+		if err := tx.Model(&Backtest{}).Where("strategy_id = ? AND status = ?", id, BacktestRunning).Count(&running).Error; err != nil {
+			return err
+		}
+		if running > 0 {
+			return ErrStrategyBusy
+		}
+		for _, table := range []any{&Record{}, &Calibration{}, &Backtest{}} {
+			if err := tx.Where("strategy_id = ?", id).Delete(table).Error; err != nil {
+				return err
+			}
+		}
+		result := tx.Delete(&Strategy{}, id)
+		if result.Error == nil && result.RowsAffected == 0 {
+			return ErrStrategyAbsent
+		}
+		return result.Error
+	})
+}
+
+// Strategies lists every strategy, newest first.
+func (s *Store) Strategies() ([]*Strategy, error) {
+	var strategies []*Strategy
+	if err := s.db.Order("id DESC").Find(&strategies).Error; err != nil {
 		return nil, err
 	}
-	for _, version := range versions {
-		if err := version.decode(); err != nil {
+	for _, strategy := range strategies {
+		if err := strategy.decode(); err != nil {
 			return nil, err
 		}
 	}
-	return versions, nil
+	return strategies, nil
 }
 
-// VersionByID returns one version.
-func (s *Store) VersionByID(id int64) (*Version, error) {
-	var version Version
-	if err := s.db.First(&version, id).Error; err != nil {
+// StrategyByID returns one strategy.
+func (s *Store) StrategyByID(id int64) (*Strategy, error) {
+	var strategy Strategy
+	if err := s.db.First(&strategy, id).Error; err != nil {
 		return nil, err
 	}
-	return &version, version.decode()
+	return &strategy, strategy.decode()
 }
 
-// LoadSettings returns the settings, creating the first version when there is none.
+// LoadSettings returns the settings, creating the first strategy when there is none.
 func (s *Store) LoadSettings(now time.Time) (Settings, error) {
 	var settings Settings
 	err := s.db.First(&settings, 1).Error
@@ -194,29 +240,29 @@ func (s *Store) LoadSettings(now time.Time) (Settings, error) {
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return settings, err
 	}
-	version, err := s.CreateVersion(DefaultConfig(), "Default", now)
+	strategy, err := s.CreateStrategy(DefaultConfig(), "Default", now)
 	if err != nil {
 		return settings, err
 	}
-	settings = Settings{ID: 1, ActiveVersionID: version.ID, AlertThreshold: DefaultAlertThreshold}
+	settings = Settings{ID: 1, ActiveStrategyID: strategy.ID, AlertThreshold: DefaultAlertThreshold}
 	return settings, s.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&settings).Error
 }
 
-// ActiveVersion returns the version in use.
-func (s *Store) ActiveVersion(now time.Time) (*Version, error) {
+// ActiveStrategy returns the strategy in use.
+func (s *Store) ActiveStrategy(now time.Time) (*Strategy, error) {
 	settings, err := s.LoadSettings(now)
 	if err != nil {
 		return nil, err
 	}
-	return s.VersionByID(settings.ActiveVersionID)
+	return s.StrategyByID(settings.ActiveStrategyID)
 }
 
-// Activate makes a version the one in use. Records stay with their own versions.
+// Activate makes a strategy the one in use. Records stay with their own strategies.
 func (s *Store) Activate(id int64) error {
-	if _, err := s.VersionByID(id); err != nil {
+	if _, err := s.StrategyByID(id); err != nil {
 		return err
 	}
-	return s.db.Model(&Settings{}).Where("id = 1").Update("active_version_id", id).Error
+	return s.db.Model(&Settings{}).Where("id = 1").Update("active_strategy_id", id).Error
 }
 
 // SetAlertThreshold stores the alert threshold.
@@ -231,14 +277,14 @@ func (s *Store) SaveRecord(record *Record) (bool, error) {
 	return result.RowsAffected > 0, result.Error
 }
 
-// LatestOpenTimes returns the newest recorded candle of each series for a version.
-func (s *Store) LatestOpenTimes(versionID int64) (map[int64]int64, error) {
+// LatestOpenTimes returns the newest recorded candle of each series for a strategy.
+func (s *Store) LatestOpenTimes(strategyID int64) (map[int64]int64, error) {
 	var rows []struct {
 		SeriesID int64
 		Latest   int64
 	}
 	err := s.db.Model(&Record{}).Select("series_id, MAX(open_time) AS latest").
-		Where("version_id = ?", versionID).Group("series_id").Scan(&rows).Error
+		Where("strategy_id = ?", strategyID).Group("series_id").Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -249,21 +295,36 @@ func (s *Store) LatestOpenTimes(versionID int64) (map[int64]int64, error) {
 	return latest, nil
 }
 
-// LatestRecords returns each series' newest record for a version and interval.
-func (s *Store) LatestRecords(versionID int64, interval string) ([]Record, error) {
+// LatestRecords returns each series' newest record for a strategy and interval.
+func (s *Store) LatestRecords(strategyID int64, interval string) ([]Record, error) {
 	var records []Record
 	latest := s.db.Model(&Record{}).Select("series_id, MAX(open_time) AS latest").
-		Where("version_id = ? AND interval_name = ?", versionID, interval).Group("series_id")
+		Where("strategy_id = ? AND interval_name = ?", strategyID, interval).Group("series_id")
 	err := s.db.Table("forecast_records AS r").Select("r.*").
 		Joins("JOIN (?) AS l ON r.series_id = l.series_id AND r.open_time = l.latest", latest).
-		Where("r.version_id = ?", versionID).Find(&records).Error
+		Where("r.strategy_id = ?", strategyID).Find(&records).Error
 	return records, err
 }
 
-// RecentRecords returns a series' newest records for a version.
-func (s *Store) RecentRecords(versionID, seriesID int64, limit int) ([]Record, error) {
+// CoinCount returns how many coins a strategy has forecast.
+func (s *Store) CoinCount(strategyID int64) (int64, error) {
+	var coins int64
+	err := s.db.Model(&Record{}).Where("strategy_id = ?", strategyID).Distinct("symbol").Count(&coins).Error
+	return coins, err
+}
+
+// RecordsAfter returns the records past an ID whose candle opened at or after
+// since, oldest first, across all strategies.
+func (s *Store) RecordsAfter(id, since int64, limit int) ([]Record, error) {
 	var records []Record
-	err := s.db.Where("version_id = ? AND series_id = ?", versionID, seriesID).
+	err := s.db.Where("id > ? AND open_time >= ?", id, since).Order("id ASC").Limit(limit).Find(&records).Error
+	return records, err
+}
+
+// RecentRecords returns a series' newest records for a strategy.
+func (s *Store) RecentRecords(strategyID, seriesID int64, limit int) ([]Record, error) {
+	var records []Record
+	err := s.db.Where("strategy_id = ? AND series_id = ?", strategyID, seriesID).
 		Order("open_time DESC").Limit(limit).Find(&records).Error
 	return records, err
 }
@@ -283,19 +344,19 @@ func (s *Store) saveVerification(record *Record) error {
 	}).Error
 }
 
-// VerifiedRecords returns a version's verified records for an interval, in the
+// VerifiedRecords returns a strategy's verified records for an interval, in the
 // order needed to pick non-overlapping ones.
-func (s *Store) VerifiedRecords(versionID int64, interval string) ([]Record, error) {
+func (s *Store) VerifiedRecords(strategyID int64, interval string) ([]Record, error) {
 	var records []Record
-	err := s.db.Where("version_id = ? AND interval_name = ? AND status = ?", versionID, interval, StatusVerified).
+	err := s.db.Where("strategy_id = ? AND interval_name = ? AND status = ?", strategyID, interval, StatusVerified).
 		Order("series_id ASC, open_time ASC").Find(&records).Error
 	return records, err
 }
 
-// Calibrations returns a version's curves by interval.
-func (s *Store) Calibrations(versionID int64) (map[string][]Knot, error) {
+// Calibrations returns a strategy's curves by interval.
+func (s *Store) Calibrations(strategyID int64) (map[string][]Knot, error) {
 	var rows []Calibration
-	if err := s.db.Where("version_id = ?", versionID).Find(&rows).Error; err != nil {
+	if err := s.db.Where("strategy_id = ?", strategyID).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	curves := make(map[string][]Knot, len(rows))
@@ -322,12 +383,12 @@ func (s *Store) setAlertArm(seriesID int64, alerted bool) error {
 }
 
 // CreateBacktest records a run about to start.
-func (s *Store) CreateBacktest(versionID int64, options BacktestOptions, now time.Time) (*Backtest, error) {
+func (s *Store) CreateBacktest(strategyID int64, options BacktestOptions, now time.Time) (*Backtest, error) {
 	body, err := json.Marshal(options)
 	if err != nil {
 		return nil, err
 	}
-	run := &Backtest{VersionID: versionID, OptionsJSON: string(body), Options: options, Status: BacktestRunning, Total: len(options.Symbols) * len(options.Intervals), CreatedAt: now.UnixMilli()}
+	run := &Backtest{StrategyID: strategyID, OptionsJSON: string(body), Options: options, Status: BacktestRunning, Total: len(options.Symbols) * len(options.Intervals), CreatedAt: now.UnixMilli()}
 	return run, s.db.Create(run).Error
 }
 
@@ -392,22 +453,25 @@ func (s *Store) BacktestByID(id int64) (*Backtest, error) {
 	return &run, run.decode()
 }
 
-// HitStats counts a series' judged forecasts for a version.
-func (s *Store) HitStats(versionID, seriesID int64) (hits, misses int64, err error) {
-	var rows []struct {
-		Outcome string
-		Count   int64
-	}
-	err = s.db.Model(&Record{}).Select("outcome, COUNT(*) AS count").
-		Where("version_id = ? AND series_id = ? AND status = ?", versionID, seriesID, StatusVerified).
-		Group("outcome").Scan(&rows).Error
-	for _, row := range rows {
-		switch row.Outcome {
-		case OutcomeHit:
-			hits = row.Count
-		case OutcomeMiss:
-			misses = row.Count
-		}
-	}
-	return hits, misses, err
+// RecordStats is how a strategy's calls on a series have turned out.
+type RecordStats struct {
+	Hits   int64 `json:"hits"`
+	Misses int64 `json:"misses"`
+	// Moved counts every judged record where price moved, called or not, and Rose how
+	// many of them rose. A hit rate has to beat this share to mean anything.
+	Moved int64 `json:"moved"`
+	Rose  int64 `json:"rose"`
+}
+
+// RecordStats counts a series' judged forecasts for a strategy.
+func (s *Store) RecordStats(strategyID, seriesID int64) (RecordStats, error) {
+	var stats RecordStats
+	err := s.db.Model(&Record{}).Select(`
+		COUNT(*) FILTER (WHERE outcome = ?) AS hits,
+		COUNT(*) FILTER (WHERE outcome = ?) AS misses,
+		COUNT(*) FILTER (WHERE target_close <> close) AS moved,
+		COUNT(*) FILTER (WHERE target_close > close) AS rose`, OutcomeHit, OutcomeMiss).
+		Where("strategy_id = ? AND series_id = ? AND status = ?", strategyID, seriesID, StatusVerified).
+		Scan(&stats).Error
+	return stats, err
 }

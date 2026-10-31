@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -22,6 +23,7 @@ const (
 
 	planInterval  = time.Minute
 	rankInterval  = 24 * time.Hour
+	purgeInterval = 24 * time.Hour
 	rankExitExtra = 30 // A coin leaves the ranking only past N+30, so the sample stays steady.
 	// onDemandKeep is how long a series opened by the user stays up to date.
 	onDemandKeep = time.Hour
@@ -42,11 +44,14 @@ type Hydrator struct {
 	now    func() time.Time
 	wake   chan struct{}
 	replan atomic.Bool
+	// streamDown says the live stream should be up and is not. Collection carries on
+	// over REST, so this only shows as degraded.
+	streamDown func() bool
 }
 
 // NewHydrator creates a hydrator.
 func NewHydrator(store *Store, client *binance.DataClient, ranker Ranker) *Hydrator {
-	return &Hydrator{store: store, client: client, ranker: ranker, now: time.Now, wake: make(chan struct{}, 1)}
+	return &Hydrator{store: store, client: client, ranker: ranker, now: time.Now, wake: make(chan struct{}, 1), streamDown: func() bool { return false }}
 }
 
 func (h *Hydrator) nowMillis() int64 { return h.now().UnixMilli() }
@@ -67,20 +72,27 @@ func (h *Hydrator) Replan() {
 
 // Run works until ctx ends.
 func (h *Hydrator) Run(ctx context.Context) {
-	var lastPlan time.Time
-	enabled := false
+	var lastPlan, lastPurge time.Time
+	active := false
 	for ctx.Err() == nil {
 		if h.replan.Swap(false) || h.now().Sub(lastPlan) >= planInterval {
 			var err error
-			enabled, err = h.Plan(ctx)
+			active, err = h.Plan(ctx)
 			if err != nil {
 				logger.Warnf("Market data: plan: %v", err)
 			}
 			lastPlan = h.now()
 		}
-		if !enabled {
+		if h.now().Sub(lastPurge) >= purgeInterval {
+			if err := h.store.purgeShortCandles(h.now().Add(-shortCandleKeep).UnixMilli()); err != nil {
+				logger.Warnf("Market data: purge short candles: %v", err)
+			}
+			lastPurge = h.now()
+		}
+		if !active {
 			servicestate.Set(servicestate.MarketData, servicestate.Off, "")
 			h.sleep(ctx, planInterval)
+			lastPlan = time.Time{} // What woke it may be a series just opened.
 			continue
 		}
 		h.reportState()
@@ -130,42 +142,44 @@ func (h *Hydrator) reportState() {
 		servicestate.Set(servicestate.MarketData, servicestate.Failed, status.Reason)
 	case !status.PausedUntil.IsZero():
 		servicestate.Set(servicestate.MarketData, servicestate.Degraded, status.Reason)
+	case h.streamDown():
+		servicestate.Set(servicestate.MarketData, servicestate.Degraded, "live stream disconnected, using REST")
 	default:
 		servicestate.Set(servicestate.MarketData, servicestate.Running, "")
 	}
 }
 
 // Plan works out which series should exist and brings the table in line. Series
-// no longer wanted turn inactive and keep their data. It reports whether
-// collection is on.
+// no longer wanted turn inactive and keep their data. Turning collection off stops
+// the lists, not what trading or the user has open. It reports whether any series
+// needs work.
 func (h *Hydrator) Plan(ctx context.Context) (bool, error) {
 	settings, err := h.store.LoadSettings()
 	if err != nil {
 		return false, err
 	}
-	if !settings.Enabled {
-		return false, nil
-	}
 	now := h.nowMillis()
-	ranked := h.ranking(ctx, settings, now)
 
 	wanted := map[string]int{}
 	key := func(symbol, interval string) string { return symbol + "/" + interval }
-	for _, symbol := range ranked {
-		for _, interval := range TopIntervals {
-			wanted[key(symbol, interval)] = TierTop
+	if settings.Enabled {
+		for _, symbol := range h.ranking(ctx, settings, now) {
+			for _, interval := range TopIntervals {
+				wanted[key(symbol, interval)] = TierTop
+			}
 		}
-	}
-	for _, symbol := range settings.WatchSymbols() {
-		for _, interval := range WatchIntervals {
-			wanted[key(symbol, interval)] = TierWatch
+		for _, symbol := range settings.WatchSymbols() {
+			for _, interval := range WatchIntervals {
+				wanted[key(symbol, interval)] = TierWatch
+			}
 		}
 	}
 
 	existing, err := h.store.ListSeries()
 	if err != nil {
-		return true, err
+		return settings.Enabled, err
 	}
+	active := settings.Enabled
 	seen := map[string]bool{}
 	for _, series := range existing {
 		id := key(series.Symbol, series.Interval)
@@ -177,6 +191,7 @@ func (h *Hydrator) Plan(ctx context.Context) (bool, error) {
 		status := StatusInactive
 		if want {
 			status = StatusActive
+			active = true
 		} else {
 			tier = series.Tier
 		}
@@ -190,7 +205,7 @@ func (h *Hydrator) Plan(ctx context.Context) (bool, error) {
 		series.Priority = seriesPriority(series, now)
 		series.UpdatedAt = now
 		if err := h.store.saveSeries(series); err != nil {
-			return true, err
+			return active, err
 		}
 	}
 	for id, tier := range wanted {
@@ -199,10 +214,10 @@ func (h *Hydrator) Plan(ctx context.Context) (bool, error) {
 		}
 		symbol, interval := splitKey(id)
 		if _, err := h.store.EnsureSeries(symbol, interval, tier, now); err != nil {
-			return true, err
+			return active, err
 		}
 	}
-	return true, nil
+	return active, nil
 }
 
 func splitKey(id string) (string, string) {
@@ -254,7 +269,8 @@ func RankSymbols(tickers []binance.Ticker, current []string, n int) []string {
 	return next
 }
 
-var intervalRank = map[string]int{"15m": 0, "1h": 1, "4h": 2, "1d": 3}
+// intervalRank orders a list's intervals, shorter first.
+var intervalRank = map[string]int{"30m": 1, "1h": 1, "2h": 2, "4h": 2, "6h": 2, "8h": 2, "12h": 2, "1d": 3}
 
 // seriesPriority orders work; lower goes first: what the user is waiting for,
 // the watchlist's latest candles, the high-volume coins' latest candles, new
@@ -278,13 +294,13 @@ func seriesPriority(series *Series, now int64) int {
 	return 20 + rank
 }
 
-// closedBehind counts candles that have closed past the water mark.
+// closedBehind counts final candles past the water mark. See dropUnclosed.
 func closedBehind(series *Series, now int64) int64 {
 	step := IntervalMillis(series.Interval)
 	if step == 0 || series.LastClosedTime == 0 {
 		return 0
 	}
-	behind := (now-series.LastClosedTime)/step - 1
+	behind := (now-settleDelay.Milliseconds()-series.LastClosedTime)/step - 1
 	if behind < 0 {
 		return 0
 	}
@@ -367,7 +383,7 @@ func (h *Hydrator) Sync(ctx context.Context, series *Series) {
 			return
 		}
 	}
-	h.schedulePriority(&updated, now)
+	scheduleNext(&updated, now)
 	if err := h.store.appendCandles(&updated, keep, gap); err != nil {
 		h.fail(ctx, series, err, now)
 	}
@@ -382,7 +398,10 @@ func (h *Hydrator) confirmGap(ctx context.Context, series *Series, expected, nex
 	return len(again) > 0 && again[0].OpenTime == next, nil
 }
 
-func (h *Hydrator) schedulePriority(series *Series, now int64) {
+// scheduleNext sets a series' next turn: now if it is behind, otherwise just after
+// the next close. A live stream normally moves it on before then, so a series on
+// the stream never costs a request.
+func scheduleNext(series *Series, now int64) {
 	step := IntervalMillis(series.Interval)
 	if closedBehind(series, now) > 0 {
 		series.NextDueAt = now
@@ -394,7 +413,7 @@ func (h *Hydrator) schedulePriority(series *Series, now int64) {
 }
 
 func (h *Hydrator) schedule(series *Series, now int64) {
-	h.schedulePriority(series, now)
+	scheduleNext(series, now)
 	if err := h.store.saveSeries(series); err != nil {
 		logger.Warnf("Market data: save %s %s: %v", series.Symbol, series.Interval, err)
 	}
@@ -436,18 +455,22 @@ func (h *Hydrator) fail(ctx context.Context, series *Series, err error, now int6
 	logger.Warnf("Market data: sync %s %s: %v", series.Symbol, series.Interval, err)
 }
 
+// truncateError shortens an error for storage without cutting a character in two,
+// which PostgreSQL would reject.
 func truncateError(err error) string {
 	text := err.Error()
 	if len(text) > 200 {
-		return text[:200]
+		text = text[:200]
 	}
-	return text
+	return strings.ToValidUTF8(text, "")
 }
 
-// dropUnclosed removes candles still open at now. Only closed ones are stored.
+// dropUnclosed removes candles not yet final at now. Only final ones are stored,
+// and a candle read in the moments after its close can still be missing its last
+// trades, so it counts as final only once settleDelay has passed.
 func dropUnclosed(candles []binance.Candle, step, now int64) []binance.Candle {
 	end := len(candles)
-	for end > 0 && candles[end-1].OpenTime+step > now {
+	for end > 0 && candles[end-1].OpenTime+step+settleDelay.Milliseconds() > now {
 		end--
 	}
 	return candles[:end]

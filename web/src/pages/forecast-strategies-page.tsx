@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Trash2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import useSWR from 'swr'
 import { api } from '@/api'
@@ -6,7 +7,7 @@ import {
   FORECAST_INTERVALS,
   type FactorConfig,
   type ForecastConfig,
-  type ForecastVersion,
+  type ForecastStrategy,
 } from '@/api/forecast'
 import {
   FieldGrid,
@@ -14,15 +15,14 @@ import {
   fieldClass,
 } from '@/components/common/form-fields'
 import { confirmToast, notify } from '@/components/common/notify'
-import { Page } from '@/components/common/page'
 import { Panel, PanelState } from '@/components/common/panel'
 import { fmtDate } from '@/components/forecast/forecast-format'
-import { forecastTabs } from '@/components/forecast/forecast-tabs'
+import { ForecastFrame } from '@/components/forecast/forecast-frame'
 import {
   SettingActions,
   SettingBadge,
   SettingRow,
-} from '@/components/settings/setting-row'
+} from '@/components/common/setting-row'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AppSelect } from '@/components/ui/select'
@@ -63,33 +63,35 @@ function sortKeys(value: unknown): unknown {
   return value
 }
 
-// Strategy versions: saved versions cannot change, so editing one and saving
-// always makes a new one to backtest and then put to use.
+// Forecast strategies: a saved one cannot change, so editing one and saving always
+// makes a new one to backtest and then put to use.
 export function ForecastStrategiesPage() {
   const { language } = useLanguage()
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`forecast.${key}`, language, params)
   const { data, error, mutate } = useSWR(
-    'forecast-versions',
-    api.getForecastVersions,
+    'forecast-strategies',
+    api.getForecastStrategies,
     { revalidateOnFocus: false }
   )
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [draft, setDraft] = useState<ForecastConfig | null>(null)
-  const [note, setNote] = useState('')
+  const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const selected: ForecastVersion | undefined = useMemo(
+  const selected: ForecastStrategy | undefined = useMemo(
     () =>
-      data?.versions.find((version) => version.id === selectedId) ??
-      data?.versions.find((version) => version.id === data.active_version_id),
+      data?.strategies.find((strategy) => strategy.id === selectedId) ??
+      data?.strategies.find(
+        (strategy) => strategy.id === data.active_strategy_id
+      ),
     [data, selectedId]
   )
 
   useEffect(() => {
     if (selected) {
       setDraft(structuredClone(selected.config))
-      setNote('')
+      setName('')
     }
   }, [selected])
 
@@ -117,10 +119,10 @@ export function ForecastStrategiesPage() {
     if (!draft) return
     setBusy(true)
     try {
-      const version = await api.createForecastVersion(draft, note)
+      const strategy = await api.createForecastStrategy(draft, name.trim())
       await mutate()
-      setSelectedId(version.id)
-      notify.success(label('versionSaved', { id: version.id }))
+      setSelectedId(strategy.id)
+      notify.success(label('strategySaved', { name: strategy.name }))
     } catch (err) {
       notify.error(err instanceof Error ? err.message : label('saveFailed'))
     } finally {
@@ -128,15 +130,26 @@ export function ForecastStrategiesPage() {
     }
   }
 
-  const activate = async () => {
+  const remove = async () => {
     if (!selected) return
+    const ok = await confirmToast(
+      label('deleteMessage', { name: selected.name }),
+      {
+        title: label('deleteStrategy'),
+        okText: label('deleteStrategy'),
+        cancelText: label('deleteCancel'),
+        tone: 'danger',
+      }
+    )
+    if (!ok) return
     setBusy(true)
     try {
-      await api.activateForecastVersion(selected.id)
+      await api.deleteForecastStrategy(selected.id)
+      setSelectedId(null)
       await mutate()
-      notify.success(label('versionActivated', { id: selected.id }))
+      notify.success(label('strategyDeleted', { name: selected.name }))
     } catch (err) {
-      notify.error(err instanceof Error ? err.message : label('saveFailed'))
+      notify.error(err instanceof Error ? err.message : label('deleteFailed'))
     } finally {
       setBusy(false)
     }
@@ -157,15 +170,11 @@ export function ForecastStrategiesPage() {
         : current
     )
 
-  const isActive = selected?.id === data?.active_version_id
+  const isActive = selected?.id === data?.active_strategy_id
   const noneOn =
     draft && !Object.values(draft.factors).some((factor) => factor.enabled)
   return (
-    <Page
-      title={t('forecastNav', language)}
-      description={label('strategiesDescription')}
-      tabs={forecastTabs(language)}
-    >
+    <ForecastFrame language={language}>
       {error ? (
         <Panel>
           <PanelState role="alert">{label('loadFailed')}</PanelState>
@@ -179,30 +188,30 @@ export function ForecastStrategiesPage() {
           <Panel className="hidden md:block">
             <ScrollArea className="max-h-[70vh] rounded-xl">
               <ul className="p-1.5">
-                {data.versions.map((version) => (
-                  <li key={version.id}>
+                {data.strategies.map((strategy) => (
+                  <li key={strategy.id}>
                     <Button
                       type="button"
                       variant="ghost"
                       aria-current={
-                        selected.id === version.id ? 'true' : undefined
+                        selected.id === strategy.id ? 'true' : undefined
                       }
-                      onClick={() => void choose(version.id)}
+                      title={strategy.name}
+                      onClick={() => void choose(strategy.id)}
                       className="h-auto w-full flex-col items-stretch gap-0.5 whitespace-normal px-2.5 py-2 text-left hover:text-vergex-text-muted aria-[current=true]:bg-[var(--brand-soft)]"
                     >
                       <span className="flex min-w-0 items-center gap-2">
                         <span className="min-w-0 flex-1 truncate text-sm font-medium text-vergex-text">
-                          {label('versionName', { id: version.id })}
-                          {version.note ? ` · ${version.note}` : ''}
+                          {strategy.name}
                         </span>
-                        {version.id === data.active_version_id && (
+                        {strategy.id === data.active_strategy_id && (
                           <SettingBadge tone="success">
                             {label('inUse')}
                           </SettingBadge>
                         )}
                       </span>
                       <span className="text-xs font-normal">
-                        {fmtDate(version.created_at)}
+                        {fmtDate(strategy.created_at)}
                       </span>
                     </Button>
                   </li>
@@ -213,33 +222,55 @@ export function ForecastStrategiesPage() {
 
           <div className="flex min-w-0 flex-col gap-4">
             <AppSelect
-              aria-label={label('version')}
+              aria-label={label('strategy')}
               className="md:hidden"
               value={selected.id}
-              options={data.versions.map((version) => ({
-                value: version.id,
+              options={data.strategies.map((strategy) => ({
+                value: strategy.id,
                 label:
-                  label('versionName', { id: version.id }) +
-                  (version.id === data.active_version_id
+                  strategy.name +
+                  (strategy.id === data.active_strategy_id
                     ? ` · ${label('inUse')}`
                     : ''),
               }))}
               onChange={(id) => void choose(Number(id))}
             />
             <Panel
-              title={label('versionName', { id: selected.id })}
-              meta={selected.note || undefined}
+              title={
+                <span className="block truncate" title={selected.name}>
+                  {selected.name}
+                </span>
+              }
+              meta={fmtDate(selected.created_at)}
               actions={
-                <Link
-                  to={`${ROUTES.forecastBacktests}?version=${selected.id}`}
-                  className={buttonVariants({
-                    variant: 'secondary',
-                    size: 'sm',
-                    className: 'max-sm:h-10',
-                  })}
-                >
-                  {label('backtestThis')}
-                </Link>
+                <>
+                  <Link
+                    to={`${ROUTES.forecastBacktests}?strategy=${selected.id}`}
+                    className={buttonVariants({
+                      variant: 'secondary',
+                      size: 'sm',
+                      className: 'max-sm:h-10',
+                    })}
+                  >
+                    {label('backtestThis')}
+                  </Link>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="hover:text-vergex-danger max-sm:size-10"
+                    aria-label={label('deleteStrategy')}
+                    title={
+                      isActive
+                        ? label('inUseNoDelete')
+                        : label('deleteStrategy')
+                    }
+                    disabled={isActive || busy}
+                    onClick={() => void remove()}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </>
               }
             >
               <div className="border-t border-[var(--line)] px-4">
@@ -364,42 +395,38 @@ export function ForecastStrategiesPage() {
               </div>
 
               <div className="border-t border-[var(--line)] px-4">
-                <SettingRow label={label('note')} htmlFor="fc-note">
+                <SettingRow label={label('strategyName')} htmlFor="fc-name">
                   <input
-                    id="fc-note"
+                    id="fc-name"
                     className={fieldClass}
-                    value={note}
+                    value={name}
                     maxLength={80}
-                    onChange={(event) => setNote(event.target.value)}
+                    onChange={(event) => setName(event.target.value)}
                   />
                 </SettingRow>
               </div>
 
               <div className="sticky bottom-0 z-10 rounded-b-xl bg-[var(--surface)] px-4">
                 <SettingActions
-                  message={noneOn ? label('needFactor') : undefined}
+                  message={
+                    noneOn
+                      ? label('needFactor')
+                      : changed && !name.trim()
+                        ? label('needName')
+                        : undefined
+                  }
                 >
-                  {!isActive && !changed && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      className="max-sm:h-10"
-                      disabled={busy}
-                      onClick={() => void activate()}
-                    >
-                      {label('useVersion')}
-                    </Button>
-                  )}
                   <Button
                     type="button"
                     variant="primary"
                     size="sm"
                     className="max-sm:h-10"
-                    disabled={busy || !changed || Boolean(noneOn)}
+                    disabled={
+                      busy || !changed || !name.trim() || Boolean(noneOn)
+                    }
                     onClick={() => void save()}
                   >
-                    {label('saveVersion')}
+                    {label('saveStrategy')}
                   </Button>
                 </SettingActions>
               </div>
@@ -407,6 +434,6 @@ export function ForecastStrategiesPage() {
           </div>
         </div>
       )}
-    </Page>
+    </ForecastFrame>
   )
 }

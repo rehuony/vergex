@@ -71,6 +71,13 @@ func (s *PositionStore) RealizedSince(traderIDs []string, sinceMs int64) (float6
 	return total, nil
 }
 
+// UpdatedSince returns the positions updated at or after a time, oldest change first.
+func (s *PositionStore) UpdatedSince(sinceMs int64, limit int) ([]*TraderPosition, error) {
+	var positions []*TraderPosition
+	err := s.db.Where("updated_at >= ?", sinceMs).Order("updated_at ASC").Limit(limit).Find(&positions).Error
+	return positions, err
+}
+
 // ClosedSince returns positions closed after sinceMs, oldest first.
 func (s *PositionStore) ClosedSince(traderIDs []string, sinceMs int64, limit int) ([]*TraderPosition, error) {
 	if len(traderIDs) == 0 {

@@ -9,6 +9,7 @@ import (
 
 	"vergex/internal/manager"
 	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 
 	"github.com/gin-gonic/gin"
 )
@@ -76,10 +77,7 @@ func TestOverviewCacheBuildsOncePerInterval(t *testing.T) {
 }
 
 func TestOverviewStaysWithinTheOwnerAndNeedsNoExchange(t *testing.T) {
-	st, err := store.New(t.TempDir() + "/vergex.db")
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 	for _, trader := range []*store.Trader{
 		{ID: "mine", UserID: "alice", Name: "Mine", AIModelID: "m", ExchangeID: "e", InitialBalance: 100},
@@ -90,14 +88,6 @@ func TestOverviewStaysWithinTheOwnerAndNeedsNoExchange(t *testing.T) {
 		}
 	}
 	now := time.Now().UnixMilli()
-	for _, order := range []*store.TraderOrder{
-		{TraderID: "mine", ExchangeID: "e", ExchangeOrderID: "1", Symbol: "BTCUSDT", Side: "BUY", Type: "MARKET", Status: "FILLED", OrderAction: "open_long", AvgFillPrice: 70000, Quantity: 1, CreatedAt: now},
-		{TraderID: "theirs", ExchangeID: "e", ExchangeOrderID: "2", Symbol: "ETHUSDT", Side: "BUY", Type: "MARKET", Status: "FILLED", OrderAction: "open_long", Quantity: 1, CreatedAt: now},
-	} {
-		if err := st.Order().CreateOrder(order); err != nil {
-			t.Fatal(err)
-		}
-	}
 	position := &store.TraderPosition{TraderID: "mine", ExchangeID: "e", Symbol: "BTCUSDT", Side: "LONG", Quantity: 1, EntryPrice: 100, EntryTime: now - 1000}
 	if err := st.Position().Create(position); err != nil {
 		t.Fatal(err)
@@ -123,22 +113,16 @@ func TestOverviewStaysWithinTheOwnerAndNeedsNoExchange(t *testing.T) {
 	if len(body.Traders) != 1 || body.Traders[0].TraderID != "mine" {
 		t.Fatalf("traders: %+v", body.Traders)
 	}
-	if len(body.Orders) != 1 || body.Orders[0].Symbol != "BTCUSDT" || body.Orders[0].Price != 70000 {
-		t.Fatalf("orders: %+v", body.Orders)
-	}
 	if body.RealizedToday == nil || *body.RealizedToday != 12.5 {
 		t.Fatalf("realized today: %v", body.RealizedToday)
 	}
-	if body.OpenOrders == nil || *body.OpenOrders != 0 || body.PositionsPartial {
-		t.Fatalf("with no account, zero open orders are known: %v partial=%v", body.OpenOrders, body.PositionsPartial)
+	if body.PositionsPartial {
+		t.Fatal("with no account, there is nothing left unread")
 	}
 }
 
 func TestOverviewAccountThatCannotBeReadIsNotReportedAsEmpty(t *testing.T) {
-	st, err := store.New(t.TempDir() + "/vergex.db")
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 	exchange := &store.Exchange{ID: "bad", UserID: "alice", ExchangeType: "binance", Name: "Bad", Enabled: true}
 	s := &Server{store: st, traderManager: manager.NewTraderManager(), exchangeAccountStateCache: NewExchangeAccountStateCache()}
@@ -150,8 +134,8 @@ func TestOverviewAccountThatCannotBeReadIsNotReportedAsEmpty(t *testing.T) {
 	ready := s.addOverviewAccounts("alice", []*store.Exchange{exchange}, &out)
 	addOverviewExchangeData("alice", ready, &out)
 
-	if len(ready) != 0 || !out.PositionsPartial || out.OpenOrders != nil {
-		t.Fatalf("an unread account looked empty: ready=%d partial=%v orders=%v", len(ready), out.PositionsPartial, out.OpenOrders)
+	if len(ready) != 0 || !out.PositionsPartial {
+		t.Fatalf("an unread account looked empty: ready=%d partial=%v", len(ready), out.PositionsPartial)
 	}
 	if len(out.Attention) != 1 || out.Attention[0].Kind != "account_invalid_credentials" {
 		t.Fatalf("attention: %+v", out.Attention)

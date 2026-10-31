@@ -6,16 +6,13 @@ import (
 	"errors"
 	"github.com/gin-gonic/gin"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 	"vergex/internal/planning/core"
 	"vergex/internal/planning/live"
 	"vergex/internal/store"
+	"vergex/internal/testdb"
 	"vergex/internal/trader/execution"
 )
 
@@ -46,10 +43,7 @@ func (f *fakeAccountCloser) LookupOrder(_ context.Context, o execution.Order) (e
 }
 func closeFixture(t *testing.T) (*Server, *fakeAccountCloser, accountCloseRequest) {
 	t.Helper()
-	db, e := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "close.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if e != nil {
-		t.Fatal(e)
-	}
+	db := testdb.Open(t)
 	sql, _ := db.DB()
 	t.Cleanup(func() { sql.Close() })
 	st, e := store.NewFromGorm(db)

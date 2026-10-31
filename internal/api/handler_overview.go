@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"vergex/internal/llm"
 	"vergex/internal/market"
 	"vergex/internal/safe"
 	"vergex/internal/servicestate"
@@ -24,9 +25,6 @@ const (
 	overviewCacheTTL = 15 * time.Second
 	// overviewExchangeTimeout gives up on a slow account without holding up the rest.
 	overviewExchangeTimeout = 10 * time.Second
-	overviewRecentOrders    = 10
-	// overviewMaxOrderSymbols caps the per-symbol open order lookups per account.
-	overviewMaxOrderSymbols = 20
 )
 
 type overviewAccount struct {
@@ -44,6 +42,7 @@ type overviewModel struct {
 	Name     string `json:"name"`
 	Provider string `json:"provider"`
 	Model    string `json:"model,omitempty"`
+	Host     string `json:"host,omitempty"`
 }
 
 type overviewTrader struct {
@@ -76,16 +75,6 @@ type overviewPosition struct {
 	Leverage         float64 `json:"leverage"`
 }
 
-type overviewOrder struct {
-	TraderID  string  `json:"trader_id,omitempty"` // Empty for a Frontier order.
-	Symbol    string  `json:"symbol"`
-	Action    string  `json:"action"`
-	Status    string  `json:"status"`
-	Quantity  float64 `json:"quantity"`
-	Price     float64 `json:"price"`
-	CreatedAt int64   `json:"created_at"` // Unix milliseconds.
-}
-
 // overviewAttention is something the user should act on. Kind picks the wording;
 // the ids say where to send them.
 type overviewAttention struct {
@@ -94,21 +83,35 @@ type overviewAttention struct {
 	Detail     string `json:"detail,omitempty"`
 	TraderID   string `json:"trader_id,omitempty"`
 	ExchangeID string `json:"exchange_id,omitempty"`
+	PlanID     string `json:"plan_id,omitempty"`
+}
+
+// overviewMarket is what market data follows. Absent when it is unavailable.
+type overviewMarket struct {
+	Coins int  `json:"coins"`
+	Live  bool `json:"live"`
+}
+
+// overviewForecast is the forecast strategy in use. Absent when Forecast is unavailable.
+type overviewForecast struct {
+	Name  string `json:"name"`
+	Coins int64  `json:"coins"`
 }
 
 type overviewResponse struct {
-	GeneratedAt time.Time            `json:"generated_at"`
-	Accounts    []overviewAccount    `json:"accounts"`
-	Models      []overviewModel      `json:"models"`
-	Traders     []overviewTrader     `json:"traders"`
-	Runs        []overviewRun        `json:"runs"`
-	Services    []servicestate.Entry `json:"services"`
-	Positions   []overviewPosition   `json:"positions"`
+	GeneratedAt   time.Time            `json:"generated_at"`
+	Accounts      []overviewAccount    `json:"accounts"`
+	Models        []overviewModel      `json:"models"`
+	Traders       []overviewTrader     `json:"traders"`
+	Runs          []overviewRun        `json:"runs"`
+	Services      []servicestate.Entry `json:"services"`
+	Market        *overviewMarket      `json:"market,omitempty"`
+	Forecast      *overviewForecast    `json:"forecast,omitempty"`
+	TelegramBound bool                 `json:"telegram_bound"`
+	Positions     []overviewPosition   `json:"positions"`
 	// PositionsPartial is true when an account's positions could not be read.
 	PositionsPartial bool                `json:"positions_partial"`
-	OpenOrders       *int                `json:"open_orders"`
 	RealizedToday    *float64            `json:"realized_today"`
-	Orders           []overviewOrder     `json:"orders"`
 	Attention        []overviewAttention `json:"attention"`
 }
 
@@ -160,14 +163,13 @@ func (s *Server) buildOverview(user string) overviewResponse {
 		Traders:     []overviewTrader{},
 		Runs:        []overviewRun{},
 		Positions:   []overviewPosition{},
-		Orders:      []overviewOrder{},
 		Attention:   []overviewAttention{},
 	}
 
 	if models, err := s.store.AIModel().List(user); err == nil {
 		for _, model := range models {
 			if model.Enabled {
-				out.Models = append(out.Models, overviewModel{ID: model.ID, Name: model.Name, Provider: model.Provider, Model: model.CustomModelName})
+				out.Models = append(out.Models, overviewModel{ID: model.ID, Name: model.Name, Provider: model.Provider, Model: model.CustomModelName, Host: llm.ProviderHost(model.Provider, model.CustomAPIURL)})
 			}
 		}
 	}
@@ -180,9 +182,28 @@ func (s *Server) buildOverview(user string) overviewResponse {
 	ready := s.addOverviewAccounts(user, exchanges, &out)
 	addOverviewExchangeData(user, ready, &out)
 
-	s.addOverviewOrders(traders, &out)
 	s.addOverviewServices(&out)
+	s.addOverviewFeeds(&out)
 	return out
+}
+
+// addOverviewFeeds reports what the Dashboard's scene shows beside the accounts and
+// traders. All of it is local.
+func (s *Server) addOverviewFeeds(out *overviewResponse) {
+	if s.marketData != nil {
+		if status, err := s.marketData.Status(); err == nil {
+			out.Market = &overviewMarket{Coins: status.Coins, Live: status.Stream.Connected}
+		}
+	}
+	if s.forecast != nil {
+		if strategy, err := s.forecast.Store.ActiveStrategy(time.Now()); err == nil {
+			coins, _ := s.forecast.Store.CoinCount(strategy.ID)
+			out.Forecast = &overviewForecast{Name: strategy.Name, Coins: coins}
+		}
+	}
+	if cfg, err := s.store.TelegramConfig().Get(); err == nil {
+		out.TelegramBound = cfg.BotToken != "" && cfg.ChatID != 0
+	}
 }
 
 func (s *Server) addOverviewTraders(user string, traders []*store.Trader, out *overviewResponse) {
@@ -266,7 +287,7 @@ func (s *Server) addOverviewRuns(user string, out *overviewResponse) {
 		symbol := run.Plan.Snapshot.Symbol
 		out.Runs = append(out.Runs, overviewRun{ID: run.ID, ExchangeID: run.ExchangeID, Symbol: symbol, State: run.State, UpdatedAt: run.UpdatedAt})
 		if run.State == "needs_attention" {
-			out.Attention = append(out.Attention, overviewAttention{Kind: "plan_needs_attention", Name: symbol, Detail: run.Error, ExchangeID: run.ExchangeID})
+			out.Attention = append(out.Attention, overviewAttention{Kind: "plan_needs_attention", Name: symbol, Detail: run.Error, ExchangeID: run.ExchangeID, PlanID: run.PlanID})
 		}
 	}
 	state := servicestate.Off
@@ -274,21 +295,6 @@ func (s *Server) addOverviewRuns(user string, out *overviewResponse) {
 		state = servicestate.Running
 	}
 	out.Services = append(out.Services, servicestate.Entry{Name: "frontier", State: state})
-
-	// Frontier's orders live on their runs and have no time of their own, so they
-	// take the run's.
-	for _, run := range runs {
-		for _, order := range run.Orders {
-			out.Orders = append(out.Orders, overviewOrder{
-				Symbol:    order.Symbol,
-				Action:    strings.ToLower(order.Role),
-				Status:    order.Status,
-				Quantity:  decimalValue(string(order.Quantity)),
-				Price:     firstPositive(decimalValue(string(order.Average)), decimalValue(string(order.Price))),
-				CreatedAt: run.UpdatedAt.UnixMilli(),
-			})
-		}
-	}
 }
 
 // addOverviewAccounts reports every account and returns the ones whose positions
@@ -330,14 +336,12 @@ func (s *Server) addOverviewAccounts(user string, exchanges []*store.Exchange, o
 }
 
 type overviewAccountData struct {
-	positions  []overviewPosition
-	openOrders int
-	ordersOK   bool
-	failed     bool
+	positions []overviewPosition
+	failed    bool
 }
 
-// addOverviewExchangeData reads positions and open orders of each usable account
-// in parallel. A slow or failing account marks the result partial, never wrong.
+// addOverviewExchangeData reads the positions of each usable account in parallel.
+// A slow or failing account marks the result partial, never wrong.
 func addOverviewExchangeData(user string, exchanges []*store.Exchange, out *overviewResponse) {
 	traders, runs := out.Traders, out.Runs
 	results := make(chan overviewAccountData, len(exchanges))
@@ -349,23 +353,16 @@ func addOverviewExchangeData(user string, exchanges []*store.Exchange, out *over
 	}
 
 	timeout := time.After(overviewExchangeTimeout)
-	openOrders, ordersKnown := 0, !out.PositionsPartial
 	for range exchanges {
 		select {
 		case data := <-results:
 			out.Positions = append(out.Positions, data.positions...)
 			out.PositionsPartial = out.PositionsPartial || data.failed
-			openOrders += data.openOrders
-			ordersKnown = ordersKnown && data.ordersOK
 		case <-timeout:
 			out.PositionsPartial = true
-			ordersKnown = false
 			sortOverviewPositions(out.Positions)
 			return
 		}
-	}
-	if ordersKnown {
-		out.OpenOrders = &openOrders
 	}
 	sortOverviewPositions(out.Positions)
 }
@@ -392,7 +389,6 @@ func readOverviewAccount(user string, exchange *store.Exchange, traders []overvi
 		return data
 	}
 
-	symbols := map[string]bool{}
 	for _, values := range raw {
 		position, ok := normalizeOverviewPosition(values)
 		if !ok {
@@ -401,24 +397,6 @@ func readOverviewAccount(user string, exchange *store.Exchange, traders []overvi
 		position.ExchangeID = exchange.ID
 		position.TraderID = overviewPositionOwner(traders, runs, exchange.ID, position.Symbol)
 		data.positions = append(data.positions, position)
-		symbols[market.Normalize(position.Symbol)] = true
-	}
-	for _, run := range runs {
-		if run.ExchangeID == exchange.ID && run.Symbol != "" {
-			symbols[market.Normalize(run.Symbol)] = true
-		}
-	}
-
-	data.ordersOK = len(symbols) <= overviewMaxOrderSymbols
-	if data.ordersOK {
-		for symbol := range symbols {
-			orders, err := reader.GetOpenOrders(symbol)
-			if err != nil {
-				data.ordersOK = false
-				break
-			}
-			data.openOrders += len(orders)
-		}
 	}
 	return data
 }
@@ -472,34 +450,6 @@ func overviewPositionOwner(traders []overviewTrader, runs []overviewRun, exchang
 	return bound
 }
 
-func (s *Server) addOverviewOrders(traders []*store.Trader, out *overviewResponse) {
-	for _, trader := range traders {
-		orders, err := s.store.Order().GetTraderOrders(trader.ID, overviewRecentOrders)
-		if err != nil {
-			continue
-		}
-		for _, order := range orders {
-			action := order.OrderAction
-			if action == "" {
-				action = strings.ToLower(order.Side)
-			}
-			out.Orders = append(out.Orders, overviewOrder{
-				TraderID:  trader.ID,
-				Symbol:    order.Symbol,
-				Action:    action,
-				Status:    order.Status,
-				Quantity:  order.Quantity,
-				Price:     firstPositive(order.AvgFillPrice, order.Price),
-				CreatedAt: order.CreatedAt,
-			})
-		}
-	}
-	sort.SliceStable(out.Orders, func(i, j int) bool { return out.Orders[i].CreatedAt > out.Orders[j].CreatedAt })
-	if len(out.Orders) > overviewRecentOrders {
-		out.Orders = out.Orders[:overviewRecentOrders]
-	}
-}
-
 func (s *Server) addOverviewServices(out *overviewResponse) {
 	running := 0
 	for _, trader := range out.Traders {
@@ -511,7 +461,7 @@ func (s *Server) addOverviewServices(out *overviewResponse) {
 	if running > 0 {
 		state = servicestate.Running
 	}
-	out.Services = append(out.Services, servicestate.Entry{Name: "autopilot", State: state})
+	out.Services = append(out.Services, servicestate.Entry{Name: "traders", State: state})
 	out.Services = append(out.Services, servicestate.All()...)
 	sort.SliceStable(out.Services, func(i, j int) bool { return out.Services[i].Name < out.Services[j].Name })
 	for _, service := range out.Services {
@@ -524,13 +474,4 @@ func (s *Server) addOverviewServices(out *overviewResponse) {
 func decimalValue(raw string) float64 {
 	value, _ := extractFirstNumeric(map[string]interface{}{"v": raw}, "v")
 	return value
-}
-
-func firstPositive(values ...float64) float64 {
-	for _, value := range values {
-		if value > 0 {
-			return value
-		}
-	}
-	return 0
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -52,17 +53,17 @@ func (s *Server) handleForecastSignals(c *gin.Context) {
 	if !ok {
 		return
 	}
-	version, err := s.forecast.Store.ActiveVersion(time.Now())
+	strategy, err := s.forecast.Store.ActiveStrategy(time.Now())
 	if err != nil {
-		SafeInternalError(c, "Read the forecast version", err)
+		SafeInternalError(c, "Read the forecast strategy", err)
 		return
 	}
-	signals, err := s.forecast.Signals(version, interval, s.forecastPrices(c.Request.Context()))
+	signals, err := s.forecast.Signals(strategy, interval, s.forecastPrices(c.Request.Context()))
 	if err != nil {
 		SafeInternalError(c, "Read forecast signals", err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"version_id": version.ID, "interval": interval, "signals": signals})
+	c.JSON(http.StatusOK, gin.H{"strategy_id": strategy.ID, "interval": interval, "signals": signals})
 }
 
 func (s *Server) handleForecastDetail(c *gin.Context) {
@@ -78,12 +79,13 @@ func (s *Server) handleForecastDetail(c *gin.Context) {
 		SafeBadRequest(c, "Unknown symbol")
 		return
 	}
-	version, err := s.forecast.Store.ActiveVersion(time.Now())
+	strategy, err := s.forecast.Store.ActiveStrategy(time.Now())
 	if err != nil {
-		SafeInternalError(c, "Read the forecast version", err)
+		SafeInternalError(c, "Read the forecast strategy", err)
 		return
 	}
-	detail, err := s.forecast.Detail(version, symbols[0], interval, s.forecastPrices(c.Request.Context()))
+	options := forecast.DetailOptions{Indicators: c.Query("indicators") == "1"}
+	detail, err := s.forecast.Detail(strategy, symbols[0], interval, s.forecastPrices(c.Request.Context()), options)
 	if err != nil {
 		SafeInternalError(c, "Read the forecast", err)
 		return
@@ -91,7 +93,35 @@ func (s *Server) handleForecastDetail(c *gin.Context) {
 	c.JSON(http.StatusOK, detail)
 }
 
-func (s *Server) handleForecastVersions(c *gin.Context) {
+// handleForecastOverlay is what Frontier's chart reads: the coin's forecast under the
+// strategy in use, and nothing else of Forecast.
+func (s *Server) handleForecastOverlay(c *gin.Context) {
+	if !s.requireForecast(c) {
+		return
+	}
+	interval, ok := forecastInterval(c)
+	if !ok {
+		return
+	}
+	symbols, ok := cleanSymbols([]string{c.Param("symbol")})
+	if !ok {
+		SafeBadRequest(c, "Unknown symbol")
+		return
+	}
+	strategy, err := s.forecast.Store.ActiveStrategy(time.Now())
+	if err != nil {
+		SafeInternalError(c, "Read the forecast strategy", err)
+		return
+	}
+	overlay, err := s.forecast.OverlayFor(strategy, symbols[0], interval)
+	if err != nil {
+		SafeInternalError(c, "Read the forecast", err)
+		return
+	}
+	c.JSON(http.StatusOK, overlay)
+}
+
+func (s *Server) handleForecastStrategies(c *gin.Context) {
 	if !s.requireForecast(c) {
 		return
 	}
@@ -100,48 +130,69 @@ func (s *Server) handleForecastVersions(c *gin.Context) {
 		SafeInternalError(c, "Read forecast settings", err)
 		return
 	}
-	versions, err := s.forecast.Store.Versions()
+	strategies, err := s.forecast.Store.Strategies()
 	if err != nil {
-		SafeInternalError(c, "Read forecast versions", err)
+		SafeInternalError(c, "Read forecast strategies", err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"active_version_id": settings.ActiveVersionID, "versions": versions, "default_config": forecast.DefaultConfig()})
+	c.JSON(http.StatusOK, gin.H{"active_strategy_id": settings.ActiveStrategyID, "strategies": strategies, "default_config": forecast.DefaultConfig()})
 }
 
-func (s *Server) handleCreateForecastVersion(c *gin.Context) {
+func (s *Server) handleCreateForecastStrategy(c *gin.Context) {
 	if !s.requireForecast(c) {
 		return
 	}
 	var req struct {
 		Config forecast.Config `json:"config" binding:"required"`
-		Note   string          `json:"note"`
+		Name   string          `json:"name"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		SafeBadRequest(c, "Invalid request parameters")
 		return
 	}
-	version, err := s.forecast.Store.CreateVersion(req.Config, strings.TrimSpace(req.Note), time.Now())
+	strategy, err := s.forecast.Store.CreateStrategy(req.Config, req.Name, time.Now())
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, version)
+	c.JSON(http.StatusOK, strategy)
 }
 
-func (s *Server) handleActivateForecastVersion(c *gin.Context) {
+func (s *Server) handleActivateForecastStrategy(c *gin.Context) {
 	if !s.requireForecast(c) {
 		return
 	}
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
-		SafeBadRequest(c, "Invalid version")
+		SafeBadRequest(c, "Invalid strategy")
 		return
 	}
 	if err := s.forecast.Store.Activate(id); err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "strategy version not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "strategy not found"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"active_version_id": id})
+	c.JSON(http.StatusOK, gin.H{"active_strategy_id": id})
+}
+
+func (s *Server) handleDeleteForecastStrategy(c *gin.Context) {
+	if !s.requireForecast(c) {
+		return
+	}
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		SafeBadRequest(c, "Invalid strategy")
+		return
+	}
+	switch err := s.forecast.Store.DeleteStrategy(id, time.Now()); {
+	case err == nil:
+		c.JSON(http.StatusOK, gin.H{"deleted": id})
+	case errors.Is(err, forecast.ErrStrategyAbsent):
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+	case errors.Is(err, forecast.ErrStrategyInUse), errors.Is(err, forecast.ErrStrategyBusy):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	default:
+		SafeInternalError(c, "Delete the forecast strategy", err)
+	}
 }
 
 func (s *Server) handleGetForecastSettings(c *gin.Context) {
@@ -218,7 +269,7 @@ func (s *Server) handleCreateForecastBacktest(c *gin.Context) {
 		return
 	}
 	var req struct {
-		VersionID int64 `json:"version_id"`
+		StrategyID int64 `json:"strategy_id"`
 		forecast.BacktestOptions
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -245,7 +296,7 @@ func (s *Server) handleCreateForecastBacktest(c *gin.Context) {
 		}
 	}
 	req.Symbols = symbols
-	run, err := s.forecast.StartBacktest(context.Background(), req.VersionID, req.BacktestOptions)
+	run, err := s.forecast.StartBacktest(context.Background(), req.StrategyID, req.BacktestOptions)
 	if err != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return

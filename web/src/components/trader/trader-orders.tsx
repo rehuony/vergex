@@ -8,8 +8,9 @@ import { Panel, PanelState } from '@/components/common/panel'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/utils/cn'
+import { pollEvery } from '@/utils/poll'
 import { downloadCsv, ordersToCsv } from './orders-csv'
-import { baseLabel, fmtPx, fmtTime } from './trader-format'
+import { baseLabel, fmtPx, fmtTime } from '@/utils/trader-format'
 
 const PAGE_SIZE = 100
 const headClass =
@@ -87,8 +88,7 @@ export function TraderOrders({
     ['orders', traderId, limit],
     () => api.getOrders(traderId, limit, true),
     {
-      refreshInterval: 30000,
-      shouldRetryOnError: false,
+      ...pollEvery(30000),
       keepPreviousData: true,
     }
   )

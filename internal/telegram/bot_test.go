@@ -3,13 +3,12 @@ package telegram
 import (
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"vergex/internal/config"
-	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 )
 
 // fakeBotAPI answers getMe for tokens starting with "good" and reports every
@@ -61,10 +60,7 @@ func expectGetMe(t *testing.T, calls <-chan string, want string) {
 
 func TestStartReloadsWithSavedTokenAndRecoversFromBadToken(t *testing.T) {
 	calls := fakeBotAPI(t)
-	st, err := store.New(filepath.Join(t.TempDir(), "vergex.db"))
-	if err != nil {
-		t.Fatalf("store.New: %v", err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 
 	reload := make(chan struct{}, 1)

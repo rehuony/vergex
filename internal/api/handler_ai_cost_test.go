@@ -7,13 +7,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 )
 
 func TestAICostsRequireTraderOwnership(t *testing.T) {
-	st, err := store.New(t.TempDir() + "/vergex.db")
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 	if err := st.Trader().Create(&store.Trader{ID: "alice-trader", UserID: "alice", Name: "A", AIModelID: "m", ExchangeID: "e", InitialBalance: 100}); err != nil {
 		t.Fatal(err)

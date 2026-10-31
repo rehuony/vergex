@@ -5,25 +5,19 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"vergex/internal/store"
+	"vergex/internal/testdb"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 func traderDataServer(t *testing.T) (*Server, *gin.Engine) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "trader.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := testdb.Open(t)
 	sql, _ := db.DB()
 	t.Cleanup(func() { sql.Close() })
 	if err := db.AutoMigrate(&store.Trader{}, &store.DecisionRecordDB{}, &store.EquitySnapshot{}); err != nil {

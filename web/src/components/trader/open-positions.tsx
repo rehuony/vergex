@@ -7,7 +7,7 @@ import { cn } from '@/utils/cn'
 import { confirmToast, notify } from '@/components/common/notify'
 import { Panel, PanelState } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
-import { baseLabel, fmtPx, fmtUsd } from './trader-format'
+import { baseLabel, fmtPx, fmtUsd } from '@/utils/trader-format'
 
 const headClass = 'px-2 py-2 text-xs font-medium whitespace-nowrap'
 const cellClass = 'px-2 py-2 whitespace-nowrap'

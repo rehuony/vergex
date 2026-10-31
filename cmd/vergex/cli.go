@@ -63,25 +63,33 @@ func runCLISubcommand(args []string) bool {
 	}
 }
 
-// openMarketStore opens the market database: its own SQLite file beside the main
-// one, or a separate connection pool to the same PostgreSQL database.
-func openMarketStore(cfg *config.Config) (*marketdata.Store, error) {
-	if cfg.DBType == "postgres" {
-		gdb, err := store.InitGormWithConfig(store.DBConfig{
-			Type:     store.DBTypePostgres,
-			Host:     cfg.DBHost,
-			Port:     cfg.DBPort,
-			User:     cfg.DBUser,
-			Password: cfg.DBPassword,
-			DBName:   cfg.DBName,
-			SSLMode:  cfg.DBSSLMode,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return marketdata.NewStore(gdb)
+// marketPoolSize bounds the market tables' connection pool, kept apart from the
+// main one so bulk candle writes never queue up orders and positions.
+const marketPoolSize = 10
+
+func databaseConfig(cfg *config.Config) store.DBConfig {
+	return store.DBConfig{
+		Host:     cfg.DBHost,
+		Port:     cfg.DBPort,
+		User:     cfg.DBUser,
+		Password: cfg.DBPassword,
+		DBName:   cfg.DBName,
+		SSLMode:  cfg.DBSSLMode,
 	}
-	return marketdata.Open(filepath.Join(filepath.Dir(cfg.DBPath), "market.db"))
+}
+
+// openMarketStore opens the market tables on their own connection pool.
+func openMarketStore(cfg *config.Config) (*marketdata.Store, error) {
+	gdb, err := store.InitGorm(databaseConfig(cfg))
+	if err != nil {
+		return nil, err
+	}
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		return nil, err
+	}
+	sqlDB.SetMaxOpenConns(marketPoolSize)
+	return marketdata.NewStore(gdb)
 }
 
 // runMarketBackfill loads deep history from Binance's published files. Usage:
@@ -128,7 +136,7 @@ func runMarketBackfill(args []string) {
 	fmt.Println("Done.")
 }
 
-// runForecastBacktest tests a forecast version on local history and prints a
+// runForecastBacktest tests a forecast strategy on local history and prints a
 // report. It only reads the local store. Usage: `vergex forecast-backtest
 // --symbols BTCUSDT,ETHUSDT --intervals 1h,4h,1d --months 24`.
 func runForecastBacktest(args []string) {
@@ -136,7 +144,7 @@ func runForecastBacktest(args []string) {
 	symbols := fs.String("symbols", "", "comma-separated symbols (required)")
 	intervals := fs.String("intervals", "1h,4h,1d", "comma-separated intervals: 15m, 1h, 4h, 1d")
 	months := fs.Int("months", 12, "months back from now")
-	versionID := fs.Int64("version", 0, "strategy version; defaults to the active one")
+	strategyID := fs.Int64("strategy", 0, "strategy id; defaults to the one in use")
 	_ = fs.Parse(args)
 	if strings.TrimSpace(*symbols) == "" {
 		fs.Usage()
@@ -157,19 +165,19 @@ func runForecastBacktest(args []string) {
 		fmt.Fprintf(os.Stderr, "open forecast tables: %v\n", err)
 		os.Exit(1)
 	}
-	version, err := forecasts.ActiveVersion(time.Now())
-	if *versionID != 0 {
-		version, err = forecasts.VersionByID(*versionID)
+	strategy, err := forecasts.ActiveStrategy(time.Now())
+	if *strategyID != 0 {
+		strategy, err = forecasts.StrategyByID(*strategyID)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "read strategy version: %v\n", err)
+		fmt.Fprintf(os.Stderr, "read strategy strategy: %v\n", err)
 		os.Exit(1)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	engine := forecast.NewEngine(forecasts, marketdata.NewService(marketStore), nil)
 	now := time.Now()
-	report, err := forecast.RunBacktest(ctx, engine, version.Config, forecast.BacktestOptions{
+	report, err := forecast.RunBacktest(ctx, engine, strategy.Config, forecast.BacktestOptions{
 		Symbols:   strings.Split(strings.ToUpper(*symbols), ","),
 		Intervals: strings.Split(*intervals, ","),
 		From:      now.AddDate(0, -*months, 0).UnixMilli(),
@@ -179,11 +187,11 @@ func runForecastBacktest(args []string) {
 		fmt.Fprintf(os.Stderr, "backtest: %v\n", err)
 		os.Exit(1)
 	}
-	printBacktest(version.ID, report)
+	printBacktest(strategy.ID, report)
 }
 
-func printBacktest(versionID int64, report forecast.Report) {
-	fmt.Printf("Strategy version %d, %s to %s, fees %.2f%% round trip\n", versionID,
+func printBacktest(strategyID int64, report forecast.Report) {
+	fmt.Printf("Strategy strategy %d, %s to %s, fees %.2f%% round trip\n", strategyID,
 		time.UnixMilli(report.FirstTime).UTC().Format("2006-01-02"), time.UnixMilli(report.LastTime).UTC().Format("2006-01-02"), report.FeePct)
 	fmt.Printf("%-16s %8s %8s %8s %8s %8s %8s %8s %8s %8s\n", "", "samples", "signals", "hit", "up base", "brier", "lift", "ret", "net ret", "in move")
 	row := func(name string, m forecast.Metrics) {
@@ -217,14 +225,10 @@ func printBacktest(versionID int64, report forecast.Report) {
 
 // openStoreForCLI loads config + encryption and opens the same database the
 // server uses, so subcommands operate on the live data.
-func openStoreForCLI(dbPathOverride string) (*store.Store, error) {
+func openStoreForCLI() (*store.Store, error) {
 	_ = godotenv.Load()
 	logger.Init(nil)
 	config.MustInit()
-	cfg := config.Get()
-	if strings.TrimSpace(dbPathOverride) != "" {
-		cfg.DBPath = dbPathOverride
-	}
 
 	cryptoService, err := crypto.NewCryptoService()
 	if err != nil {
@@ -232,28 +236,7 @@ func openStoreForCLI(dbPathOverride string) (*store.Store, error) {
 	}
 	crypto.SetGlobalCryptoService(cryptoService)
 
-	if cfg.DBType == "sqlite" {
-		if dir := filepath.Dir(cfg.DBPath); dir != "." {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return nil, fmt.Errorf("create data directory: %w", err)
-			}
-		}
-	}
-
-	dbType := store.DBTypeSQLite
-	if cfg.DBType == "postgres" {
-		dbType = store.DBTypePostgres
-	}
-	return store.NewWithConfig(store.DBConfig{
-		Type:     dbType,
-		Path:     cfg.DBPath,
-		Host:     cfg.DBHost,
-		Port:     cfg.DBPort,
-		User:     cfg.DBUser,
-		Password: cfg.DBPassword,
-		DBName:   cfg.DBName,
-		SSLMode:  cfg.DBSSLMode,
-	})
+	return store.New(databaseConfig(config.Get()))
 }
 
 // runResetPassword resets the password for a single account from the command
@@ -262,7 +245,6 @@ func runResetPassword(args []string) {
 	fs := flag.NewFlagSet("reset-password", flag.ExitOnError)
 	email := fs.String("email", "", "email of the account to reset (required)")
 	password := fs.String("password", "", "new password (min 8 chars); omit to enter it interactively")
-	dbPath := fs.String("db", "", "override SQLite DB path (defaults to config / DB_PATH)")
 	_ = fs.Parse(args)
 
 	if strings.TrimSpace(*email) == "" {
@@ -271,7 +253,7 @@ func runResetPassword(args []string) {
 		os.Exit(2)
 	}
 
-	st, err := openStoreForCLI(*dbPath)
+	st, err := openStoreForCLI()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -333,7 +315,6 @@ Positions and orders on the exchange are not touched.
 // destructive "forgot everything" recovery, moved off the public API.
 func runResetAccount(args []string) {
 	fs := flag.NewFlagSet("reset-account", flag.ExitOnError)
-	dbPath := fs.String("db", "", "override SQLite DB path (defaults to config / DB_PATH)")
 	yes := fs.Bool("yes", false, "skip the interactive confirmation prompt")
 	_ = fs.Parse(args)
 
@@ -346,7 +327,7 @@ func runResetAccount(args []string) {
 		}
 	}
 
-	st, err := openStoreForCLI(*dbPath)
+	st, err := openStoreForCLI()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)

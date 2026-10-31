@@ -2,7 +2,8 @@ import { Link } from 'react-router-dom'
 import { ChevronRight, TriangleAlert } from 'lucide-react'
 import type { Overview, OverviewAttention } from '@/api/overview'
 import { SettingsLink } from '@/components/settings/settings-link'
-import { ROUTES } from '@/constants/route-paths'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import { buildFrontierPath } from '@/constants/route-paths'
 import { t, type Language } from '@/i18n/translations'
 import { formatRequestError } from '@/utils/request-errors'
 import { traderPath } from './overview-links'
@@ -10,12 +11,43 @@ import { traderPath } from './overview-links'
 const rowClass =
   'flex min-h-11 items-center gap-3 px-4 py-2 text-[13px] hover:bg-vergex-danger/10'
 
+function serviceName(name: string, language: Language) {
+  const key = `dashboard.service.${name}`
+  const translated = t(key, language)
+  return translated === key ? name : translated
+}
+
+// One row per kind of problem: ten traders blocked at once are one thing to look
+// at, and the row leads to the first of them.
+function mergeByKind(items: OverviewAttention[], language: Language) {
+  const rows = new Map<string, { item: OverviewAttention; more: number }>()
+  items.forEach((item) => {
+    const row = rows.get(item.kind)
+    if (row) row.more++
+    else rows.set(item.kind, { item, more: 0 })
+  })
+  return [...rows.values()].map(({ item, more }) => ({
+    item,
+    name: [
+      item.name ? serviceName(item.name, language) : '',
+      more ? `+${more}` : '',
+    ]
+      .filter(Boolean)
+      .join(' '),
+    more,
+  }))
+}
+
 function Row({
   item,
+  name,
+  more,
   overview,
   language,
 }: {
   item: OverviewAttention
+  name: string
+  more: number
   overview: Overview
   language: Language
 }) {
@@ -27,16 +59,9 @@ function Row({
       />
       <span className="min-w-0 flex-1">
         <span className="font-medium text-vergex-text">
-          {t(`dashboard.attention.${item.kind}`, language, {
-            name: item.name
-              ? t(`dashboard.service.${item.name}`, language) ===
-                `dashboard.service.${item.name}`
-                ? item.name
-                : t(`dashboard.service.${item.name}`, language)
-              : '',
-          })}
+          {t(`dashboard.attention.${item.kind}`, language, { name })}
         </span>
-        {item.detail && (
+        {item.detail && more === 0 && (
           <span
             className="block truncate text-xs text-vergex-text-muted"
             title={item.detail}
@@ -76,7 +101,10 @@ function Row({
     )
   }
   return (
-    <Link to={ROUTES.planning} className={rowClass}>
+    <Link
+      to={buildFrontierPath({ plan: item.plan_id, tab: 'positions' })}
+      className={rowClass}
+    >
       {body}
     </Link>
   )
@@ -97,13 +125,15 @@ export function AttentionList({
       aria-label={t('dashboard.needsAttention', language)}
       className="overflow-hidden rounded-xl border border-vergex-danger/30 bg-vergex-danger/5"
     >
-      <ul className="divide-y divide-vergex-danger/20">
-        {overview.attention.map((item, index) => (
-          <li key={`${item.kind}-${item.name}-${index}`}>
-            <Row item={item} overview={overview} language={language} />
-          </li>
-        ))}
-      </ul>
+      <ScrollArea className="max-h-36">
+        <ul className="divide-y divide-vergex-danger/20">
+          {mergeByKind(overview.attention, language).map((row) => (
+            <li key={row.item.kind}>
+              <Row {...row} overview={overview} language={language} />
+            </li>
+          ))}
+        </ul>
+      </ScrollArea>
     </section>
   )
 }

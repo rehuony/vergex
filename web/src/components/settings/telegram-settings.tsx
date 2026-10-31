@@ -13,7 +13,7 @@ import {
   dialogInputClass,
 } from '@/components/common/dialog'
 import { Button } from '@/components/ui/button'
-import { SettingActions, SettingRow } from './setting-row'
+import { SettingActions, SettingRow } from '@/components/common/setting-row'
 
 const ALERT_KINDS = [
   'order_rejected',

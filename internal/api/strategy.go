@@ -632,6 +632,7 @@ func (s *Server) runRealAITest(userID, modelID, systemPrompt, userPrompt string)
 	}
 
 	aiClient.SetAPIKey(apiKey, model.CustomAPIURL, model.CustomModelName)
+	llm.TagUsage(aiClient, llm.OwnerTest)
 
 	// Call AI API
 	response, err := aiClient.CallWithMessages(systemPrompt, userPrompt)

@@ -11,14 +11,14 @@ vergex is a personal fork of NOFX (github.com/NoFxAiOS/nofx), maintained indepen
 | Paid data | NofxOS and upstream's paid signal sources removed; rankings are computed from free Binance and OKX public data |
 | Fees and referrals | All removed: builder fee, broker IDs and tags, referral links |
 | Exchanges | Binance and OKX USDT perpetuals only; the other eight adapters were deleted |
-| Features | Autopilot, Frontier, grid trading and the Telegram bot stay |
+| Features | Traders, Frontier, grid trading and the Telegram bot stay |
 | Community | Landing page, competition, leaderboard, strategy market and public endpoints removed |
 | Instruments | Crypto only; HIP-3 stocks and commodities, Alpaca and TwelveData removed |
 | Telemetry | Removed entirely |
 | Deployment | Local builds only; no image registry. One setup for local and remote, with a reverse proxy in front for remote |
 | Entry point | The Makefile; no separate `start.sh` |
 | Name | `vergex` everywhere; upstream is credited once in the README's License section, as AGPL requires |
-| Database | SQLite and PostgreSQL |
+| Database | PostgreSQL only |
 | AI costs | Estimated locally from token usage and the models.dev price list |
 
 ## Later changes

@@ -21,6 +21,10 @@ export interface MarketDataStatus {
     banned: boolean
     used_weight: number
   }
+  stream: {
+    connected: boolean
+    topics: number
+  }
   backfill: {
     running: boolean
     current?: string

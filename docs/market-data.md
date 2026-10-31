@@ -1,10 +1,38 @@
 # Market data
 
-Forecast needs a lot of candles, and Binance limits requests per IP, with live trading sharing the same allowance. So candles are stored locally and fetched incrementally in the background. Calculations and backtests read only the local store; only the hydrator asks the exchange.
+Trading wants the latest prices with no delay, Forecast needs a lot of history, and Binance limits requests per IP, with live trading sharing the same allowance. So live data arrives over WebSocket streams, candles are stored locally as they close, and REST only starts history and fills holes. Calculations and backtests read only the local store.
+
+```text
+Exchange streams (one goroutine per connection)
+  │ bounded channel: a full one drops and counts
+  ▼
+Hub: newest candle per series, last and mark prices, each with when it arrived
+  ├─ finished candles ─▶ Writer: batches them into the store, moving the water mark
+  │                      a lost or dropped candle leaves the series behind for the hydrator
+  └─ followers keep only what is new: Frontier charts
+```
+
+Nothing downstream can hold the stream up, and every goroutine stops with the application.
+
+## Streams
+
+| Venue | Address | Carries |
+| :---- | :------ | :------- |
+| Binance | `wss://fstream.binance.com/market/stream` | Every coin's last price once a second (`!miniTicker@arr`), the watchlist's candles, and what trading and open charts ask for |
+| OKX | `wss://ws.okx.com/ws/v5/business` | Candles for open charts; connects only when one is open |
+| OKX | `wss://ws.okx.com/ws/v5/public` | Mark prices of OKX positions; connects only while there are any |
+
+Interest in a topic is held by an open chart, or lasts for a time after it was asked for: an hour for a series trading reads or you open, five minutes for a mark price. With nothing to follow, a connection closes.
+
+A connection reconnects with backoff (1 second doubling to a minute) after an error or silence, and Binance's is replaced after 23 hours, before the exchange would close it. Control messages are paced under each exchange's limit. Binance's stream is held to 800 topics, what trading and charts asked for first; anything past that stays on REST.
+
+The top coins are not streamed on purpose. Measured on the live stream, 200 coins at three intervals cost 120 KB/s (10.6 GB a day), against about 3.5 request weight a minute to fetch them after each close. The all-market price stream costs 28 KB/s and gives their prices. The all-market mark price stream, at 166 KB/s, is not used either: only the coins with open positions are followed, at under 1 KB/s each.
+
+The default watchlist with a trader reading three more series measured 42 messages a second and 38 KB/s (3.4 GB a day), about 1% of a CPU core and 43 MB of memory for the whole backend.
 
 ## Storage
 
-SQLite deployments keep this in its own `market.db` beside the main database, using WAL and `synchronous=NORMAL`, so bulk candle writes never queue up orders and positions. PostgreSQL deployments use the same database through a separate connection pool. Everything here can be fetched again, so it is safe to delete `market.db` to start over.
+The market tables are in the main PostgreSQL database, on a connection pool of their own, so bulk candle writes never queue up orders and positions. Everything here can be fetched again, so it is safe to empty these tables to start over.
 
 | Table | Holds |
 | :---- | :---- |
@@ -16,32 +44,50 @@ SQLite deployments keep this in its own `market.db` beside the main database, us
 
 ## What is collected
 
-Configured in **Settings → Forecast**.
+Configured in **Forecast → Settings**.
 
-| List | Coins | Intervals |
-| :--- | :---- | :-------- |
-| Watchlist | Chosen by you | 15m, 1h, 4h, 1d |
-| Top coins | Highest 24h volume, 200 by default | 1h, 4h, 1d |
-| On demand | A coin you open; kept up to date for an hour | The interval you open |
+| List | Coins | Intervals | Kept up by |
+| :--- | :---- | :-------- | :--------- |
+| Watchlist | Chosen by you | 15m, 1h, 4h, 1d | Stream |
+| Top coins | Highest 24h volume, 200 by default | 1h, 4h, 1d | REST after each close |
+| On demand | A coin you open, or one a trader reads; kept up to date for an hour | Any from 1m to 1d | Stream |
 
-The ranking refreshes once a day. A coin enters within the top N and leaves only past N+30, so the sample does not churn. A series that is no longer wanted turns inactive and keeps its data.
+Turning collection off stops the two lists. Whatever trading or you have open keeps working.
 
-## Hydration
+The ranking refreshes once a day. A coin enters within the top N and leaves only past N+30, so the sample does not churn. A series that is no longer wanted turns inactive and keeps its data. Candles under 15 minutes are kept for 90 days; the rest are kept for good.
+
+## Filling a series
+
+A series moves forward through its water mark, the newest closed candle that joins the data before it. Both of these move it, and it never goes back.
+
+The **writer** stores finished candles from the stream within a second of the close. It only extends a series from its water mark. A candle that does not join up, or one lost across a reconnect or to a full queue, leaves the series behind, and the series falls due for the hydrator. There is no other recovery path.
+
+The **hydrator** does the rest over REST:
 
 1. **Plan.** Every minute, or right after a settings change, work out which series should exist.
 2. **Start.** A new series fetches its latest 300 closed candles (weight 2).
-3. **Follow.** After each close plus 3 seconds, fetch from the water mark with `limit` up to 99 (weight 1). Candles still open are dropped, and the rest are validated and written in one transaction with the water mark, which only moves past candles that join up.
+3. **Follow.** After each close plus 3 seconds, fetch from the water mark with `limit` up to 99 (weight 1). A series on the stream has normally moved on by then, so this costs nothing. Candles still open or closed for under 3 seconds are dropped, since one read right at its close can still be missing its last trades, and the rest are validated and written in one transaction with the water mark, which only moves past candles that join up.
 4. **Catch up.** More than 99 candles behind, it pages 499 at a time (weight 2), the most candles per unit of weight. A restart carries on from the water mark.
 5. **Confirm gaps.** If the next candle is not the expected one, it asks once more, then records the range in `market_gaps` and moves on. A window with a hole that is not recorded is refused rather than calculated on.
 
 Work goes in this order: what you are waiting for, the watchlist's latest candles (shorter intervals first), the top coins' latest candles, new series, long catch-ups.
 
+## What trading reads
+
+`market.GetWithTimeframes` and `market.GetWithExchange`, which feed the prompts and the price behind order sizing and stop-loss checks, ask for the latest candles of a Binance series. The answer is local history plus the candle forming on the stream, only when that can be vouched for: the stream is up, the forming candle is the current one, and history joins up with it. Anything else gets the exchange's own answer. Reading also opens the series, so the next read is local.
+
+OKX traders read OKX's candles directly over REST, which is cheap and always current, and Binance's if OKX has none.
+
+The drawdown monitor reads positions from the exchange every minute, as the check of record. Between reads, the live mark price keeps each position's peak current and can call that check within a second of a giveback. It never closes anything itself, and if the stream stops the minute check carries on alone.
+
+Frontier's chart gets what the exchange has when it opens, then the stream, and polls every 3 seconds while no stream is up. Plan snapshots and execution do not read any of this.
+
 ## Rate limits
 
 | Protection | Behaviour |
 | :--------- | :-------- |
-| Budget | 300 weight per minute for candles and prices (12.5% of the 2400 Binance allows), 150 requests per minute for `/futures/data/*`, 60 for funding history |
-| Used weight | Reads `X-MBX-USED-WEIGHT-1M`, which includes live trading on this IP, and pauses to the next minute above 1200 |
+| Budget | 300 weight per minute for candles and prices (12.5% of the 2400 Binance allows), 150 requests per minute for `/futures/data/*`, 60 for funding history, and a separate 600 weight per minute for reads a running trader is waiting on, so a long catch-up cannot queue them |
+| Used weight | Reads `X-MBX-USED-WEIGHT-1M`, which includes live trading on this IP, and above 1200 pauses background requests to the next minute. Trading's reads carry on |
 | 429, 403 | Pauses everything, using `Retry-After` or else 60 seconds doubling up to 30 minutes |
 | 418 | Pauses everything for `Retry-After` or at least an hour, and the Dashboard shows the service as failed |
 | 5xx, timeouts | Backs off that series only |

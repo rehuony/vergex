@@ -16,7 +16,7 @@ Rules for both exchanges:
 3. Under **Edit restrictions**, select **Restrict access to trusted IPs only** and add the server IP.
 4. Copy the API key and secret. The secret is shown only once.
 
-Autopilot needs **Hedge Mode**. vergex sets it when it connects, but Binance refuses the change while you have open positions or orders. If you see `code=-4061`, close them and switch manually: Futures → Preferences → Position Mode → Hedge Mode.
+Traders need **Hedge Mode**. vergex sets it when it connects, but Binance refuses the change while you have open positions or orders. If you see `code=-4061`, close them and switch manually: Futures → Preferences → Position Mode → Hedge Mode.
 
 ## OKX
 

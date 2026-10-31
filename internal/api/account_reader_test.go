@@ -1,20 +1,13 @@
 package api
 
 import (
-	"path/filepath"
 	"testing"
 	"vergex/internal/store"
-
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	"vergex/internal/testdb"
 )
 
 func TestAccountInspectionDoesNotNeedAutopilotOrModel(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "account.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := testdb.Open(t)
 	sql, _ := db.DB()
 	defer sql.Close()
 	if err := db.AutoMigrate(&store.Exchange{}, &store.Trader{}); err != nil {

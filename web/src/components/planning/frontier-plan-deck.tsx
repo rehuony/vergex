@@ -1,4 +1,5 @@
 import type { Plan } from '@/api/planning'
+import { PanelState } from '@/components/common/panel'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n/translations'
 import type { PlanBatch } from '@/utils/planning/frontier-workspace'
@@ -47,6 +48,24 @@ export function FrontierPlanDeck({
           status: 'deferred',
           reason: entry.reason,
         }))
+  // Nothing has been generated: all there is to say is how to start.
+  if (
+    !batch &&
+    !plans.length &&
+    !planningBusy &&
+    !entryChecks.length &&
+    !waitingForEntry
+  ) {
+    return (
+      <section
+        className="frontier-plan-deck"
+        id="frontier-plans"
+        aria-label={label('entryPlans')}
+      >
+        <PanelState role="status">{label('noPlans')}</PanelState>
+      </section>
+    )
+  }
   return (
     <section
       className="frontier-plan-deck"
@@ -60,9 +79,7 @@ export function FrontierPlanDeck({
               ? label('waitingForEntry')
               : batch
                 ? label('latestPlans')
-                : plans.length
-                  ? label('savedIdea')
-                  : label('chooseEntry')}
+                : label('savedIdea')}
           </h2>
           <p>
             {waitingForEntry
@@ -79,9 +96,11 @@ export function FrontierPlanDeck({
                 : label('reviewHint')}
           </p>
         </div>
-        <span>
-          {label('planCount').replace('{count}', String(plans.length))}
-        </span>
+        {plans.length > 0 && (
+          <span>
+            {label('planCount').replace('{count}', String(plans.length))}
+          </span>
+        )}
       </div>
       <PlanStructures
         checks={entryChecks}

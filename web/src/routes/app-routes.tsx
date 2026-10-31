@@ -10,13 +10,13 @@ import { RegisterPage } from '@/pages/register-page'
 import { ResetPasswordPage } from '@/pages/reset-password-page'
 import { ResetAccountPage } from '@/pages/reset-account-page'
 import { SetupPage } from '@/pages/setup-page'
-import { AITradersPage } from '@/pages/ai-traders-page'
+import { TradersPage } from '@/pages/traders-page'
 import { FAQPage } from '@/pages/faq-page'
 import { ForecastBacktestsPage } from '@/pages/forecast-backtests-page'
-import { ForecastDetailPage } from '@/pages/forecast-detail-page'
 import { ForecastPage } from '@/pages/forecast-page'
+import { ForecastSettingsPage } from '@/pages/forecast-settings-page'
 import { ForecastStrategiesPage } from '@/pages/forecast-strategies-page'
-import { StrategyStudioPage } from '@/pages/strategy-studio-page'
+import { StrategiesPage } from '@/pages/strategies-page'
 import { TraderDetailPage } from '@/pages/trader-detail-page'
 import { TradingPlanningPage } from '@/pages/trading-planning-page'
 import { DashboardPage } from '@/pages/dashboard-page'
@@ -91,11 +91,11 @@ export function AppRoutes() {
           )}
         />
         <Route
-          path={ROUTES.autopilot}
+          path={ROUTES.traders}
           element={guard(
-            ROUTES.autopilot,
-            <AppChrome currentPage="autopilot" animateContent>
-              <AITradersPage />
+            ROUTES.traders,
+            <AppChrome currentPage="traders" animateContent>
+              <TradersPage />
             </AppChrome>
           )}
         />
@@ -103,7 +103,7 @@ export function AppRoutes() {
           path={ROUTES.traderDetail}
           element={guard(
             pathname,
-            <AppChrome currentPage="autopilot">
+            <AppChrome currentPage="traders">
               <TraderDetailPage />
             </AppChrome>
           )}
@@ -112,8 +112,8 @@ export function AppRoutes() {
           path={ROUTES.strategies}
           element={guard(
             ROUTES.strategies,
-            <AppChrome currentPage="autopilot" animateContent>
-              <StrategyStudioPage />
+            <AppChrome currentPage="strategies" animateContent>
+              <StrategiesPage />
             </AppChrome>
           )}
         />
@@ -145,11 +145,20 @@ export function AppRoutes() {
           )}
         />
         <Route
+          path={ROUTES.forecastSettings}
+          element={guard(
+            ROUTES.forecastSettings,
+            <AppChrome currentPage="forecast" animateContent>
+              <ForecastSettingsPage />
+            </AppChrome>
+          )}
+        />
+        <Route
           path={ROUTES.forecastDetail}
           element={guard(
             pathname,
             <AppChrome currentPage="forecast">
-              <ForecastDetailPage />
+              <ForecastPage />
             </AppChrome>
           )}
         />

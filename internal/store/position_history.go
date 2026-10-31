@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -265,7 +266,7 @@ func (s *PositionStore) CreateFromClosedPnL(traderID, exchangeID, exchangeType s
 
 	err = s.db.Create(pos).Error
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			return false, nil
 		}
 		return false, fmt.Errorf("failed to create position from closed PnL: %w", err)

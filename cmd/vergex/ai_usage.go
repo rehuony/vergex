@@ -20,6 +20,7 @@ func recordAIUsage(st *store.Store, prices *pricing.Service) func(llm.TokenUsage
 			TraderID:         usage.Owner,
 			Model:            usage.Model,
 			Provider:         usage.Provider,
+			Host:             llm.BaseHost(usage.BaseURL),
 			PromptTokens:     usage.PromptTokens,
 			CompletionTokens: usage.CompletionTokens,
 			CostUSD:          cost,

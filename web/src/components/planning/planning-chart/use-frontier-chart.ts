@@ -28,6 +28,11 @@ export function useFrontierChart(
 ) {
   const chart = useRef<PlanningChart | null>(null)
   const [price, setPrice] = useState('—')
+  // What the chart shows, once it exists.
+  const [interval, setInterval] = useState('')
+  // Goes up each time the chart starts a new scene, which clears what was drawn on it.
+  const [scene, setScene] = useState(0)
+  const [onForecast, setOnForecast] = useState(false)
   useEffect(() => {
     let cancelled = false
     let chartFailure = ''
@@ -45,7 +50,13 @@ export function useFrontierChart(
           symbol,
           onStatus: () => {},
           onPrice: (c: { close: string }) => !cancelled && setPrice(c.close),
-          onContext: () => {},
+          onContext: (context: { interval: string }) => {
+            if (cancelled) return
+            setInterval(context.interval)
+            setScene((current) => current + 1)
+          },
+          onForecastHover: (hovering: boolean) =>
+            !cancelled && setOnForecast(hovering),
           onError: reportChartFailure,
           onAvailability: (available: boolean) => {
             if (cancelled) return
@@ -79,6 +90,6 @@ export function useFrontierChart(
         list.length >= 2 ? list : []
       )
       .catch((e) => setError(e.message))
-  }, [current, compare, records, symbol, venue, runState])
-  return { chart, price, setPrice }
+  }, [current, compare, records, symbol, venue, runState, scene])
+  return { chart, price, setPrice, interval, scene, onForecast }
 }

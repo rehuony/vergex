@@ -333,6 +333,7 @@ func clientForProvider(provider string) llm.AIClient {
 	if client == nil {
 		client = llm.NewAIClientByProvider("deepseek")
 	}
+	llm.TagUsage(client, llm.OwnerTelegram)
 	return client
 }
 

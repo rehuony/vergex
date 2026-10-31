@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
+	"vergex/internal/activity"
 	"vergex/internal/api"
 	"vergex/internal/auth"
 	"vergex/internal/config"
@@ -17,6 +17,7 @@ import (
 	_ "vergex/internal/llm/provider"
 	"vergex/internal/logger"
 	"vergex/internal/manager"
+	"vergex/internal/market"
 	"vergex/internal/marketdata"
 	"vergex/internal/pricing"
 	"vergex/internal/safe"
@@ -61,30 +62,8 @@ func main() {
 	logger.Info("✅ Encryption service initialized successfully")
 
 	// Initialize database from configuration
-	// Ensure data directory exists (for SQLite)
-	if cfg.DBType == "sqlite" {
-		if dir := filepath.Dir(cfg.DBPath); dir != "." {
-			if err := os.MkdirAll(dir, 0755); err != nil {
-				logger.Errorf("Failed to create data directory: %v", err)
-			}
-		}
-	}
-
-	logger.Infof("📋 Initializing database (%s)...", cfg.DBType)
-	dbType := store.DBTypeSQLite
-	if cfg.DBType == "postgres" {
-		dbType = store.DBTypePostgres
-	}
-	st, err := store.NewWithConfig(store.DBConfig{
-		Type:     dbType,
-		Path:     cfg.DBPath,
-		Host:     cfg.DBHost,
-		Port:     cfg.DBPort,
-		User:     cfg.DBUser,
-		Password: cfg.DBPassword,
-		DBName:   cfg.DBName,
-		SSLMode:  cfg.DBSSLMode,
-	})
+	logger.Info("📋 Initializing database...")
+	st, err := store.New(databaseConfig(cfg))
 	if err != nil {
 		logger.Fatalf("❌ Failed to initialize database: %v", err)
 	}
@@ -92,19 +71,30 @@ func main() {
 
 	// AI cost tracking: record token usage of every AI call in ai_charges,
 	// priced from the models.dev catalog cached in the data directory.
-	dataDir := "data"
-	if cfg.DBType == "sqlite" {
-		dataDir = filepath.Dir(cfg.DBPath)
-	}
 	pricingCtx, stopPricing := context.WithCancel(context.Background())
 	defer stopPricing()
-	prices := pricing.NewService(dataDir)
+	prices := pricing.NewService("data")
 	prices.Start(pricingCtx)
 	llm.TokenUsageCallback = recordAIUsage(st, prices)
 
 	// Set JWT secret
 	auth.SetJWTSecret(cfg.JWTSecret)
 	logger.Info("🔑 JWT secret configured")
+
+	// Market data comes up before any trader can start. A failure here leaves the
+	// rest of the system running: trading reads the exchange directly without it.
+	marketCtx, stopMarket := context.WithCancel(context.Background())
+	defer stopMarket()
+	var marketData *marketdata.Service
+	marketStore, err := openMarketStore(cfg)
+	if err != nil {
+		logger.Errorf("Market data is unavailable: %v", err)
+	} else {
+		defer marketStore.Close()
+		marketData = marketdata.NewService(marketStore)
+		marketData.Start(marketCtx)
+		market.SetLiveSource(marketData)
+	}
 
 	// Create TraderManager
 	traderManager := manager.NewTraderManager()
@@ -141,16 +131,8 @@ func main() {
 	// Start API server
 	server := api.NewServer(traderManager, st, cryptoService, cfg.APIServerPort)
 
-	// Local market data for Forecast. It is not needed for trading, so a failure
-	// here leaves the rest of the system running.
-	marketCtx, stopMarket := context.WithCancel(context.Background())
-	defer stopMarket()
-	if marketStore, err := openMarketStore(cfg); err != nil {
-		logger.Errorf("Market data is unavailable: %v", err)
-	} else {
-		defer marketStore.Close()
-		marketData := marketdata.NewService(marketStore)
-		marketData.Start(marketCtx)
+	var forecastStore *forecast.Store
+	if marketData != nil {
 		server.SetMarketData(marketData)
 
 		forecasts, err := forecast.NewStore(marketStore.DB())
@@ -166,8 +148,16 @@ func main() {
 			})
 			engine.Start(marketCtx)
 			server.SetForecast(engine)
+			forecastStore = forecasts
 		}
 	}
+
+	// The Dashboard's event feed only reads the database.
+	activityCtx, stopActivity := context.WithCancel(context.Background())
+	defer stopActivity()
+	feed := activity.New(activity.Sources{Store: st, Forecasts: forecastStore, PlanRuns: server.PlanRunsChanged})
+	feed.Start(activityCtx)
+	server.SetActivity(feed)
 
 	// Telegram bot: saving its token, model or binding in Settings restarts it.
 	telegramReload := make(chan struct{}, 1)

@@ -5,24 +5,18 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	"vergex/internal/store"
+	"vergex/internal/testdb"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 func strategyServer(t *testing.T) (*store.Store, *gin.Engine) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "strategy.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := testdb.Open(t)
 	sql, _ := db.DB()
 	t.Cleanup(func() { sql.Close() })
 	if err := db.AutoMigrate(&store.Strategy{}); err != nil {

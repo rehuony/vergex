@@ -3,7 +3,7 @@ import { t, type Language } from '@/i18n/translations'
 import type { HistoricalPosition } from '@/types'
 import { cn } from '@/utils/cn'
 import { Panel, PanelState } from '@/components/common/panel'
-import { fmtUsd } from './trader-format'
+import { fmtUsd } from '@/utils/trader-format'
 
 interface Bucket {
   label: string

@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -137,6 +138,12 @@ func (db *DecisionRecordDB) toRecord() *DecisionRecord {
 	return record
 }
 
+// storableText makes model output safe for a PostgreSQL text column, which rejects
+// NUL bytes and invalid UTF-8.
+func storableText(text string) string {
+	return strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "\uFFFD")
+}
+
 // LogDecision logs decision
 func (s *DecisionStore) LogDecision(record *DecisionRecord) error {
 	if record.Timestamp.IsZero() {
@@ -154,16 +161,16 @@ func (s *DecisionStore) LogDecision(record *DecisionRecord) error {
 		TraderID:            record.TraderID,
 		CycleNumber:         record.CycleNumber,
 		Timestamp:           record.Timestamp,
-		SystemPrompt:        record.SystemPrompt,
-		InputPrompt:         record.InputPrompt,
-		CoTTrace:            record.CoTTrace,
-		DecisionJSON:        record.DecisionJSON,
-		RawResponse:         record.RawResponse,
+		SystemPrompt:        storableText(record.SystemPrompt),
+		InputPrompt:         storableText(record.InputPrompt),
+		CoTTrace:            storableText(record.CoTTrace),
+		DecisionJSON:        storableText(record.DecisionJSON),
+		RawResponse:         storableText(record.RawResponse),
 		CandidateCoins:      string(candidateCoinsJSON),
 		ExecutionLog:        string(executionLogJSON),
 		Decisions:           string(decisionsJSON),
 		Success:             record.Success,
-		ErrorMessage:        record.ErrorMessage,
+		ErrorMessage:        storableText(record.ErrorMessage),
 		AIRequestDurationMs: record.AIRequestDurationMs,
 	}
 
@@ -208,6 +215,25 @@ func (s *DecisionStore) FailedActionsSince(traderIDs []string, since time.Time, 
 		}
 	}
 	return out, nil
+}
+
+// CyclesAfter returns the records past an ID and no older than since, oldest first,
+// without their prompts and model output.
+func (s *DecisionStore) CyclesAfter(id int64, since time.Time, limit int) ([]*DecisionRecord, error) {
+	var rows []*DecisionRecordDB
+	err := s.db.Select("id, trader_id, cycle_number, timestamp, candidate_coins, decisions, success, error_message, ai_request_duration_ms").
+		Where("id > ? AND timestamp >= ?", id, since).
+		Order("id ASC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to query decision cycles: %w", err)
+	}
+	records := make([]*DecisionRecord, 0, len(rows))
+	for _, row := range rows {
+		records = append(records, row.toRecord())
+	}
+	return records, nil
 }
 
 // GetLatestRecords gets the latest N records for specified trader (sorted by time in ascending order: old to new)

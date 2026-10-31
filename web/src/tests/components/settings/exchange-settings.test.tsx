@@ -165,7 +165,7 @@ it('replaces only the keys typed into an edit', async () => {
   )
 })
 
-it('will not delete an account an Autopilot trades on', async () => {
+it('will not delete an account a trader trades on', async () => {
   mocks.traders.mockResolvedValue([
     { trader_id: 't1', trader_name: 'Alpha', exchange_id: 'exchange' },
   ])
@@ -175,7 +175,7 @@ it('will not delete an account an Autopilot trades on', async () => {
   await new Promise((resolve) => setTimeout(resolve, 0))
   fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
   expect(
-    await screen.findByText('Used by Alpha. Delete those Autopilots first.')
+    await screen.findByText('Used by Alpha. Delete those traders first.')
   ).toBeVisible()
   expect(mocks.confirm).not.toHaveBeenCalled()
   expect(mocks.remove).not.toHaveBeenCalled()

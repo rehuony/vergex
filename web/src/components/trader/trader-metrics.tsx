@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react'
-import type { AccountInfo, Position, TraderFullStats } from '@/types'
+import type {
+  AccountInfo,
+  Position,
+  TraderFullStats,
+  TraderMetrics as StoredMetrics,
+} from '@/types'
 import { t, type Language } from '@/i18n/translations'
 import { cn } from '@/utils/cn'
 import { Panel } from '@/components/common/panel'
-import { fmtCountdown, fmtPct, fmtUsd } from './trader-format'
+import { fmtCountdown, fmtPct, fmtTime, fmtUsd } from '@/utils/trader-format'
 
 interface TraderMetricsProps {
   account?: AccountInfo
+  /** The last read of the account failed, so what it holds is out of date. */
+  accountFailed: boolean
+  /** What the trader last stored, to show when the account has never been read. */
+  stored?: StoredMetrics
   stats?: TraderFullStats
   positions?: Position[]
   running?: boolean
@@ -65,6 +74,8 @@ function Line({ label, value }: { label: string; value: string }) {
 // and trade totals as one line each.
 export function TraderMetrics({
   account,
+  accountFailed,
+  stored,
   stats,
   positions,
   running,
@@ -72,20 +83,37 @@ export function TraderMetrics({
   language,
 }: TraderMetricsProps) {
   const pnl = account?.total_pnl
-  const label = (key: string) => t(`traderDetail.${key}`, language)
-  const metrics = [
+  const label = (key: string, params?: Record<string, string | number>) =>
+    t(`traderDetail.${key}`, language, params)
+  // A failed read keeps the last real values, marked. An account that has never been
+  // read falls back to what the trader stored in its last cycle.
+  const useStored = accountFailed && !account && stored?.equity != null
+  const staleNote = !accountFailed
+    ? undefined
+    : account
+      ? label('equityNotUpdating')
+      : useStored
+        ? label('equityAsOf', { time: fmtTime(stored?.equity_at) })
+        : undefined
+  const metrics: {
+    label: string
+    value: string
+    tone?: number
+    className?: string
+  }[] = [
     {
       label: label('equity'),
-      value: fmtUsd(account?.total_equity),
+      value: fmtUsd(useStored ? stored?.equity : account?.total_equity),
       className: 'max-sm:col-span-2',
     },
     {
       label: label('totalPnl'),
-      value:
-        pnl == null
+      value: useStored
+        ? fmtPct(stored?.return_pct)
+        : pnl == null
           ? '—'
           : `${fmtUsd(pnl, true)} (${fmtPct(account?.total_pnl_pct)})`,
-      tone: pnl,
+      tone: useStored ? stored?.return_pct : pnl,
     },
     {
       label: label('realizedPnl'),
@@ -140,14 +168,23 @@ export function TraderMetrics({
             value={book.leverage == null ? '—' : `${book.leverage.toFixed(1)}×`}
           />
           <Line label={label('largest')} value={percent(book.largest)} />
-          {running && (
-            <span className="whitespace-nowrap sm:ml-auto">
-              <span className="text-vergex-text-muted">
-                {label('nextCycle')}
-              </span>{' '}
-              <span className="font-medium tabular-nums text-vergex-text">
-                <NextCycle at={nextCycleMs} />
-              </span>
+          {(staleNote || running) && (
+            <span className="flex flex-wrap gap-x-5 gap-y-1 whitespace-nowrap sm:ml-auto">
+              {staleNote && (
+                <span role="status" className="text-[var(--warning)]">
+                  {staleNote}
+                </span>
+              )}
+              {running && (
+                <span>
+                  <span className="text-vergex-text-muted">
+                    {label('nextCycle')}
+                  </span>{' '}
+                  <span className="font-medium tabular-nums text-vergex-text">
+                    <NextCycle at={nextCycleMs} />
+                  </span>
+                </span>
+              )}
             </span>
           )}
         </div>

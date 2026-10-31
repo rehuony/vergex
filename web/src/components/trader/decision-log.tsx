@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import useSWR from 'swr'
 import {
   Check,
@@ -14,6 +15,7 @@ import { Panel, PanelState } from '@/components/common/panel'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/utils/cn'
+import { pollEvery } from '@/utils/poll'
 import { DecisionDetailDialog } from './decision-detail-dialog'
 import {
   actionSide,
@@ -24,7 +26,7 @@ import {
   tradeActions,
   type LogTone,
 } from './decision-format'
-import { baseLabel } from './trader-format'
+import { baseLabel } from '@/utils/trader-format'
 
 const PAGE_SIZE = 50
 
@@ -148,13 +150,17 @@ export function DecisionLog({
   const { data: newest, error } = useSWR(
     ['decision-summaries', traderId],
     () => api.getDecisionSummaries(traderId, PAGE_SIZE, undefined, true),
-    { refreshInterval: 30000, shouldRetryOnError: false }
+    pollEvery(30000)
   )
   const [older, setOlder] = useState<DecisionRecord[]>([])
   const [hasMore, setHasMore] = useState(true)
   const [loadingOlder, setLoadingOlder] = useState(false)
   const [olderFailed, setOlderFailed] = useState(false)
-  const [open, setOpen] = useState<number | null>(null)
+  // The Dashboard links straight to a decision.
+  const [params, setParams] = useSearchParams()
+  const [open, setOpen] = useState<number | null>(
+    () => Number(params.get('decision')) || null
+  )
 
   useEffect(() => {
     setOlder([])
@@ -237,7 +243,10 @@ export function DecisionLog({
           traderId={traderId}
           decisionId={open}
           language={language}
-          onClose={() => setOpen(null)}
+          onClose={() => {
+            setOpen(null)
+            if (params.has('decision')) setParams({}, { replace: true })
+          }}
         />
       )}
     </Panel>

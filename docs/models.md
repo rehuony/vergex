@@ -34,6 +34,6 @@ Token usage of every call is stored locally and priced from the public [models.d
 
 ## Which models see what
 
-- **Autopilot** sends market data and your account state to the model bound to the trader on every cycle.
+- **Traders** send market data and your account state to the model bound to the trader on every cycle.
 - **Frontier** uses the model you select on the page. Keys never enter prompts or browser responses.
 - **Telegram** uses the model chosen in Settings → Telegram, or picks an enabled one automatically.

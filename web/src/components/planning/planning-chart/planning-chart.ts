@@ -4,8 +4,15 @@ import {
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type UTCTimestamp,
 } from 'lightweight-charts'
-import type { ChartContext, Drawing, Plan, PlanningChart } from '@/api/planning'
+import type {
+  ChartContext,
+  Drawing,
+  ForecastCandle,
+  Plan,
+  PlanningChart,
+} from '@/api/planning'
 import { THEME_EVENT } from '@/contexts/theme-context'
 import {
   type CandleResponse,
@@ -22,6 +29,7 @@ import {
   toVolume,
 } from './planning-chart-data'
 import {
+  addProjectionSeries,
   colors,
   createMarketChart,
   themeOptions,
@@ -42,7 +50,7 @@ import {
 } from './planning-chart-shapes'
 
 // Frontier market chart on lightweight-charts. Candles come from
-// /api/planning/candles (history) and /api/planning/feed (SSE, ~3 s).
+// /api/planning/candles (history) and /api/planning/feed (SSE).
 // Plan levels, plan comparisons and AI drawings are painted on top.
 
 const initialBars = 500
@@ -58,6 +66,7 @@ export interface WorkspaceChartOptions {
   onContext?: (context: ChartContext) => void
   onError?: (message: string) => void
   onAvailability?: (available: boolean, message?: string) => void
+  onForecastHover?: (hovering: boolean) => void
 }
 
 export class WorkspaceChart implements PlanningChart {
@@ -71,11 +80,15 @@ export class WorkspaceChart implements PlanningChart {
   private readonly onAvailability: NonNullable<
     WorkspaceChartOptions['onAvailability']
   >
+  private readonly onForecastHover: NonNullable<
+    WorkspaceChartOptions['onForecastHover']
+  >
   private root: HTMLDivElement | null = null
   private toolbar: HTMLDivElement | null = null
   private chart: IChartApi | null = null
   private candles: ISeriesApi<'Candlestick'> | null = null
   private volume: ISeriesApi<'Histogram'> | null = null
+  private projection: ISeriesApi<'Candlestick'> | null = null
   private overlay: OverlayPrimitive
   private loadError = ''
   private disposed = false
@@ -90,6 +103,7 @@ export class WorkspaceChart implements PlanningChart {
   private plan: Plan | null = null
   private comparisonPlans: Plan[] = []
   private focused = false
+  private focusOnLoad = false
   private planLines: IPriceLine[] = []
   private planShapes: Shape[] = []
   private aiLines: IPriceLine[] = []
@@ -109,6 +123,7 @@ export class WorkspaceChart implements PlanningChart {
     this.onContext = options.onContext || (() => {})
     this.onError = options.onError || (() => {})
     this.onAvailability = options.onAvailability || (() => {})
+    this.onForecastHover = options.onForecastHover || (() => {})
     this.overlay = new OverlayPrimitive((time) =>
       logicalAt(this.times, this.step(), time)
     )
@@ -156,10 +171,18 @@ export class WorkspaceChart implements PlanningChart {
     chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
       if (range && range.from < 20) this.loadOlder()
     })
+    // A time past the last real candle is on a simulated one.
+    chart.subscribeCrosshairMove((param) => {
+      this.onForecastHover(
+        typeof param.time === 'number' &&
+          param.time > (this.times[this.times.length - 1] ?? Infinity)
+      )
+    })
     this.chart = chart
     window.addEventListener(THEME_EVENT, this.repaintTheme)
     this.candles = candles
     this.volume = volume
+    this.projection = addProjectionSeries(chart)
   }
 
   private markResolution() {
@@ -248,6 +271,7 @@ export class WorkspaceChart implements PlanningChart {
     this.exhausted = false
     this.lastReceived = 0
     this.setRows([])
+    this.projection?.setData([])
     this.onAvailability(false, 'Loading ' + this.symbol + ' candles…')
     this.onStatus('Connecting market feed…', false)
     this.loadPrecision(scene)
@@ -280,6 +304,8 @@ export class WorkspaceChart implements PlanningChart {
         from: Math.max(0, n - 120),
         to: n + 8,
       })
+      if (this.focusOnLoad) this.fitFocusedPlan()
+      this.focusOnLoad = false
       this.onAvailability(true)
       this.onPrice(this.rows[n - 1], data)
     }
@@ -395,7 +421,7 @@ export class WorkspaceChart implements PlanningChart {
         ? 'Market data is stale'
         : data.mode === 'demo'
           ? 'Demo data · not live prices'
-          : 'Market feed active · updates every 3 seconds',
+          : 'Market feed active',
       Boolean(data.stale)
     )
     const latest = this.rows[this.rows.length - 1]
@@ -416,6 +442,7 @@ export class WorkspaceChart implements PlanningChart {
     this.plan = null
     this.comparisonPlans = []
     this.focused = false
+    this.focusOnLoad = false
     this.aiCandidates = []
     this.clearManual()
     this.markResolution()
@@ -432,6 +459,35 @@ export class WorkspaceChart implements PlanningChart {
     this.markResolution()
     this.onContext(this.context())
     await this.loadScene(scene)
+  }
+
+  // setForecast draws simulated candles, if they are for what the chart shows now.
+  // They share the bar spacing of the real ones and only extend past them, so plan
+  // levels and zones, placed by bar index, stay where they are.
+  setForecast(
+    venue: string,
+    symbol: string,
+    interval: string,
+    rows: ForecastCandle[]
+  ) {
+    if (
+      venue !== this.venue ||
+      symbol !== this.symbol ||
+      interval !== resolutions[this.resolution]
+    )
+      return
+    // New bars at the right edge would otherwise scroll the chart under the user.
+    const view = this.chart?.timeScale().getVisibleLogicalRange()
+    this.projection?.setData(
+      rows.map((row) => ({
+        time: row.time as UTCTimestamp,
+        open: row.open,
+        high: row.high,
+        low: row.low,
+        close: row.close,
+      }))
+    )
+    if (view) this.chart?.timeScale().setVisibleLogicalRange(view)
   }
 
   async plot(plan: Plan | null, _phase = 'draft', comparisons: Plan[] = []) {
@@ -529,9 +585,18 @@ export class WorkspaceChart implements PlanningChart {
     }
   }
 
+  // A plan opened by a link can get here before its candles: it fits once they load.
   async focusPlan() {
     await this.whenReady()
-    if (!this.plan || !this.times.length) return
+    if (!this.plan) return
+    if (!this.times.length) {
+      this.focusOnLoad = true
+      return
+    }
+    this.fitFocusedPlan()
+  }
+
+  private fitFocusedPlan() {
     this.focused = true
     const n = this.times.length
     this.chart?.timeScale().setVisibleLogicalRange({
@@ -626,6 +691,7 @@ export class WorkspaceChart implements PlanningChart {
     this.chart = null
     this.candles = null
     this.volume = null
+    this.projection = null
     this.root?.remove()
     this.root = null
   }

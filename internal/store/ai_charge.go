@@ -14,6 +14,7 @@ type AICharge struct {
 	TraderID         string    `gorm:"column:trader_id;not null;index:idx_ai_charges_trader" json:"trader_id"`
 	Model            string    `gorm:"column:model;not null" json:"model"`
 	Provider         string    `gorm:"column:provider;not null" json:"provider"`
+	Host             string    `gorm:"column:host;not null;default:''" json:"host"`
 	PromptTokens     int       `gorm:"column:prompt_tokens;not null;default:0" json:"prompt_tokens"`
 	CompletionTokens int       `gorm:"column:completion_tokens;not null;default:0" json:"completion_tokens"`
 	CostUSD          float64   `gorm:"column:cost_usd;not null" json:"cost_usd"`
@@ -43,6 +44,13 @@ func (s *AIChargeStore) Record(charge *AICharge) error {
 		charge.CostUSD = 0
 	}
 	return s.db.Create(charge).Error
+}
+
+// After returns the charges past an ID and no older than since, oldest first.
+func (s *AIChargeStore) After(id int64, since time.Time, limit int) ([]AICharge, error) {
+	var charges []AICharge
+	err := s.db.Where("id > ? AND created_at >= ?", id, since).Order("id ASC").Limit(limit).Find(&charges).Error
+	return charges, err
 }
 
 // GetCharges returns charges for a trader within a period, plus total cost

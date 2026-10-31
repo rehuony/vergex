@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import type { Overview } from '@/api/overview'
 import { Panel, PanelState } from '@/components/common/panel'
-import { baseLabel, fmtUsd } from '@/components/trader/trader-format'
+import { baseLabel, fmtUsd } from '@/utils/trader-format'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { t, type Language } from '@/i18n/translations'
 import { cn } from '@/utils/cn'

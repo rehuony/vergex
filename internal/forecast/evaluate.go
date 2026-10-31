@@ -336,15 +336,24 @@ func stochasticFactor(klines []market.Kline, period int) float64 {
 }
 
 func vwapFactor(klines []market.Kline, period int, atr float64) float64 {
+	vwap, ok := rollingVWAP(klines, period)
+	if !ok {
+		return 0
+	}
+	return math.Tanh((klines[len(klines)-1].Close - vwap) / atr / 2)
+}
+
+// rollingVWAP is the volume-weighted average price of the last period candles.
+func rollingVWAP(klines []market.Kline, period int) (float64, bool) {
 	var priced, volume float64
-	for _, k := range klines[len(klines)-period:] {
+	for _, k := range klines[max(0, len(klines)-period):] {
 		priced += (k.High + k.Low + k.Close) / 3 * k.Volume
 		volume += k.Volume
 	}
 	if volume <= 0 {
-		return 0
+		return 0, false
 	}
-	return math.Tanh((klines[len(klines)-1].Close - priced/volume) / atr / 2)
+	return priced / volume, true
 }
 
 // rsiSeries returns RSI for every bar, with Wilder smoothing.

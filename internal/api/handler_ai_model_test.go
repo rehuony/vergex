@@ -11,7 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"vergex/internal/llm"
-	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 )
 
 // fakeModelClient records the settings a model test used and answers with err.
@@ -36,10 +36,7 @@ func (f *fakeModelClient) CallWithRequestFull(*llm.Request) (*llm.LLMResponse, e
 func TestModelTestUsesFormValuesAndSavedKey(t *testing.T) {
 	// The handler reads config for transport encryption (off by default).
 	t.Setenv("JWT_SECRET", strings.Repeat("model-test-secret-", 4))
-	st, err := store.New(t.TempDir() + "/vergex.db")
-	if err != nil {
-		t.Fatalf("store.New failed: %v", err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 	if err := st.AIModel().Create("owner", "owner_deepseek", "DeepSeek", "deepseek", true, "sk-saved-key", ""); err != nil {
 		t.Fatalf("create model: %v", err)

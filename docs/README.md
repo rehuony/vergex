@@ -7,10 +7,10 @@
 | Binance and OKX API keys | [exchanges.md](exchanges.md) |
 | Dashboard: the read-only overview | [dashboard.md](dashboard.md) |
 | Frontier: AI-assisted trade planning and execution | [frontier.md](frontier.md) |
-| Autopilot: strategies, prompts, risk limits, grid | [autopilot.md](autopilot.md) |
+| Traders and strategies: prompts, risk limits, grid | [traders.md](traders.md) |
 | Telegram assistant | [telegram.md](telegram.md) |
 | Market data: local candles, rate limits and history | [market-data.md](market-data.md) |
-| Forecast: experimental signals, versions, backtests | [forecast.md](forecast.md) |
+| Forecast: experimental signals, strategies, backtests | [forecast.md](forecast.md) |
 | Remote access with TLS | [deployment.md](deployment.md) |
 | Common problems | [troubleshooting.md](troubleshooting.md) |
 | Code layout and main flows | [architecture.md](architecture.md) |

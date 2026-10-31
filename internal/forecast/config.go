@@ -2,7 +2,7 @@
 // records each call and checks it later. It is an experiment to find out whether
 // such signals have value, and nothing trades on them.
 //
-// Evaluate is a pure function of a strategy version and the data up to a moment,
+// Evaluate is a pure function of a strategy and the data up to a moment,
 // so live forecasts and backtests give the same answer for the same candle.
 package forecast
 
@@ -12,12 +12,12 @@ import (
 	"sort"
 )
 
-// EngineVersion goes up whenever factor code changes what a version computes,
+// EngineVersion goes up whenever factor code changes what a strategy computes,
 // so results from different code are not compared as if they were the same.
 const EngineVersion = 1
 
 // ScorerWeighted combines factors by weight, the only scorer so far. Strategies
-// carry the field so other ways of scoring can use the same versions, records,
+// carry the field so other ways of scoring can use the same strategies, records,
 // verification and backtests.
 const ScorerWeighted = "weighted"
 
@@ -59,7 +59,7 @@ type FactorConfig struct {
 	Ranging  float64 `json:"ranging"`
 }
 
-// Config is everything a strategy version decides.
+// Config is everything a strategy decides.
 type Config struct {
 	Scorer  string                  `json:"scorer"`
 	Factors map[string]FactorConfig `json:"factors"`

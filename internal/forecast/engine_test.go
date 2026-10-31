@@ -2,23 +2,23 @@ package forecast
 
 import (
 	"context"
+	"errors"
 	"math"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"vergex/internal/marketdata"
 	"vergex/internal/provider/binance"
+	"vergex/internal/testdb"
 )
 
 func engineFixture(t *testing.T) (*Engine, *marketdata.Series, *[]string, *time.Time) {
 	t.Helper()
-	marketStore, err := marketdata.Open(filepath.Join(t.TempDir(), "market.db"))
+	marketStore, err := marketdata.NewStore(testdb.Open(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { marketStore.Close() })
 	if err := marketStore.SaveSettings(true, []string{"BTCUSDT"}, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -63,8 +63,8 @@ func TestEngineRecordsEachCandleOnceAndJudgesItLater(t *testing.T) {
 
 	engine.Tick(context.Background())
 	engine.Tick(context.Background())
-	version, _ := engine.Store.ActiveVersion(*clock)
-	records, _ := engine.Store.RecentRecords(version.ID, series.ID, 10)
+	strategy, _ := engine.Store.ActiveStrategy(*clock)
+	records, _ := engine.Store.RecentRecords(strategy.ID, series.ID, 10)
 	if len(records) != 1 {
 		t.Fatalf("records = %d, want one per candle", len(records))
 	}
@@ -81,7 +81,7 @@ func TestEngineRecordsEachCandleOnceAndJudgesItLater(t *testing.T) {
 	*clock = time.UnixMilli(int64(WindowBars+record.Horizon) * hour)
 	engine.Tick(context.Background())
 
-	records, _ = engine.Store.RecentRecords(version.ID, series.ID, 20)
+	records, _ = engine.Store.RecentRecords(strategy.ID, series.ID, 20)
 	oldest := records[len(records)-1]
 	if oldest.OpenTime != record.OpenTime {
 		t.Fatalf("oldest = %d", oldest.OpenTime)
@@ -119,25 +119,25 @@ func TestJudgeCallsHitsMissesAndNeutrals(t *testing.T) {
 	}
 }
 
-func TestVersionsCannotBeChangedAndActivationSwitchesRecords(t *testing.T) {
+func TestStrategiesCannotBeChangedAndActivationSwitchesRecords(t *testing.T) {
 	engine, series, _, clock := engineFixture(t)
 	fill(t, engine, series, WindowBars, 0.3)
 	*clock = time.UnixMilli(int64(WindowBars) * hour)
 	engine.Tick(context.Background())
-	first, _ := engine.Store.ActiveVersion(*clock)
+	first, _ := engine.Store.ActiveStrategy(*clock)
 
 	changed := DefaultConfig()
 	changed.Slope = 9
-	second, err := engine.Store.CreateVersion(changed, "steeper", *clock)
+	second, err := engine.Store.CreateStrategy(changed, "steeper", *clock)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if second.ID == first.ID {
-		t.Fatal("saving should make a new version")
+		t.Fatal("saving should make a new strategy")
 	}
-	reread, _ := engine.Store.VersionByID(first.ID)
+	reread, _ := engine.Store.StrategyByID(first.ID)
 	if reread.Config.Slope != DefaultConfig().Slope {
-		t.Fatal("the old version changed")
+		t.Fatal("the old strategy changed")
 	}
 	if err := engine.Store.Activate(second.ID); err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestVersionsCannotBeChangedAndActivationSwitchesRecords(t *testing.T) {
 	own, _ := engine.Store.RecentRecords(second.ID, series.ID, 10)
 	old, _ := engine.Store.RecentRecords(first.ID, series.ID, 10)
 	if len(own) != 1 || len(old) != 1 {
-		t.Fatalf("each version keeps its own records: %d and %d", len(own), len(old))
+		t.Fatalf("each strategy keeps its own records: %d and %d", len(own), len(old))
 	}
 	if own[0].ProbFull == old[0].ProbFull {
 		t.Fatal("a steeper slope should change the probability")
@@ -191,19 +191,174 @@ func TestCalibrationNeedsEnoughNonOverlappingSamples(t *testing.T) {
 		t.Fatalf("kept %d of 500 with a 4-bar horizon, want 125", len(got))
 	}
 	engine, series, _, clock := engineFixture(t)
-	version, _ := engine.Store.ActiveVersion(*clock)
+	strategy, _ := engine.Store.ActiveStrategy(*clock)
 	for i, record := range records {
-		record.VersionID, record.SeriesID, record.Symbol, record.Interval = version.ID, series.ID, "BTCUSDT", "1h"
+		record.StrategyID, record.SeriesID, record.Symbol, record.Interval = strategy.ID, series.ID, "BTCUSDT", "1h"
 		record.Status, record.Outcome, record.Direction = StatusVerified, OutcomeHit, DirectionUp
 		record.OpenTime = int64(i) * hour
 		if _, err := engine.Store.SaveRecord(&record); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := engine.Calibrate(version, "1h"); err != nil {
+	if err := engine.Calibrate(strategy, "1h"); err != nil {
 		t.Fatal(err)
 	}
-	if curves, _ := engine.Store.Calibrations(version.ID); len(curves["1h"]) != 0 {
+	if curves, _ := engine.Store.Calibrations(strategy.ID); len(curves["1h"]) != 0 {
 		t.Fatal("125 samples should not be enough")
+	}
+}
+
+func TestDetailOnlyShowsAFormingCandleTheStreamVouchesFor(t *testing.T) {
+	engine, series, _, _ := engineFixture(t)
+	fill(t, engine, series, WindowBars, 0.3)
+	strategy, err := engine.Store.ActiveStrategy(engine.now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, err := engine.Detail(strategy, series.Symbol, series.Interval, nil, DetailOptions{Indicators: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Forming != nil {
+		t.Fatalf("forming = %+v with no stream running", detail.Forming)
+	}
+	if len(detail.Projection) != detail.Result.Horizon {
+		t.Fatalf("projection = %d candles, horizon = %d", len(detail.Projection), detail.Result.Horizon)
+	}
+	if detail.Indicators == nil || len(detail.Indicators.RSI) == 0 {
+		t.Fatalf("indicators = %+v, they were asked for", detail.Indicators)
+	}
+}
+
+func TestRecordStatsCountHitsAndHowOftenPriceRose(t *testing.T) {
+	engine, series, _, clock := engineFixture(t)
+	strategy, err := engine.Store.ActiveStrategy(*clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, row := range []struct {
+		direction string
+		target    float64
+	}{{DirectionUp, 110}, {DirectionUp, 90}, {DirectionDown, 90}, {DirectionNeutral, 110}, {DirectionUp, 100}} {
+		record := Record{StrategyID: strategy.ID, SeriesID: series.ID, OpenTime: int64(i) * hour, Symbol: "BTCUSDT", Interval: "1h", Close: 100, Direction: row.direction, TargetTime: int64(i) * hour, Status: StatusOpen}
+		Judge(&record, row.target, 1)
+		if _, err := engine.Store.SaveRecord(&record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stats, err := engine.Store.RecordStats(strategy.ID, series.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats != (RecordStats{Hits: 2, Misses: 1, Moved: 4, Rose: 2}) {
+		t.Fatalf("stats = %+v", stats)
+	}
+}
+
+func TestAStrategyNeedsANameOfItsOwn(t *testing.T) {
+	engine, _, _, clock := engineFixture(t)
+	if _, err := engine.Store.CreateStrategy(DefaultConfig(), "  ", *clock); err == nil {
+		t.Fatal("a blank name should be refused")
+	}
+	if _, err := engine.Store.CreateStrategy(DefaultConfig(), "Fast", *clock); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Store.CreateStrategy(DefaultConfig(), "Fast", *clock); err == nil {
+		t.Fatal("a repeated name should be refused")
+	}
+}
+
+func TestDeletingAStrategyTakesItsRecordsAndBacktestsButNotTheOneInUse(t *testing.T) {
+	engine, series, _, clock := engineFixture(t)
+	fill(t, engine, series, WindowBars, 0.3)
+	inUse, err := engine.Store.ActiveStrategy(*clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Store.DeleteStrategy(inUse.ID, *clock); !errors.Is(err, ErrStrategyInUse) {
+		t.Fatalf("err = %v, want it refused", err)
+	}
+
+	other, err := engine.Store.CreateStrategy(DefaultConfig(), "Other", *clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Store.Activate(other.ID); err != nil {
+		t.Fatal(err)
+	}
+	engine.Tick(context.Background())
+	records, err := engine.Store.RecentRecords(other.ID, series.ID, 5)
+	if err != nil || len(records) == 0 {
+		t.Fatalf("records = %d, err = %v", len(records), err)
+	}
+	run, err := engine.Store.CreateBacktest(other.ID, BacktestOptions{Symbols: []string{"BTCUSDT"}, Intervals: []string{"1h"}}, *clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Store.Activate(inUse.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Store.DeleteStrategy(other.ID, *clock); !errors.Is(err, ErrStrategyBusy) {
+		t.Fatalf("err = %v, a running backtest should hold it", err)
+	}
+	if err := engine.Store.finishBacktest(run.ID, nil, "", *clock); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Store.DeleteStrategy(other.ID, *clock); err != nil {
+		t.Fatal(err)
+	}
+	if records, _ := engine.Store.RecentRecords(other.ID, series.ID, 5); len(records) != 0 {
+		t.Fatalf("records = %d after deleting", len(records))
+	}
+	if runs, _ := engine.Store.Backtests(10); len(runs) != 0 {
+		t.Fatalf("backtests = %d after deleting", len(runs))
+	}
+	if err := engine.Store.DeleteStrategy(other.ID, *clock); !errors.Is(err, ErrStrategyAbsent) {
+		t.Fatalf("err = %v deleting twice", err)
+	}
+}
+
+func TestOverlayDrawsTheCallOnlyWhenTheCandlesAreCurrent(t *testing.T) {
+	engine, series, _, clock := engineFixture(t)
+	strategy, err := engine.Store.ActiveStrategy(*clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing stored yet.
+	overlay, err := engine.OverlayFor(strategy, series.Symbol, series.Interval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overlay.Pending != PendingFetching || len(overlay.Projection) != 0 {
+		t.Fatalf("overlay = %+v", overlay)
+	}
+
+	fill(t, engine, series, WindowBars, 0.3)
+	last := int64(WindowBars-1) * hour
+	*clock = time.UnixMilli(last + 2*hour)
+	engine.Tick(context.Background())
+	overlay, err = engine.OverlayFor(strategy, series.Symbol, series.Interval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overlay.Pending != "" || overlay.Direction == "" {
+		t.Fatalf("overlay = %+v", overlay)
+	}
+	if want := DefaultConfig().Horizons["1h"]; len(overlay.Projection) != want {
+		t.Fatalf("projection = %d, want %d", len(overlay.Projection), want)
+	}
+	if first := overlay.Projection[0].Time; first != (last+hour)/1000 {
+		t.Fatalf("first projected candle at %d, want the one after the last closed", first)
+	}
+
+	// Hours later with no new candles, drawing it would start in the past.
+	*clock = time.UnixMilli(last + 10*hour)
+	overlay, err = engine.OverlayFor(strategy, series.Symbol, series.Interval)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if overlay.Pending != PendingFetching || len(overlay.Projection) != 0 {
+		t.Fatalf("overlay = %+v", overlay)
 	}
 }

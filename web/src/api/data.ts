@@ -9,6 +9,7 @@ import type {
   Statistics,
   TraderFullStats,
   TraderOrder,
+  HistoricalPosition,
   PositionHistoryResponse,
 } from '@/types'
 import { API_BASE, httpClient } from './helpers'
@@ -231,6 +232,21 @@ export const dataApi = {
     )
     if (!result.success) throw new Error('Failed to fetch position history')
     return result.data!
+  },
+
+  async getOlderPositions(
+    traderId: string,
+    before: number,
+    limit: number
+  ): Promise<HistoricalPosition[]> {
+    const result = await httpClient.request<{
+      positions: HistoricalPosition[]
+    }>(
+      `${API_BASE}/positions/history?trader_id=${traderId}&limit=${limit}&before=${before}`,
+      { silent: true }
+    )
+    if (!result.success) throw new Error('Failed to fetch position history')
+    return result.data?.positions ?? []
   },
 
   async getAICostSummary(

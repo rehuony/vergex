@@ -2,8 +2,9 @@
 # env-keys.sh — prepare .env for docker compose (called by `make init` / `make regen-keys`).
 #
 #   scripts/env-keys.sh init    create .env from .env.example if missing and fill
-#                               JWT_SECRET, DATA_ENCRYPTION_KEY and RSA_PRIVATE_KEY
-#                               when they are empty or placeholders (never overwrites)
+#                               JWT_SECRET, DATA_ENCRYPTION_KEY, RSA_PRIVATE_KEY and
+#                               DB_PASSWORD when they are empty or placeholders
+#                               (never overwrites)
 #   scripts/env-keys.sh regen   regenerate all three keys (asks for confirmation;
 #                               existing encrypted data becomes unreadable)
 set -eu
@@ -34,6 +35,7 @@ set_var() {
 
 gen_jwt() { set_var JWT_SECRET "$(openssl rand -base64 32)"; }
 gen_data_key() { set_var DATA_ENCRYPTION_KEY "$(openssl rand -base64 32)"; }
+gen_db_password() { set_var DB_PASSWORD "$(openssl rand -hex 24)"; }
 # The PEM is stored on one line with literal \n, which the .env loader expands.
 gen_rsa() { set_var RSA_PRIVATE_KEY "\"$(openssl genrsa 2048 2>/dev/null | awk '{printf "%s\\n", $0}')\""; }
 
@@ -50,6 +52,7 @@ init)
 	configured JWT_SECRET || { gen_jwt && echo "Generated JWT_SECRET"; }
 	configured DATA_ENCRYPTION_KEY || { gen_data_key && echo "Generated DATA_ENCRYPTION_KEY"; }
 	configured RSA_PRIVATE_KEY || { gen_rsa && echo "Generated RSA_PRIVATE_KEY"; }
+	configured DB_PASSWORD || { gen_db_password && echo "Generated DB_PASSWORD"; }
 	chmod 600 "$ENV_FILE" 2>/dev/null || true
 	echo "$ENV_FILE is ready"
 	;;

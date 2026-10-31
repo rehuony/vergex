@@ -22,9 +22,14 @@ const (
 	// DefaultFundingBudget is the requests per minute for /fapi/v1/fundingRate,
 	// which shares 500 per 5 minutes with fundingInfo.
 	DefaultFundingBudget = 60
+	// DefaultTradingBudget is the weight per minute for reads a running trader is
+	// waiting on, kept apart so a long catch-up cannot queue them.
+	DefaultTradingBudget = 600
 
 	// usedWeightPause is the X-MBX-USED-WEIGHT-1M reading above which background
-	// requests wait for the next minute. It includes live trading's traffic.
+	// requests wait for the next minute. It includes live trading's traffic, and
+	// trading's own reads do not wait for it: well under the real limit, they matter
+	// more than anything queued behind them.
 	usedWeightPause = 1200
 
 	minRateBackoff = time.Minute
@@ -39,6 +44,7 @@ const (
 	BudgetWeight Budget = iota
 	BudgetData
 	BudgetFunding
+	BudgetTrading
 )
 
 // LimiterStatus is what the limiter last knew, for status displays.
@@ -56,8 +62,10 @@ type Limiter struct {
 	budgets     map[Budget]int
 	used        map[Budget]int
 	minute      int64
-	pausedUntil time.Time
+	pausedUntil time.Time // Everything waits: the exchange said to stop.
+	busyUntil   time.Time // Background waits: the allowance is running low.
 	reason      string
+	busyReason  string
 	backoff     time.Duration
 	banned      bool
 	usedWeight  int
@@ -71,6 +79,7 @@ func NewLimiter() *Limiter {
 			BudgetWeight:  DefaultWeightBudget,
 			BudgetData:    DefaultDataBudget,
 			BudgetFunding: DefaultFundingBudget,
+			BudgetTrading: DefaultTradingBudget,
 		},
 		used: map[Budget]int{},
 	}
@@ -100,6 +109,9 @@ func (l *Limiter) reserve(budget Budget, cost int) time.Duration {
 	if now.Before(l.pausedUntil) {
 		return l.pausedUntil.Sub(now)
 	}
+	if budget != BudgetTrading && now.Before(l.busyUntil) {
+		return l.busyUntil.Sub(now)
+	}
 	if minute := now.Unix() / 60; minute != l.minute {
 		l.minute = minute
 		l.used = map[Budget]int{}
@@ -118,8 +130,9 @@ func (l *Limiter) Observe(status int, header http.Header) {
 	now := l.now()
 	if used, err := strconv.Atoi(header.Get("X-MBX-USED-WEIGHT-1M")); err == nil {
 		l.usedWeight = used
-		if used > usedWeightPause {
-			l.pause(time.Unix((now.Unix()/60+1)*60, 0), fmt.Sprintf("used weight %d", used))
+		if until := time.Unix((now.Unix()/60+1)*60, 0); used > usedWeightPause && until.After(l.busyUntil) {
+			l.busyUntil = until
+			l.busyReason = fmt.Sprintf("used weight %d", used)
 		}
 	}
 	retryAfter := time.Duration(0)
@@ -165,9 +178,11 @@ func (l *Limiter) Status() LimiterStatus {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	status := LimiterStatus{Banned: l.banned, UsedWeight: l.usedWeight}
-	if l.now().Before(l.pausedUntil) {
-		status.PausedUntil = l.pausedUntil
-		status.Reason = l.reason
+	switch now := l.now(); {
+	case now.Before(l.pausedUntil):
+		status.PausedUntil, status.Reason = l.pausedUntil, l.reason
+	case now.Before(l.busyUntil):
+		status.PausedUntil, status.Reason = l.busyUntil, l.busyReason
 	}
 	return status
 }

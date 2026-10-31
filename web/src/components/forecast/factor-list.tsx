@@ -16,8 +16,8 @@ export function FactorList({
     ...factors.map((factor) => Math.abs(factor.contribution))
   )
   return (
-    <Panel title={t('forecast.factors', language)}>
-      <ul className="flex flex-col gap-3 px-4 pb-4">
+    <Panel>
+      <ul className="flex flex-col gap-3 p-4">
         {factors.map((factor) => {
           const width = (Math.abs(factor.contribution) / largest) * 100
           const up = factor.contribution >= 0

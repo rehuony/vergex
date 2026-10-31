@@ -220,9 +220,7 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 
 	llmClient.SetAPIKey(apiKey, customURL, config.CustomModelName)
 	// Attribute token usage (ai_charges) to this trader
-	if embedder, ok := llmClient.(llm.ClientEmbedder); ok {
-		embedder.BaseClient().UsageOwner = config.ID
-	}
+	llm.TagUsage(llmClient, config.ID)
 	logger.Infof("🤖 [%s] Using %s AI", config.Name, aiModel)
 
 	if config.CustomAPIURL != "" || config.CustomModelName != "" {

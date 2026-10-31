@@ -8,13 +8,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 )
 
 func TestCreateDefaultStrategiesUsesOneReadyToRunPreset(t *testing.T) {
-	st, err := store.New(t.TempDir() + "/vergex.db")
-	if err != nil {
-		t.Fatalf("store.New failed: %v", err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 
 	s := &Server{store: st}
@@ -60,10 +58,7 @@ func TestCreateDefaultStrategiesUsesOneReadyToRunPreset(t *testing.T) {
 }
 
 func TestCreateDefaultStrategiesSkipsAccountWithStrategies(t *testing.T) {
-	st, err := store.New(t.TempDir() + "/vergex.db")
-	if err != nil {
-		t.Fatalf("store.New failed: %v", err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 
 	userID := "user-existing-custom"
@@ -101,10 +96,7 @@ func TestCreateDefaultStrategiesSkipsAccountWithStrategies(t *testing.T) {
 // Registration seeds the preset in the request language; listing afterwards
 // (which sends no language) used to seed a second, Chinese copy.
 func TestListStrategiesAfterRegistrationKeepsOnePreset(t *testing.T) {
-	st, err := store.New(t.TempDir() + "/vergex.db")
-	if err != nil {
-		t.Fatalf("store.New failed: %v", err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 
 	s := &Server{store: st}

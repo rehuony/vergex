@@ -259,27 +259,7 @@ func (s *Server) handlePlanningMarket(c *gin.Context) {
 		c.JSON(429, gin.H{"error": "too many planning chart feeds"})
 		return
 	}
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("X-Accel-Buffering", "no")
-	tick := time.NewTicker(3 * time.Second)
-	defer tick.Stop()
-	for {
-		rows, e := p.source.Candles(c.Request.Context(), q)
-		data := harness.Event{Type: "candles", Data: gin.H{"candles": rows, "venue": q.Venue, "symbol": q.Symbol, "interval": q.Interval, "mode": "public", "received": time.Now().UTC()}}
-		if e != nil {
-			data = harness.Event{Type: "feed_error", Data: gin.H{"message": e.Error()}}
-		}
-		raw, _ := json.Marshal(data)
-		if _, e = fmt.Fprintf(c.Writer, "data: %s\n\n", raw); e != nil {
-			return
-		}
-		c.Writer.Flush()
-		select {
-		case <-c.Request.Context().Done():
-			return
-		case <-tick.C:
-		}
-	}
+	s.servePlanningFeed(c, p.source, q)
 }
 func (s *Server) handlePlanningState(c *gin.Context) {
 	p, e := s.planningService()
@@ -400,6 +380,7 @@ func (s *Server) handlePlanningChat(c *gin.Context) {
 	}
 	client.SetAPIKey(string(ai.APIKey), ai.CustomAPIURL, ai.CustomModelName)
 	client.SetTimeout(90 * time.Second)
+	llm.TagUsage(client, llm.OwnerFrontier)
 	p, e := s.planningService()
 	if e != nil {
 		planningError(c, e)

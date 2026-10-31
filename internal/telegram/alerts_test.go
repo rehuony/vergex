@@ -3,20 +3,17 @@ package telegram
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 )
 
 func alertFixture(t *testing.T) (*alertWatcher, *store.Store, *[]string, *time.Time) {
 	t.Helper()
-	st, err := store.New(filepath.Join(t.TempDir(), "alerts.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { st.Close() })
 	if err := st.User().Create(&store.User{ID: "alice", Email: "alice@example.com", PasswordHash: "x"}); err != nil {
 		t.Fatal(err)

@@ -6,7 +6,7 @@ import {
   type PlanningState,
 } from '@/api/planning'
 import { Panel, PanelState } from '@/components/common/panel'
-import { fmtUsd } from '@/components/trader/trader-format'
+import { fmtUsd } from '@/utils/trader-format'
 import { Button } from '@/components/ui/button'
 import { useLanguage } from '@/contexts/language-context'
 import type { PlanningConversation } from '@/hooks/planning/use-planning-data'

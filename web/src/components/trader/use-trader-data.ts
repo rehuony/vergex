@@ -1,12 +1,12 @@
 import useSWR from 'swr'
 import { api } from '@/api'
 import type { AccountInfo, Position, SystemStatus } from '@/types'
+import { pollEvery } from '@/utils/poll'
 
 const POLL = {
-  refreshInterval: 15000,
+  ...pollEvery(15000),
   revalidateOnFocus: false,
   dedupingInterval: 10000,
-  shouldRetryOnError: false,
 }
 
 // useTraderData reads what every section of the trader page shows. Account and

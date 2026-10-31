@@ -48,7 +48,7 @@ Once the bot is bound, the assistant also tells you about events without being a
 | Safe mode | A trader enters safe mode or trading is blocked. Sent once each time it begins |
 | Closed positions | A trader's position closes, with its realized P/L |
 | Frontier plans | A plan needs reconciliation, including after a restart |
-| Forecast signals | A watchlist coin's score crosses the threshold in Settings → Forecast. See [Forecast](forecast.md#alerts) |
+| Forecast signals | A watchlist coin's score crosses the threshold in Forecast → Settings. See [Forecast](forecast.md#alerts) |
 
 `internal/telegram/alerts.go` checks every 30 seconds. It only reads the database and in-memory state, so it adds no exchange requests and does not touch the trading loop. What was already sent is stored in `telegram_alert_marks`, so a restart repeats nothing. Connecting the bot does not replay history, and after downtime events are reported from at most 24 hours back. If a message cannot be delivered, the same events go out on the next check.
 

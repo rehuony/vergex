@@ -37,10 +37,10 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 	// Normalize symbol
 	symbol = Normalize(symbol)
 
-	// Get 3-minute K-line data from CoinAnk with exchange-specific data
-	klines3m, err = getKlinesFromCoinAnk(symbol, "3m", exchange, 100)
+	// Get 3-minute K-line data with exchange-specific data
+	klines3m, err = getKlines(symbol, "3m", exchange, 100)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to get 3-minute K-line from CoinAnk (%s): %v", exchange, err)
+		return nil, fmt.Errorf("Failed to get 3-minute K-line (%s): %v", exchange, err)
 	}
 
 	// Data staleness detection: Prevent DOGEUSDT-style price freeze issues
@@ -50,9 +50,9 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 	}
 
 	// Get 4-hour K-line data
-	klines4h, err = getKlinesFromCoinAnk(symbol, "4h", exchange, 100)
+	klines4h, err = getKlines(symbol, "4h", exchange, 100)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to get 4-hour K-line from CoinAnk (%s): %v", exchange, err)
+		return nil, fmt.Errorf("Failed to get 4-hour K-line (%s): %v", exchange, err)
 	}
 
 	// Check if data is empty
@@ -153,10 +153,9 @@ func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe stri
 
 	// Get K-line data for each timeframe
 	for _, tf := range timeframes {
-		// Use CoinAnk for crypto assets (default to Binance)
-		klines, err := getKlinesFromCoinAnk(symbol, tf, "binance", 200)
+		klines, err := getKlines(symbol, tf, "binance", 200)
 		if err != nil {
-			logger.Infof("⚠️ Failed to get %s %s K-line from CoinAnk: %v", symbol, tf, err)
+			logger.Infof("⚠️ Failed to get %s %s K-line: %v", symbol, tf, err)
 			continue
 		}
 

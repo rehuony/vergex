@@ -4,7 +4,7 @@ import type { DecisionRecord, Position } from '@/types'
 import { cn } from '@/utils/cn'
 import { Panel, PanelState } from '@/components/common/panel'
 import { actionSide, tradeActions, type ActionSide } from './decision-format'
-import { baseLabel } from './trader-format'
+import { baseLabel } from '@/utils/trader-format'
 
 interface Item {
   symbol: string

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -97,8 +98,8 @@ type TraderPosition struct {
 	Status             string  `gorm:"column:status;default:OPEN;index:idx_positions_status" json:"status"`
 	CloseReason        string  `gorm:"column:close_reason;default:''" json:"close_reason"`
 	Source             string  `gorm:"column:source;default:system" json:"source"`
-	CreatedAt          int64   `gorm:"column:created_at" json:"created_at"` // Unix milliseconds UTC
-	UpdatedAt          int64   `gorm:"column:updated_at" json:"updated_at"` // Unix milliseconds UTC
+	CreatedAt          int64   `gorm:"column:created_at" json:"created_at"`                             // Unix milliseconds UTC
+	UpdatedAt          int64   `gorm:"column:updated_at;index:idx_positions_updated" json:"updated_at"` // Unix milliseconds UTC
 }
 
 // TableName returns the table name
@@ -116,11 +117,6 @@ func NewPositionStore(db *gorm.DB) *PositionStore {
 	return &PositionStore{db: db}
 }
 
-// isPostgres checks if the database is PostgreSQL
-func (s *PositionStore) isPostgres() bool {
-	return s.db.Dialector.Name() == "postgres"
-}
-
 // InitTables initializes position tables
 func (s *PositionStore) InitTables() error {
 	if err := s.db.AutoMigrate(&TraderPosition{}); err != nil {
@@ -128,16 +124,9 @@ func (s *PositionStore) InitTables() error {
 	}
 
 	// Create unique partial index for exchange position deduplication
-	var indexSQL string
-	if s.isPostgres() {
-		indexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_exchange_pos_unique ON trader_positions(exchange_id, exchange_position_id) WHERE exchange_position_id != ''`
-	} else {
-		indexSQL = `CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_exchange_pos_unique ON trader_positions(exchange_id, exchange_position_id) WHERE exchange_position_id != ''`
-	}
+	indexSQL := `CREATE UNIQUE INDEX IF NOT EXISTS idx_positions_exchange_pos_unique ON trader_positions(exchange_id, exchange_position_id) WHERE exchange_position_id != ''`
 	if err := s.db.Exec(indexSQL).Error; err != nil {
-		if !strings.Contains(err.Error(), "already exists") && !strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return fmt.Errorf("failed to create unique index: %w", err)
-		}
+		return fmt.Errorf("failed to create unique index: %w", err)
 	}
 
 	return nil
@@ -366,14 +355,31 @@ func (s *PositionStore) closedPositions(traderID string) *gorm.DB {
 
 // GetClosedPositions gets closed positions, newest first
 func (s *PositionStore) GetClosedPositions(traderID string, limit int) ([]*TraderPosition, error) {
-	var positions []*TraderPosition
-	query := s.closedPositions(traderID).Order("exit_time DESC")
+	return s.closedPage(s.closedPositions(traderID), limit)
+}
+
+// GetClosedPositionsBefore gets the page of closed positions after a given one in
+// that order. The position must be one of the trader's closed positions.
+func (s *PositionStore) GetClosedPositionsBefore(traderID string, beforeID int64, limit int) ([]*TraderPosition, error) {
+	var cursor TraderPosition
+	if err := s.closedPositions(traderID).Select("id", "exit_time").First(&cursor, beforeID).Error; err != nil {
+		return nil, fmt.Errorf("failed to find closed position %d: %w", beforeID, err)
+	}
+	return s.closedPage(
+		s.closedPositions(traderID).Where("exit_time < ? OR (exit_time = ? AND id < ?)", cursor.ExitTime, cursor.ExitTime, cursor.ID),
+		limit,
+	)
+}
+
+func (s *PositionStore) closedPage(query *gorm.DB, limit int) ([]*TraderPosition, error) {
+	// The ID keeps pages apart when positions close in the same millisecond.
+	query = query.Order("exit_time DESC, id DESC")
 	if limit > 0 {
 		query = query.Limit(limit)
 	}
 
-	err := query.Find(&positions).Error
-	if err != nil {
+	var positions []*TraderPosition
+	if err := query.Find(&positions).Error; err != nil {
 		return nil, fmt.Errorf("failed to query closed positions: %w", err)
 	}
 
@@ -472,7 +478,7 @@ func (s *PositionStore) CreateOpenPosition(pos *TraderPosition) error {
 
 	err := s.db.Create(pos).Error
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
+		if errors.Is(err, gorm.ErrDuplicatedKey) {
 			existingPos, findErr := s.GetOpenPositionByExchangePositionID(pos.ExchangeID, pos.ExchangePositionID)
 			if findErr != nil {
 				return findErr

@@ -2,8 +2,6 @@
 
 # ═══════════════════════════════════════════════════════════════
 # Vergex Backend Dockerfile (Go)
-# The SQLite driver (mattn/go-sqlite3) needs CGO; the Debian golang image
-# already ships gcc, git and make, so the build stage installs nothing.
 # ═══════════════════════════════════════════════════════════════
 
 ARG GO_VERSION=1.26.10-trixie
@@ -20,7 +18,7 @@ RUN go mod download
 
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
-RUN CGO_ENABLED=1 GOOS=linux \
+RUN CGO_ENABLED=0 GOOS=linux \
     go build -trimpath -ldflags="-s -w" -o vergex ./cmd/vergex
 
 # ──────────────────────────────────────────────────────────────
@@ -29,7 +27,7 @@ RUN CGO_ENABLED=1 GOOS=linux \
 FROM debian:${DEBIAN_VERSION}
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates tzdata sqlite3 curl \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata curl \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

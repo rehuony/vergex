@@ -16,9 +16,9 @@ Logs also go to `data/vergex_YYYY-MM-DD.log`. The [Telegram assistant](telegram.
 
 **Stored keys can't be read after a change.** `DATA_ENCRYPTION_KEY` changed. Restore the old value from your backup; otherwise re-enter the exchange and model keys.
 
-**Port already in use.** Find the process with `lsof -i :8000` (`:3000` when running from source), or set `VERGEX_FRONTEND_PORT` in `.env`.
+**Port already in use.** Find the process with `lsof -i :8000` (`:3000` when running from source), or set `VERGEX_FRONTEND_PORT` in `.env`. If `make run-postgresql` finds its port taken, set `DB_PORT` in `.env`.
 
-**`database is locked`.** Two processes are using the same SQLite file. Stop the other one; `make down` stops the containers.
+**`failed to open PostgreSQL database`.** The backend can't reach the database. Check `make status`; from source, `make run-postgresql` starts it with the settings in `.env`, and `make run-backend` does so first.
 
 **The UI loads forever.** The frontend can't reach the backend. Check `make status` and the backend log.
 
@@ -32,7 +32,7 @@ See [exchanges.md](exchanges.md) for API key errors.
 
 **Rate limits.** Lengthen the scan interval or run fewer traders.
 
-## Autopilot
+## Traders
 
 **The trader won't start.** Starting it lists each launch check with the reason any of them failed. An account held by an unresolved Frontier plan also blocks the start.
 
@@ -66,4 +66,4 @@ See [exchanges.md](exchanges.md) for API key errors.
 docker exec -it vergex-backend ./vergex reset-account
 ```
 
-This deletes the account and its data. To remove everything, run `make down` and delete `data/`. Back up `.env` and `data/` first. Neither step closes positions on the exchange.
+This deletes the account and its data. To remove everything, run `docker compose down -v` and delete `data/`. Back up `.env`, `data/` and the database first. Neither step closes positions on the exchange.

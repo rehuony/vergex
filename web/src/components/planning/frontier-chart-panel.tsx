@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { Plan } from '@/api/planning'
 import { Button } from '@/components/ui/button'
 import { useLanguage } from '@/contexts/language-context'
@@ -11,6 +12,8 @@ interface FrontierChartPanelProps {
   onFit: () => void
   onCompare: () => void
   onExitCompare: () => void
+  // Drawn over the chart.
+  overlay?: ReactNode
 }
 
 function Legend({
@@ -37,6 +40,7 @@ export function FrontierChartPanel({
   onFit,
   onCompare,
   onExitCompare,
+  overlay,
 }: FrontierChartPanelProps) {
   const { language } = useLanguage()
   const label = (key: string) => t(`frontier.${key}`, language)
@@ -45,7 +49,10 @@ export function FrontierChartPanel({
       id="frontier-chart"
       className="flex min-h-0 min-w-0 scroll-mt-20 flex-col overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)] max-lg:h-[68dvh] max-lg:min-h-96"
     >
-      <div id="chart-container" className="min-h-0 flex-1" />
+      <div className="relative min-h-0 flex-1">
+        <div id="chart-container" className="h-full" />
+        {overlay}
+      </div>
       {plan && comparing < 2 && <ExecutionSchedule plan={plan} />}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[var(--line)] px-3 py-2 text-xs text-vergex-text-muted">
         <Legend className="bg-[var(--warning)]">{label('entry')}</Legend>

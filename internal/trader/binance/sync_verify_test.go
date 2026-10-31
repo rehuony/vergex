@@ -3,12 +3,12 @@ package binance
 import (
 	"context"
 	"math"
-	"os"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 )
 
 func repeatStr(s string, n int) string {
@@ -22,14 +22,7 @@ func TestBinanceSyncVerification(t *testing.T) {
 	// Get credentials from environment
 	apiKey, secretKey := getBinanceTestCredentials(t)
 
-	// Create test database
-	testDBPath := "/tmp/test_binance_verify.db"
-	os.Remove(testDBPath)
-
-	st, err := store.New(testDBPath)
-	if err != nil {
-		t.Fatalf("Failed to init test store: %v", err)
-	}
+	st := storetest.New(t)
 	db := st.GormDB()
 
 	trader := NewFuturesTrader(apiKey, secretKey)
@@ -43,7 +36,7 @@ func TestBinanceSyncVerification(t *testing.T) {
 	t.Logf("STEP 1: Running order sync...")
 	t.Logf("%s", repeatStr("=", 60))
 
-	err = trader.SyncOrdersFromBinance(traderID, exchangeID, exchangeType, st)
+	err := trader.SyncOrdersFromBinance(traderID, exchangeID, exchangeType, st)
 	if err != nil {
 		t.Fatalf("Sync failed: %v", err)
 	}
@@ -403,7 +396,6 @@ func TestBinanceSyncVerification(t *testing.T) {
 	}
 
 	// Cleanup
-	os.Remove(testDBPath)
 }
 
 // floatEqual compares two floats with tolerance

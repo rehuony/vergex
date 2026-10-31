@@ -10,17 +10,18 @@ describe('router paths helpers', () => {
     expect(getCurrentPageForPath(ROUTES.home)).toBeUndefined()
     expect(getCurrentPageForPath('/frontier')).toBe('planning')
     expect(getCurrentPageForPath(ROUTES.dashboard)).toBe('dashboard')
-    expect(getCurrentPageForPath(ROUTES.autopilot)).toBe('autopilot')
-    expect(getCurrentPageForPath(ROUTES.strategies)).toBe('autopilot')
+    expect(getCurrentPageForPath(ROUTES.traders)).toBe('traders')
+    expect(getCurrentPageForPath('/traders/alpha-1234')).toBe('traders')
+    expect(getCurrentPageForPath(ROUTES.strategies)).toBe('strategies')
     expect(getCurrentPageForPath('/connections')).toBeUndefined()
     expect(getCurrentPageForPath('/settings')).toBeUndefined()
     expect(getCurrentPageForPath('/help/')).toBe('help')
-    expect(getCurrentPageForPath('/autopilotx')).toBeUndefined()
+    expect(getCurrentPageForPath('/tradersx')).toBeUndefined()
   })
 
   it('builds a trader path that survives spaces in the name', () => {
     expect(buildTraderPath('alpha beta-1234')).toBe(
-      '/autopilot/traders/alpha%20beta-1234'
+      '/traders/alpha%20beta-1234'
     )
   })
 })

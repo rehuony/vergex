@@ -34,7 +34,7 @@ import {
   SettingList,
   SettingRow,
   SettingState,
-} from './setting-row'
+} from '@/components/common/setting-row'
 
 const inputClass = cn(dialogInputClass, 'h-9')
 
@@ -121,7 +121,7 @@ const listPhase = (
         ? 'failed'
         : undefined
 
-/** Exchange accounts that Frontier and Autopilot trade on. */
+/** Exchange accounts that Frontier and traders trade on. */
 export function ExchangeSettings({ language }: { language: Language }) {
   // null shows the list, '' a new account, an id that account.
   const [editing, setEditing] = useState<string | null>(null)

@@ -5,6 +5,7 @@ import {
   HistogramSeries,
   createChart,
   type AutoscaleInfo,
+  type IChartApi,
 } from 'lightweight-charts'
 
 // The market chart's surface on lightweight-charts, shared by Frontier and
@@ -107,4 +108,25 @@ export function createMarketChart(
     scaleMargins: { top: 0.82, bottom: 0 },
   })
   return { chart, candles, volume }
+}
+
+// A simulated candle must not pass for a real one: mostly see-through, with only
+// its outline at some strength.
+const projectionFill = (up: boolean) =>
+  up ? 'rgba(46,139,87,0.18)' : 'rgba(214,67,58,0.18)'
+const projectionEdge = (up: boolean) =>
+  up ? 'rgba(46,139,87,0.65)' : 'rgba(214,67,58,0.65)'
+
+// addProjectionSeries adds the series that draws a forecast as simulated candles.
+export function addProjectionSeries(chart: IChartApi) {
+  return chart.addSeries(CandlestickSeries, {
+    upColor: projectionFill(true),
+    downColor: projectionFill(false),
+    borderUpColor: projectionEdge(true),
+    borderDownColor: projectionEdge(false),
+    wickUpColor: projectionEdge(true),
+    wickDownColor: projectionEdge(false),
+    priceLineVisible: false,
+    lastValueVisible: false,
+  })
 }

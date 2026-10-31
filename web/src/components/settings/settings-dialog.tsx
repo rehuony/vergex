@@ -15,7 +15,6 @@ import {
   Landmark,
   Receipt,
   Send,
-  TrendingUp,
   UserRound,
 } from 'lucide-react'
 import { useAuth } from '@/contexts/auth-context'
@@ -32,9 +31,8 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AvatarEditor } from './avatar-editor'
 import { ExchangeSettings } from './exchange-settings'
-import { ForecastSettings } from './forecast-settings'
 import { ModelSettings } from './model-settings'
-import { SettingActions, SettingRow } from './setting-row'
+import { SettingActions, SettingRow } from '@/components/common/setting-row'
 import { TelegramSettings } from './telegram-settings'
 
 // Listed shortest label first (ties keep this order), so the column of tabs
@@ -45,7 +43,6 @@ const SECTIONS = [
   { id: 'exchanges', label: 'exchangesTab', icon: Landmark },
   { id: 'costs', label: 'aiCostsTab', icon: Receipt },
   { id: 'telegram', label: 'telegramTab', icon: Send },
-  { id: 'forecast', label: 'forecastTab', icon: TrendingUp },
 ] as const
 
 export type SettingsSection = (typeof SECTIONS)[number]['id']
@@ -348,7 +345,6 @@ export function SettingsDialog({
         {section === 'models' && <ModelSettings language={language} />}
         {section === 'exchanges' && <ExchangeSettings language={language} />}
         {section === 'telegram' && <TelegramSettings language={language} />}
-        {section === 'forecast' && <ForecastSettings language={language} />}
         {section === 'costs' && (
           <div className="flex min-h-full flex-col py-4">
             <AICostPanel />

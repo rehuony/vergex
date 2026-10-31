@@ -6,16 +6,20 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"vergex/internal/provider/binance"
+	"vergex/internal/testdb"
 )
 
-const hour = int64(time.Hour / time.Millisecond)
+const (
+	hour = int64(time.Hour / time.Millisecond)
+	// settled is long enough after a close for a candle to count as final.
+	settled = int64(5 * time.Second / time.Millisecond)
+)
 
 // fakeExchange serves klines from a set of existing open times, like Binance:
 // from startTime onwards (or the latest ones), up to limit, including whichever
@@ -89,15 +93,14 @@ func (f *fakeExchange) fill(from, to int64) {
 	}
 }
 
-func hydratorFixture(t *testing.T, path string, exchange *fakeExchange) (*Hydrator, *Store, *time.Time) {
+func hydratorFixture(t *testing.T, exchange *fakeExchange) (*Hydrator, *Store, *time.Time) {
 	t.Helper()
 	srv := httptest.NewServer(exchange)
 	t.Cleanup(srv.Close)
-	store, err := Open(path)
+	store, err := NewStore(testdb.Open(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { store.Close() })
 	client := binance.NewDataClient(binance.NewLimiter()).WithBaseURL(srv.URL)
 	h := NewHydrator(store, client, nil)
 	clock := time.UnixMilli(exchange.now + 10*1000)
@@ -105,14 +108,12 @@ func hydratorFixture(t *testing.T, path string, exchange *fakeExchange) (*Hydrat
 	return h, store, &clock
 }
 
-func marketPath(t *testing.T) string { return filepath.Join(t.TempDir(), "market.db") }
-
 func base() int64 { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli() }
 
 func TestBootstrapStoresOnlyClosedCandles(t *testing.T) {
 	exchange := &fakeExchange{now: base() + 500*hour + 60*1000}
 	exchange.fill(base(), base()+500*hour)
-	h, store, _ := hydratorFixture(t, marketPath(t), exchange)
+	h, store, _ := hydratorFixture(t, exchange)
 	series, err := store.EnsureSeries("BTCUSDT", "1h", TierWatch, h.nowMillis())
 	if err != nil {
 		t.Fatal(err)
@@ -136,10 +137,9 @@ func TestBootstrapStoresOnlyClosedCandles(t *testing.T) {
 }
 
 func TestTailSyncUsesTheCheapestRequestAndResumesAfterRestart(t *testing.T) {
-	exchange := &fakeExchange{now: base() + 10*hour + 1000}
+	exchange := &fakeExchange{now: base() + 10*hour + settled}
 	exchange.fill(base(), base()+10*hour)
-	path := marketPath(t)
-	h, store, clock := hydratorFixture(t, path, exchange)
+	h, store, clock := hydratorFixture(t, exchange)
 	series, _ := store.EnsureSeries("BTCUSDT", "1h", TierWatch, h.nowMillis())
 	h.Sync(context.Background(), series)
 	exchange.limits = nil
@@ -147,7 +147,7 @@ func TestTailSyncUsesTheCheapestRequestAndResumesAfterRestart(t *testing.T) {
 
 	// Two more candles close; a new hydrator on the same database carries on.
 	exchange.fill(base()+11*hour, base()+12*hour)
-	exchange.now = base() + 12*hour + 1000
+	exchange.now = base() + 12*hour + settled
 	*clock = time.UnixMilli(exchange.now)
 	again := NewHydrator(store, h.client, nil)
 	again.now = h.now
@@ -167,15 +167,15 @@ func TestTailSyncUsesTheCheapestRequestAndResumesAfterRestart(t *testing.T) {
 }
 
 func TestLongCatchUpPagesAtWeightTwo(t *testing.T) {
-	exchange := &fakeExchange{now: base() + hour + 1000}
+	exchange := &fakeExchange{now: base() + hour + settled}
 	exchange.fill(base(), base()+hour)
-	h, store, clock := hydratorFixture(t, marketPath(t), exchange)
+	h, store, clock := hydratorFixture(t, exchange)
 	series, _ := store.EnsureSeries("BTCUSDT", "1h", TierWatch, h.nowMillis())
 	h.Sync(context.Background(), series)
 	exchange.limits = nil
 
 	exchange.fill(base()+2*hour, base()+1200*hour)
-	exchange.now = base() + 1200*hour + 1000
+	exchange.now = base() + 1200*hour + settled
 	*clock = time.UnixMilli(exchange.now)
 	for i := 0; i < 5; i++ {
 		series, _ = store.FindSeries("BTCUSDT", "1h")
@@ -197,15 +197,15 @@ func TestLongCatchUpPagesAtWeightTwo(t *testing.T) {
 }
 
 func TestAHoleIsConfirmedThenRecordedAndAccepted(t *testing.T) {
-	exchange := &fakeExchange{now: base() + 5*hour + 1000}
+	exchange := &fakeExchange{now: base() + 5*hour + settled}
 	exchange.fill(base(), base()+5*hour)
-	h, store, clock := hydratorFixture(t, marketPath(t), exchange)
+	h, store, clock := hydratorFixture(t, exchange)
 	series, _ := store.EnsureSeries("BTCUSDT", "1h", TierWatch, h.nowMillis())
 	h.Sync(context.Background(), series)
 
 	// Candles 6, 7 and 8 never existed; 5 was still open when last read.
 	exchange.fill(base()+9*hour, base()+12*hour)
-	exchange.now = base() + 12*hour + 1000
+	exchange.now = base() + 12*hour + settled
 	*clock = time.UnixMilli(exchange.now)
 	for i := 0; i < 4; i++ {
 		series, _ = store.FindSeries("BTCUSDT", "1h")
@@ -240,7 +240,7 @@ func TestAnUnconfirmedHoleBreaksTheWindow(t *testing.T) {
 
 func TestAServerErrorBacksOffOnlyThatSeries(t *testing.T) {
 	exchange := &fakeExchange{now: base() + hour, status: http.StatusBadGateway}
-	h, store, _ := hydratorFixture(t, marketPath(t), exchange)
+	h, store, _ := hydratorFixture(t, exchange)
 	series, _ := store.EnsureSeries("BTCUSDT", "1h", TierWatch, h.nowMillis())
 	h.Sync(context.Background(), series)
 
@@ -255,7 +255,7 @@ func TestAServerErrorBacksOffOnlyThatSeries(t *testing.T) {
 
 func TestARateLimitPausesEverythingWithoutBlamingTheSeries(t *testing.T) {
 	exchange := &fakeExchange{now: base() + hour, status: http.StatusTooManyRequests}
-	h, store, _ := hydratorFixture(t, marketPath(t), exchange)
+	h, store, _ := hydratorFixture(t, exchange)
 	series, _ := store.EnsureSeries("BTCUSDT", "1h", TierWatch, h.nowMillis())
 	h.Sync(context.Background(), series)
 
@@ -298,7 +298,7 @@ func TestRankingEntersAtNAndLeavesPastNPlus30(t *testing.T) {
 
 func TestPlanTracksListsAndKeepsDataOfDroppedSeries(t *testing.T) {
 	exchange := &fakeExchange{now: base() + hour}
-	h, store, _ := hydratorFixture(t, marketPath(t), exchange)
+	h, store, _ := hydratorFixture(t, exchange)
 	h.ranker = fixedRanker{{Symbol: "AAAUSDT"}, {Symbol: "BTCUSDT"}}
 	if err := store.SaveSettings(true, []string{"BTCUSDT"}, 2); err != nil {
 		t.Fatal(err)
@@ -342,7 +342,7 @@ func TestPlanTracksListsAndKeepsDataOfDroppedSeries(t *testing.T) {
 
 func TestWorkOrderPutsTheWaitingUserFirst(t *testing.T) {
 	exchange := &fakeExchange{now: base() + 100*hour}
-	h, store, _ := hydratorFixture(t, marketPath(t), exchange)
+	h, store, _ := hydratorFixture(t, exchange)
 	now := h.nowMillis()
 	newSeries, _ := store.EnsureSeries("NEWUSDT", "1h", TierTop, now)
 	watch, _ := store.EnsureSeries("BTCUSDT", "1h", TierWatch, now)
@@ -360,5 +360,38 @@ func TestWorkOrderPutsTheWaitingUserFirst(t *testing.T) {
 	first, _ = store.NextDue(now)
 	if first.ID != newSeries.ID {
 		t.Fatalf("what the user opened should go first, got %s", first.Symbol)
+	}
+}
+
+func TestACandleJustClosedWaitsUntilItIsFinal(t *testing.T) {
+	exchange := &fakeExchange{now: base() + 100*hour, times: map[int64]bool{}}
+	for at := base() + 90*hour; at <= base()+100*hour; at += hour {
+		exchange.times[at] = true
+	}
+	h, store, clock := hydratorFixture(t, exchange)
+	series, _ := store.EnsureSeries("BTCUSDT", "1h", TierWatch, base())
+	if err := store.WriteCandlesForTest(&Series{ID: series.ID, Interval: "1h", Tier: TierWatch, Status: StatusActive, FirstOpenTime: base() + 90*hour, LastClosedTime: base() + 98*hour}, []binance.Candle{closedBar(base() + 98*hour)}); err != nil {
+		t.Fatal(err)
+	}
+
+	// One second after the 99h candle closed: it may still be missing trades.
+	*clock = time.UnixMilli(base() + 100*hour + 1000)
+	series, _ = store.FindSeries("BTCUSDT", "1h")
+	h.Sync(context.Background(), series)
+	stored, _ := store.FindSeries("BTCUSDT", "1h")
+	if stored.LastClosedTime != base()+98*hour {
+		t.Fatalf("water mark = %d, the candle is not final yet", stored.LastClosedTime)
+	}
+	final := base() + 100*hour + settleDelay.Milliseconds()
+	if stored.NextDueAt != final {
+		t.Fatalf("next due = %d, want %d: it should come back once the candle is final", stored.NextDueAt, final)
+	}
+
+	*clock = time.UnixMilli(final)
+	series, _ = store.FindSeries("BTCUSDT", "1h")
+	h.Sync(context.Background(), series)
+	stored, _ = store.FindSeries("BTCUSDT", "1h")
+	if stored.LastClosedTime != base()+99*hour {
+		t.Fatalf("water mark = %d, want the final candle stored", stored.LastClosedTime)
 	}
 }

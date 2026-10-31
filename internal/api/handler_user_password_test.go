@@ -10,13 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"vergex/internal/auth"
 	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 )
 
 func TestChangePasswordNeedsTheCurrentOne(t *testing.T) {
-	st, err := store.New(t.TempDir() + "/vergex.db")
-	if err != nil {
-		t.Fatalf("store.New failed: %v", err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 	hash, _ := auth.HashPassword("old-password")
 	if err := st.User().Create(&store.User{ID: "owner", Email: "owner@example.test", PasswordHash: hash}); err != nil {

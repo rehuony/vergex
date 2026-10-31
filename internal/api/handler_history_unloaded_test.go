@@ -10,15 +10,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"vergex/internal/manager"
 	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 )
 
 // History lives in the database, so it must stay readable when the trader
 // could not be loaded into memory (for example, its exchange is unreachable).
 func TestHistoryReadsDoNotNeedALoadedTrader(t *testing.T) {
-	st, err := store.New(t.TempDir() + "/vergex.db")
-	if err != nil {
-		t.Fatalf("store.New failed: %v", err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 
 	const userID = "owner"

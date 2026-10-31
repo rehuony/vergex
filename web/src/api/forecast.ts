@@ -7,7 +7,7 @@ export type ForecastDirection = 'up' | 'down' | 'neutral'
 
 export interface ForecastRecord {
   id: number
-  version_id: number
+  strategy_id: number
   series_id: number
   open_time: number
   symbol: string
@@ -73,17 +73,56 @@ export interface ForecastDetail {
   result: ForecastResult | null
   latest: ForecastRecord | null
   records: ForecastRecord[]
-  hits: number
-  misses: number
-  candles: {
-    time: number
-    open: number
-    high: number
-    low: number
-    close: number
-    volume: number
-  }[]
+  stats: {
+    hits: number
+    misses: number
+    // Judged records where price moved, and how many of them rose.
+    moved: number
+    rose: number
+  }
+  candles: ForecastCandle[]
   last_closed: number
+  // The candle still open, while the live stream is delivering it.
+  forming: ForecastCandle | null
+  // The forecast drawn as candles: a restatement of the reading, not prices.
+  projection: ForecastCandle[]
+  indicators?: ForecastIndicators
+}
+
+// What another page's chart shows of a coin's forecast under the strategy in use.
+export interface ForecastOverlay {
+  symbol: string
+  interval: string
+  pending?: string
+  direction?: ForecastDirection
+  display_prob: number
+  calibrated: boolean
+  stats: ForecastDetail['stats']
+  projection: ForecastCandle[]
+}
+
+export interface ForecastIndicatorPoint {
+  time: number
+  value: number
+}
+
+export interface ForecastIndicators {
+  ema20: ForecastIndicatorPoint[]
+  ema50: ForecastIndicatorPoint[]
+  boll_upper: ForecastIndicatorPoint[]
+  boll_middle: ForecastIndicatorPoint[]
+  boll_lower: ForecastIndicatorPoint[]
+  vwap: ForecastIndicatorPoint[]
+  rsi: ForecastIndicatorPoint[]
+}
+
+export interface ForecastCandle {
+  time: number
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
 }
 
 export interface FactorConfig {
@@ -101,17 +140,17 @@ export interface ForecastConfig {
   horizons: Record<string, number>
 }
 
-export interface ForecastVersion {
+export interface ForecastStrategy {
   id: number
-  note: string
+  name: string
   engine_version: number
   config: ForecastConfig
   created_at: number
 }
 
-export interface ForecastVersions {
-  active_version_id: number
-  versions: ForecastVersion[]
+export interface ForecastStrategies {
+  active_strategy_id: number
+  strategies: ForecastStrategy[]
   default_config: ForecastConfig
 }
 
@@ -153,7 +192,7 @@ export interface BacktestReport {
 
 export interface BacktestRun {
   id: number
-  version_id: number
+  strategy_id: number
   options: {
     symbols: string[]
     intervals: string[]
@@ -187,49 +226,73 @@ async function read<T>(path: string, failure: string): Promise<T> {
 
 export const forecastApi = {
   getForecastSignals(interval: ForecastInterval) {
-    return read<{ version_id: number; signals: ForecastSignal[] }>(
+    return read<{
+      strategy_id: number
+      interval: ForecastInterval
+      signals: ForecastSignal[]
+    }>(
       `/forecast/signals?interval=${interval}`,
       'Failed to load forecast signals'
     )
   },
 
-  getForecastDetail(symbol: string, interval: ForecastInterval) {
+  getForecastDetail(
+    symbol: string,
+    interval: ForecastInterval,
+    indicators = false
+  ) {
+    const extra = indicators ? '&indicators=1' : ''
     return read<ForecastDetail>(
-      `/forecast/detail/${encodeURIComponent(symbol)}?interval=${interval}`,
+      `/forecast/detail/${encodeURIComponent(symbol)}?interval=${interval}${extra}`,
       'Failed to load the forecast'
     )
   },
 
-  getForecastVersions() {
-    return read<ForecastVersions>(
-      '/forecast/versions',
-      'Failed to load forecast versions'
+  getForecastOverlay(symbol: string, interval: string) {
+    return read<ForecastOverlay>(
+      `/forecast/overlay/${encodeURIComponent(symbol)}?interval=${interval}`,
+      'Failed to load the forecast'
     )
   },
 
-  async createForecastVersion(
+  getForecastStrategies() {
+    return read<ForecastStrategies>(
+      '/forecast/strategies',
+      'Failed to load forecast strategies'
+    )
+  },
+
+  async createForecastStrategy(
     config: ForecastConfig,
-    note: string
-  ): Promise<ForecastVersion> {
-    const result = await httpClient.post<ForecastVersion>(
-      `${API_BASE}/forecast/versions`,
-      { config, note }
+    name: string
+  ): Promise<ForecastStrategy> {
+    const result = await httpClient.post<ForecastStrategy>(
+      `${API_BASE}/forecast/strategies`,
+      { config, name }
     )
     if (!result.success)
-      throw new Error(result.message || 'Failed to save the version')
+      throw new Error(result.message || 'Failed to save the strategy')
     return result.data!
   },
 
-  async activateForecastVersion(id: number): Promise<void> {
+  async activateForecastStrategy(id: number): Promise<void> {
     const result = await httpClient.post(
-      `${API_BASE}/forecast/versions/${id}/activate`
+      `${API_BASE}/forecast/strategies/${id}/activate`
     )
     if (!result.success)
-      throw new Error(result.message || 'Failed to use the version')
+      throw new Error(result.message || 'Failed to use the strategy')
+  },
+
+  async deleteForecastStrategy(id: number): Promise<void> {
+    const result = await httpClient.delete(
+      `${API_BASE}/forecast/strategies/${id}`
+    )
+    if (!result.success)
+      throw new Error(result.message || 'Failed to delete the strategy')
   },
 
   getForecastSettings() {
-    return read<{ active_version_id: number; alert_threshold: number }>(
+    return read<{ active_strategy_id: number; alert_threshold: number }>(
       '/forecast/settings',
       'Failed to load forecast settings'
     )
@@ -262,7 +325,7 @@ export const forecastApi = {
   },
 
   async startForecastBacktest(request: {
-    version_id: number
+    strategy_id: number
     symbols: string[]
     intervals: string[]
     from: number

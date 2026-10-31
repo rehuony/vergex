@@ -119,7 +119,7 @@ func (s *Server) handleMarketDataBackfill(c *gin.Context) {
 		return
 	}
 	for _, interval := range req.Intervals {
-		if marketdata.IntervalMillis(interval) == 0 {
+		if !marketdata.IsHistoryInterval(interval) {
 			SafeBadRequest(c, "Unsupported interval")
 			return
 		}

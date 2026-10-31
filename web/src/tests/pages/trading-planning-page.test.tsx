@@ -100,6 +100,7 @@ vi.mock('@/components/planning/planning-chart/load-planning-chart', () => ({
       }
       async whenReady() {}
       async setContext() {}
+      setForecast() {}
       plot = mocks.plot
       focusPlan = mocks.focus
       async draw() {}
@@ -887,4 +888,78 @@ it('distinguishes Binance accounts by their names and remembers each venue selec
     expect(screen.getByLabelText('Trading account')).toHaveValue('binance-b')
   )
   expect(mocks.stream).not.toHaveBeenCalled()
+})
+
+describe('the address', () => {
+  function Address() {
+    const [params] = useSearchParams()
+    return <output aria-label="address">{params.toString()}</output>
+  }
+  const open = (entry: string) =>
+    render(
+      <MemoryRouter initialEntries={[entry]}>
+        <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+          <Address />
+          <TradingPlanningPage />
+        </SWRConfig>
+      </MemoryRouter>
+    )
+  const address = () =>
+    new URLSearchParams(screen.getByLabelText('address').textContent ?? '')
+
+  it('follows what is open and keeps other parameters', async () => {
+    open('/frontier?settings=models')
+    await waitFor(() => expect(address().get('account')).toBe('ex'))
+    expect(address().get('venue')).toBe('binance')
+    expect(address().get('symbol')).toBe('BTCUSDT')
+    expect(address().get('settings')).toBe('models')
+    expect(address().has('tab')).toBe(false)
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Positions and orders' }))
+    await waitFor(() => expect(address().get('tab')).toBe('positions'))
+  })
+
+  it('opens the market, account and section it names', async () => {
+    mocks.exchanges = [
+      {
+        id: 'ex',
+        name: 'Connected account',
+        exchange_type: 'binance',
+        enabled: true,
+      },
+      {
+        id: 'okx-one',
+        name: 'OKX account',
+        exchange_type: 'okx',
+        enabled: true,
+      },
+    ]
+    open('/frontier?account=okx-one&symbol=ETHUSDT&tab=history')
+    await waitFor(() => expect(address().get('account')).toBe('okx-one'))
+    expect(address().get('venue')).toBe('okx')
+    expect(address().get('symbol')).toBe('ETH-USDT-SWAP')
+    expect(screen.getByRole('tab', { name: 'History' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  })
+
+  it('ignores a market name it cannot use', async () => {
+    open('/frontier?symbol=BTC%2F..%2Fx&venue=nowhere')
+    await waitFor(() => expect(address().get('account')).toBe('ex'))
+    expect(address().get('venue')).toBe('binance')
+    expect(address().get('symbol')).toBe('BTCUSDT')
+  })
+
+  it('opens and fits a plan it names, and drops one that no longer exists', async () => {
+    const { unmount } = open('/frontier?plan=two')
+    await waitFor(() => expect(address().get('plan')).toBe('two'))
+    await waitFor(() => expect(mocks.focus).toHaveBeenCalled())
+    await waitFor(() => expect(mocks.plot.mock.lastCall?.[0]?.id).toBe('two'))
+    unmount()
+
+    open('/frontier?plan=gone')
+    await waitFor(() => expect(address().get('account')).toBe('ex'))
+    await waitFor(() => expect(address().has('plan')).toBe(false))
+  })
 })

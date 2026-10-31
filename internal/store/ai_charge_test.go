@@ -3,16 +3,12 @@ package store
 import (
 	"testing"
 
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+	"vergex/internal/testdb"
 )
 
 func newTestAIChargeStore(t *testing.T) *AIChargeStore {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	db := testdb.Open(t)
 	s := NewAIChargeStore(db)
 	if err := s.initTables(); err != nil {
 		t.Fatal(err)

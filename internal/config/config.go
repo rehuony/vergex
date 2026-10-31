@@ -27,8 +27,6 @@ type Config struct {
 	JWTSecret     string
 
 	// Database configuration
-	DBType     string // sqlite or postgres
-	DBPath     string // SQLite database file path
 	DBHost     string // PostgreSQL host
 	DBPort     int    // PostgreSQL port
 	DBUser     string // PostgreSQL user
@@ -63,11 +61,9 @@ func initConfig() error {
 	cfg := &Config{
 		APIServerPort: 3000,
 		// Database defaults
-		DBType:    "sqlite",
-		DBPath:    "data/data.db",
-		DBHost:    "localhost",
+		DBHost:    "127.0.0.1",
 		DBPort:    5432,
-		DBUser:    "postgres",
+		DBUser:    "vergex",
 		DBName:    "vergex",
 		DBSSLMode: "disable",
 	}
@@ -99,12 +95,6 @@ func initConfig() error {
 	}
 
 	// Database configuration
-	if v := os.Getenv("DB_TYPE"); v != "" {
-		cfg.DBType = strings.ToLower(v)
-	}
-	if v := os.Getenv("DB_PATH"); v != "" {
-		cfg.DBPath = v
-	}
 	if v := os.Getenv("DB_HOST"); v != "" {
 		cfg.DBHost = v
 	}

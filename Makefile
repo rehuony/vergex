@@ -1,8 +1,8 @@
 # Vergex Makefile for testing and development
 
 .PHONY: help test test-backend test-frontend test-coverage build build-backend build-frontend \
-	dev run-backend run-frontend fmt fmt-backend fmt-frontend lint lint-backend lint-frontend clean \
-	init up down restart logs status regen-keys deps deps-backend deps-frontend deps-update
+	dev run-backend run-frontend run-postgresql fmt fmt-backend fmt-frontend lint lint-backend lint-frontend \
+	init up down restart logs status regen-keys deps deps-backend deps-frontend deps-update clean
 
 # Default target
 help:
@@ -23,6 +23,7 @@ help:
 	@echo "  make dev                  - Run backend and frontend dev server together"
 	@echo "  make run-backend          - Run backend (go run)"
 	@echo "  make run-frontend         - Run frontend dev server"
+	@echo "  make run-postgresql       - Start PostgreSQL with the settings in .env"
 	@echo "  make fmt                  - Format backend and frontend code"
 	@echo "  make lint                 - Lint backend and frontend code"
 	@echo ""
@@ -51,7 +52,7 @@ test: test-backend test-frontend
 	@echo "✅ All tests completed"
 
 # Backend tests only
-test-backend:
+test-backend: run-postgresql
 	@echo "🧪 Running backend tests..."
 	go test -v ./...
 
@@ -61,7 +62,7 @@ test-frontend:
 	cd web && pnpm test
 
 # Coverage report
-test-coverage:
+test-coverage: run-postgresql
 	@echo "📊 Generating coverage..."
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out -o coverage.html
@@ -94,8 +95,8 @@ build-frontend:
 dev:
 	@$(MAKE) -j2 run-backend run-frontend
 
-# Run backend in development mode
-run-backend:
+# Run backend in development mode, with the settings in .env
+run-backend: run-postgresql
 	@echo "🚀 Starting backend..."
 	go run ./cmd/vergex
 
@@ -103,6 +104,10 @@ run-backend:
 run-frontend:
 	@echo "🚀 Starting frontend dev server..."
 	cd web && pnpm dev
+
+# Start PostgreSQL with the settings in .env, on 127.0.0.1 at DB_PORT
+run-postgresql: init
+	@scripts/run-postgresql.sh
 
 # Format backend and frontend code
 fmt: fmt-backend fmt-frontend
@@ -128,18 +133,6 @@ lint-frontend:
 	cd web && pnpm lint
 
 # =============================================================================
-# Clean
-# =============================================================================
-
-clean:
-	@echo "🧹 Cleaning..."
-	rm -f vergex
-	rm -f coverage.out coverage.html
-	rm -rf web/dist
-	go clean -testcache
-	@echo "✅ Cleaned"
-
-# =============================================================================
 # Deployment (docker compose, local build)
 # =============================================================================
 
@@ -147,9 +140,10 @@ clean:
 init:
 	@scripts/env-keys.sh init
 
-# Build images and start the stack
+# Build images and start the stack. Inside it the backend reaches the database over
+# the compose network, whatever DB_HOST and DB_PORT in .env say for running from source.
 up: init
-	docker compose up -d --build
+	DB_HOST=vergex-postgres DB_PORT=5432 docker compose up -d --build
 
 # Stop and remove the containers (data/ is kept)
 down:
@@ -200,3 +194,15 @@ deps-update:
 	go get -u ./...
 	go mod tidy
 	@echo "✅ Dependencies updated"
+
+# =============================================================================
+# Clean
+# =============================================================================
+
+clean:
+	@echo "🧹 Cleaning..."
+	rm -f vergex
+	rm -f coverage.out coverage.html
+	rm -rf web/dist
+	go clean -testcache
+	@echo "✅ Cleaned"

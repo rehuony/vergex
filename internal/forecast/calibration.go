@@ -6,7 +6,7 @@ import (
 	"sort"
 )
 
-// MinCalibrationSamples is how many non-overlapping verified forecasts a version
+// MinCalibrationSamples is how many non-overlapping verified forecasts a strategy
 // and interval need before their scores are shown as probabilities.
 const MinCalibrationSamples = 200
 

@@ -5,15 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"vergex/internal/planning"
 	"vergex/internal/planning/core"
+	"vergex/internal/testdb"
 )
 
 type testMarket struct {
@@ -146,13 +144,7 @@ func (b testExecutionTrader) CancelExecutionOrder(c context.Context, o Order) er
 
 func setup(t *testing.T, kind string) (*Controller, *testBroker, *testMarket, core.Plan) {
 	t.Helper()
-	db, e := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "planning.db")), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
-	if e != nil {
-		t.Fatal(e)
-	}
-	sql, _ := db.DB()
-	sql.SetMaxOpenConns(1)
-	t.Cleanup(func() { sql.Close() })
+	db := testdb.Open(t)
 	now := time.Now().UTC()
 	m := &testMarket{book: core.Snapshot{Venue: "binance", Symbol: "BTCUSDT", Kind: "perpetual", Bid: "99999", Ask: "100000", BidSize: "100", AskSize: "100", Tick: "1", Step: "0.00001", MinQty: "0.00001", MinNotional: "10", Observed: now}}
 	idea := core.Idea{Name: "plan", Side: "long", Entry: "100000", Stop: "99000", Target: "104000"}
@@ -237,6 +229,29 @@ func TestApprovalOwnerHashAndAccountLease(t *testing.T) {
 		t.Fatal("AI revised locked plan")
 	}
 }
+func TestConcurrentApprovalsReserveTheAccountOnce(t *testing.T) {
+	c, _, _, p := setup(t, "limit")
+	var approvedCount atomic.Int32
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, e := c.Approve(context.Background(), "alice", p.ID, p.Hash, "APPROVE LIVE"); e == nil {
+				approvedCount.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if approvedCount.Load() != 1 {
+		t.Fatalf("approvals = %d, want 1", approvedCount.Load())
+	}
+	var leases int64
+	if e := c.DB.Model(&Lease{}).Count(&leases).Error; e != nil || leases != 1 {
+		t.Fatalf("leases = %d, err = %v", leases, e)
+	}
+}
+
 func TestExecutePreflightFailuresNeverOrder(t *testing.T) {
 	for _, name := range []string{"balance", "fee", "position", "pending", "leverage", "market"} {
 		t.Run(name, func(t *testing.T) {

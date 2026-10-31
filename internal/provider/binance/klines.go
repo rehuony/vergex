@@ -109,12 +109,21 @@ func klineWeight(limit int) int {
 // Klines returns candles from startMs (or the latest ones when startMs is 0),
 // oldest first. The last one may not have closed yet.
 func (c *DataClient) Klines(ctx context.Context, symbol, interval string, startMs int64, limit int) ([]Candle, error) {
+	return c.klines(ctx, BudgetWeight, symbol, interval, startMs, limit)
+}
+
+// TradingKlines returns the latest candles out of the budget kept for trading.
+func (c *DataClient) TradingKlines(ctx context.Context, symbol, interval string, limit int) ([]Candle, error) {
+	return c.klines(ctx, BudgetTrading, symbol, interval, 0, limit)
+}
+
+func (c *DataClient) klines(ctx context.Context, budget Budget, symbol, interval string, startMs int64, limit int) ([]Candle, error) {
 	query := url.Values{"symbol": {symbol}, "interval": {interval}, "limit": {strconv.Itoa(limit)}}
 	if startMs > 0 {
 		query.Set("startTime", strconv.FormatInt(startMs, 10))
 	}
 	var rows [][]any
-	if err := c.get(ctx, BudgetWeight, klineWeight(limit), "/fapi/v1/klines", query, &rows); err != nil {
+	if err := c.get(ctx, budget, klineWeight(limit), "/fapi/v1/klines", query, &rows); err != nil {
 		return nil, err
 	}
 	candles := make([]Candle, 0, len(rows))

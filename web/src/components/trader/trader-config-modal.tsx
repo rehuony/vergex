@@ -307,7 +307,7 @@ export function TraderConfigModal({
                   </span>
                   {selectedStrategy.is_active && (
                     <span className="px-2 py-0.5 bg-vergex-success/20 text-vergex-success text-xs rounded-sm">
-                      {t('activating', language)}
+                      {t('strategyIsDefault', language)}
                     </span>
                   )}
                 </div>

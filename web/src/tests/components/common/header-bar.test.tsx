@@ -46,7 +46,7 @@ it('switches the theme from the Appearance submenu', () => {
 
 it('does not expose a mode switch after login', () => {
   render(
-    <MemoryRouter initialEntries={['/autopilot']}>
+    <MemoryRouter initialEntries={['/traders']}>
       <HeaderBar
         isLoggedIn
         user={{ email: 'owner@example.com' }}
@@ -63,25 +63,25 @@ it('does not expose a mode switch after login', () => {
 
 it('keeps desktop navigation labels on one line', () => {
   render(
-    <MemoryRouter initialEntries={['/autopilot']}>
+    <MemoryRouter initialEntries={['/traders']}>
       <HeaderBar />
     </MemoryRouter>
   )
 
-  expect(screen.getByRole('button', { name: 'Autopilot' }).className).toContain(
+  expect(screen.getByRole('button', { name: 'Traders' }).className).toContain(
     'whitespace-nowrap'
   )
 })
 
 it('keeps the full navigation visible in the desktop header', () => {
   render(
-    <MemoryRouter initialEntries={['/autopilot']}>
+    <MemoryRouter initialEntries={['/traders']}>
       <HeaderBar />
     </MemoryRouter>
   )
 
   expect(
-    screen.getByRole('button', { name: 'Autopilot' }).parentElement?.className
+    screen.getByRole('button', { name: 'Traders' }).parentElement?.className
   ).toContain('lg:flex')
   expect(
     screen.getByRole('button', { name: 'Open navigation' }).className

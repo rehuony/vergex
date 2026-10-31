@@ -39,6 +39,24 @@ export const scoreText = (prob: number, calibrated: boolean) => {
   return calibrated ? `${score}%` : String(score)
 }
 
+const directionTone = (direction: ForecastDirection) =>
+  direction === 'up'
+    ? 'text-vergex-success'
+    : direction === 'down'
+      ? 'text-vergex-danger'
+      : 'text-vergex-text-muted'
+
+export function DirectionIcon({ direction }: { direction: ForecastDirection }) {
+  const Icon =
+    direction === 'up' ? ArrowUp : direction === 'down' ? ArrowDown : Minus
+  return (
+    <Icon
+      className={cn('size-3.5 shrink-0', directionTone(direction))}
+      aria-hidden="true"
+    />
+  )
+}
+
 export function DirectionLabel({
   direction,
   language,
@@ -48,21 +66,15 @@ export function DirectionLabel({
   language: Language
   className?: string
 }) {
-  const Icon =
-    direction === 'up' ? ArrowUp : direction === 'down' ? ArrowDown : Minus
   return (
     <span
       className={cn(
         'inline-flex items-center gap-1 whitespace-nowrap',
-        direction === 'up'
-          ? 'text-vergex-success'
-          : direction === 'down'
-            ? 'text-vergex-danger'
-            : 'text-vergex-text-muted',
+        directionTone(direction),
         className
       )}
     >
-      <Icon className="size-3.5" aria-hidden="true" />
+      <DirectionIcon direction={direction} />
       {t(`forecast.direction.${direction}`, language)}
     </span>
   )

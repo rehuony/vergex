@@ -33,45 +33,25 @@ type Store struct {
 	mu sync.RWMutex
 }
 
-// New creates new Store instance (SQLite mode for backward compatibility)
-func New(dbPath string) (*Store, error) {
-	gdb, err := InitGorm(dbPath)
+// New connects to PostgreSQL and returns a Store with its tables in place
+func New(cfg DBConfig) (*Store, error) {
+	gdb, err := InitGorm(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
-	// Get underlying sql.DB for legacy compatibility
-	sqlDB, err := gdb.DB()
+	s, err := NewMigrated(gdb)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get sql.DB: %w", err)
+		return nil, err
 	}
 
-	s := &Store{gdb: gdb, db: sqlDB}
-
-	// Initialize all table structures
-	if err := s.initTables(); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("failed to initialize table structure: %w", err)
-	}
-
-	// Initialize default data
-	if err := s.initDefaultData(); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("failed to initialize default data: %w", err)
-	}
-
-	logger.Infof("✅ Database initialized (GORM, SQLite)")
+	logger.Infof("✅ Database initialized (GORM, PostgreSQL)")
 	return s, nil
 }
 
-// NewWithConfig creates new Store instance with provided database configuration
-func NewWithConfig(cfg DBConfig) (*Store, error) {
-	gdb, err := InitGormWithConfig(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	// Get underlying sql.DB for legacy compatibility
+// NewMigrated creates a Store on an open connection, with its tables and default
+// data in place.
+func NewMigrated(gdb *gorm.DB) (*Store, error) {
 	sqlDB, err := gdb.DB()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sql.DB: %w", err)
@@ -79,23 +59,14 @@ func NewWithConfig(cfg DBConfig) (*Store, error) {
 
 	s := &Store{gdb: gdb, db: sqlDB}
 
-	// Initialize all table structures
 	if err := s.initTables(); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("failed to initialize table structure: %w", err)
 	}
-
-	// Initialize default data
 	if err := s.initDefaultData(); err != nil {
 		sqlDB.Close()
 		return nil, fmt.Errorf("failed to initialize default data: %w", err)
 	}
-
-	dbTypeStr := "SQLite"
-	if cfg.Type == DBTypePostgres {
-		dbTypeStr = "PostgreSQL"
-	}
-	logger.Infof("✅ Database initialized (GORM, %s)", dbTypeStr)
 	return s, nil
 }
 
@@ -305,20 +276,6 @@ func (s *Store) Close() error {
 // GormDB returns the GORM database connection
 func (s *Store) GormDB() *gorm.DB {
 	return s.gdb
-}
-
-// DBType returns current database type
-func (s *Store) DBType() DBType {
-	// Detect from GORM dialector
-	if s.gdb != nil {
-		switch s.gdb.Dialector.Name() {
-		case "postgres":
-			return DBTypePostgres
-		default:
-			return DBTypeSQLite
-		}
-	}
-	return DBTypeSQLite
 }
 
 // DB gets underlying database connection (for legacy code compatibility)

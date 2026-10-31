@@ -4,15 +4,11 @@ import (
 	"testing"
 	"time"
 
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
+	"vergex/internal/testdb"
 )
 
 func TestGetOpenPositionBySymbolMatchesSideCaseInsensitively(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open in-memory sqlite: %v", err)
-	}
+	db := testdb.Open(t)
 
 	positions := NewPositionStore(db)
 	if err := positions.InitTables(); err != nil {
@@ -44,10 +40,7 @@ func TestGetOpenPositionBySymbolMatchesSideCaseInsensitively(t *testing.T) {
 }
 
 func TestClosedPositionQueriesScopeToOneTrader(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open in-memory sqlite: %v", err)
-	}
+	db := testdb.Open(t)
 
 	positions := NewPositionStore(db)
 	if err := positions.InitTables(); err != nil {
@@ -145,5 +138,54 @@ func TestCalculateMaxDrawdownUsesRealBaseline(t *testing.T) {
 
 	if calculateMaxDrawdownFromPnls(nil, 500) != 0 {
 		t.Fatalf("no trades must mean zero drawdown")
+	}
+}
+
+func TestClosedPositionPagesCoverEverythingOnceEvenWithEqualTimes(t *testing.T) {
+	db := testdb.Open(t)
+	positions := NewPositionStore(db)
+	if err := positions.InitTables(); err != nil {
+		t.Fatalf("init position table: %v", err)
+	}
+	const closedAt = int64(1_700_000_000_000)
+	for i, exit := range []int64{closedAt, closedAt, closedAt, closedAt + 1, closedAt - 1} {
+		position := &TraderPosition{TraderID: "t1", Symbol: "BTCUSDT", Side: "LONG", Status: "CLOSED", Quantity: 1, EntryPrice: 1, EntryTime: closedAt - 1000, ExitTime: exit, CreatedAt: int64(i)}
+		if err := db.Create(position).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	other := &TraderPosition{TraderID: "t2", Symbol: "BTCUSDT", Side: "LONG", Status: "CLOSED", Quantity: 1, EntryPrice: 1, EntryTime: closedAt - 1000, ExitTime: closedAt}
+	if err := db.Create(other).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	page, err := positions.GetClosedPositions("t1", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[int64]bool{}
+	var lastExit int64
+	for len(page) > 0 {
+		for _, position := range page {
+			if seen[position.ID] {
+				t.Fatalf("position %d came twice", position.ID)
+			}
+			if lastExit != 0 && position.ExitTime > lastExit {
+				t.Fatalf("position %d is out of order", position.ID)
+			}
+			seen[position.ID] = true
+			lastExit = position.ExitTime
+		}
+		page, err = positions.GetClosedPositionsBefore("t1", page[len(page)-1].ID, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(seen) != 5 {
+		t.Fatalf("pages covered %d positions, want 5", len(seen))
+	}
+
+	if _, err := positions.GetClosedPositionsBefore("t1", other.ID, 2); err == nil {
+		t.Fatal("another trader's position was accepted as a place to continue from")
 	}
 }

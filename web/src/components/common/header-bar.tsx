@@ -171,17 +171,23 @@ export function HeaderBar({
       label: t('dashboardNav', language),
       auth: true,
     },
-    { page: 'planning', path: ROUTES.planning, label: 'Frontier', auth: true },
-    {
-      page: 'autopilot',
-      path: ROUTES.autopilot,
-      label: t('autopilotNav', language),
-      auth: true,
-    },
     {
       page: 'forecast',
       path: ROUTES.forecast,
       label: t('forecastNav', language),
+      auth: true,
+    },
+    { page: 'planning', path: ROUTES.planning, label: 'Frontier', auth: true },
+    {
+      page: 'traders',
+      path: ROUTES.traders,
+      label: t('tradersNav', language),
+      auth: true,
+    },
+    {
+      page: 'strategies',
+      path: ROUTES.strategies,
+      label: t('strategiesNav', language),
       auth: true,
     },
   ]

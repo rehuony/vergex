@@ -3,7 +3,7 @@ import { t, type Language } from '@/i18n/translations'
 import type { SymbolStats } from '@/types'
 import { cn } from '@/utils/cn'
 import { Panel, PanelState } from '@/components/common/panel'
-import { baseLabel, fmtUsd } from './trader-format'
+import { baseLabel, fmtUsd } from '@/utils/trader-format'
 
 // SymbolBreakdown ranks the most traded symbols by closed trades, with win
 // rate, P/L and a bar relative to the busiest symbol.

@@ -9,13 +9,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"vergex/internal/store"
+	"vergex/internal/store/storetest"
 )
 
 func TestDisplayNameStartsAsAdminAndCanBeChanged(t *testing.T) {
-	st, err := store.New(t.TempDir() + "/vergex.db")
-	if err != nil {
-		t.Fatalf("store.New failed: %v", err)
-	}
+	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 	if err := st.User().Create(&store.User{ID: "owner", Email: "owner@example.test", PasswordHash: "x"}); err != nil {
 		t.Fatalf("create user: %v", err)

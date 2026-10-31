@@ -25,7 +25,7 @@ import {
   SettingList,
   SettingRow,
   SettingState,
-} from './setting-row'
+} from '@/components/common/setting-row'
 
 const inputClass = cn(dialogInputClass, 'h-9')
 
@@ -37,7 +37,7 @@ const modelIcon = (model: AIModel) =>
 const defaultModel = (model: AIModel) =>
   AI_PROVIDER_CONFIG[model.provider]?.defaultModel || model.provider
 
-/** The AI models Frontier, Autopilot and Telegram call, with their keys. */
+/** The AI models Frontier, traders and Telegram call, with their keys. */
 export function ModelSettings({ language }: { language: Language }) {
   // null shows the list, '' a new connection, an id that connection.
   const [editing, setEditing] = useState<string | null>(null)
