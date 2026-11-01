@@ -16,7 +16,7 @@ describe('readable request errors', () => {
       expect(text).not.toMatch(/\\x00|https:|secret=|successful/)
       expect(text.length).toBeLessThan(300)
     }
-    expect(formatRequestError(protocolError, 'zh')).toContain('网络协议异常')
+    expect(formatRequestError(protocolError, 'zh-CN')).toContain('网络协议异常')
   })
 
   it('preserves actionable ordinary errors and bounds unexpected output', () => {

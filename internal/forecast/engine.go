@@ -11,7 +11,7 @@ import (
 
 	"vergex/internal/logger"
 	"vergex/internal/market"
-	"vergex/internal/marketdata"
+	"vergex/internal/market/feed"
 	"vergex/internal/safe"
 	"vergex/internal/servicestate"
 )
@@ -29,7 +29,7 @@ const (
 // candle closes and sends threshold alerts. It reads only local data.
 type Engine struct {
 	Store  *Store
-	market *marketdata.Service
+	market *feed.Service
 	now    func() time.Time
 	notify func(ctx context.Context, text string) error
 
@@ -41,7 +41,7 @@ type Engine struct {
 
 // NewEngine creates an engine over the market data service. notify sends alert
 // text and may be nil.
-func NewEngine(store *Store, service *marketdata.Service, notify func(ctx context.Context, text string) error) *Engine {
+func NewEngine(store *Store, service *feed.Service, notify func(ctx context.Context, text string) error) *Engine {
 	return &Engine{Store: store, market: service, now: time.Now, notify: notify, skipped: map[int64]string{}}
 }
 
@@ -84,7 +84,7 @@ func (e *Engine) Tick(ctx context.Context) {
 }
 
 // record forecasts every candle that closed since the last round.
-func (e *Engine) record(strategy *Strategy) []Record {
+func (e *Engine) record(strategy *Strategy) []Signal {
 	series, err := e.market.Store.ListSeries()
 	if err != nil {
 		logger.Warnf("Forecast: list series: %v", err)
@@ -99,13 +99,13 @@ func (e *Engine) record(strategy *Strategy) []Record {
 	if err != nil {
 		logger.Warnf("Forecast: read calibrations: %v", err)
 	}
-	var created []Record
+	var created []Signal
 	for _, row := range series {
 		// Trading keeps series of its own at intervals Forecast has no settings for.
-		if row.Status != marketdata.StatusActive || row.LastClosedTime == 0 || intervalMillis(row.Interval) == 0 {
+		if row.Status != feed.StatusActive || row.LastClosedTime == 0 || intervalMillis(row.Interval) == 0 {
 			continue
 		}
-		step := marketdata.IntervalMillis(row.Interval)
+		step := feed.IntervalMillis(row.Interval)
 		start := row.LastClosedTime
 		if last, seen := latest[row.ID]; seen {
 			if last >= row.LastClosedTime {
@@ -120,7 +120,7 @@ func (e *Engine) record(strategy *Strategy) []Record {
 				continue
 			}
 			e.setSkipped(row.ID, "")
-			isNew, err := e.Store.SaveRecord(record)
+			isNew, err := e.Store.SaveSignal(record)
 			if err != nil {
 				logger.Warnf("Forecast: save %s %s: %v", row.Symbol, row.Interval, err)
 				continue
@@ -144,10 +144,10 @@ func (e *Engine) setSkipped(seriesID int64, reason string) {
 }
 
 // evaluateAt forecasts a series at one candle from local data.
-func (e *Engine) evaluateAt(strategy *Strategy, series *marketdata.Series, at int64) (Result, error) {
+func (e *Engine) evaluateAt(strategy *Strategy, series *feed.Series, at int64) (Result, error) {
 	candles, err := e.market.Store.Window(series, at, WindowBars)
 	if err != nil {
-		if errors.Is(err, marketdata.ErrNotEnoughHistory) {
+		if errors.Is(err, feed.ErrNotEnoughHistory) {
 			return Result{}, ErrNotEnoughHistory
 		}
 		return Result{}, err
@@ -156,19 +156,19 @@ func (e *Engine) evaluateAt(strategy *Strategy, series *marketdata.Series, at in
 	if err != nil {
 		return Result{}, err
 	}
-	step := marketdata.IntervalMillis(series.Interval)
-	return Evaluate(strategy.Config, series.Interval, marketdata.ToKlines(candles, series.Interval), DerivativesAt(readings, at, step))
+	step := feed.IntervalMillis(series.Interval)
+	return Evaluate(strategy.Config, series.Interval, feed.ToKlines(candles, series.Interval), DerivativesAt(readings, at, step))
 }
 
-func readingsFrom(store *marketdata.Store, symbol string, from, to int64) (Readings, error) {
+func readingsFrom(store *feed.Store, symbol string, from, to int64) (Readings, error) {
 	var readings Readings
 	for _, source := range []struct {
 		kind string
 		dest *[]Reading
 	}{
-		{marketdata.KindFunding, &readings.Funding},
-		{marketdata.KindOpenValue, &readings.OpenValue},
-		{marketdata.KindLongShort, &readings.LongShort},
+		{feed.KindFunding, &readings.Funding},
+		{feed.KindOpenValue, &readings.OpenValue},
+		{feed.KindLongShort, &readings.LongShort},
 	} {
 		rows, err := store.Derivatives(symbol, source.kind, from, to)
 		if err != nil {
@@ -182,18 +182,18 @@ func readingsFrom(store *marketdata.Store, symbol string, from, to int64) (Readi
 	return readings, nil
 }
 
-func (e *Engine) forecast(strategy *Strategy, series *marketdata.Series, at int64, curve []Knot) (*Record, error) {
+func (e *Engine) forecast(strategy *Strategy, series *feed.Series, at int64, curve []Knot) (*Signal, error) {
 	result, err := e.evaluateAt(strategy, series, at)
 	if err != nil {
 		return nil, err
 	}
-	step := marketdata.IntervalMillis(series.Interval)
+	step := feed.IntervalMillis(series.Interval)
 	display := result.ProbFull
 	calibrated := len(curve) > 0
 	if calibrated {
 		display = ApplyCalibration(curve, result.ProbFull)
 	}
-	return &Record{
+	return &Signal{
 		StrategyID: strategy.ID, SeriesID: series.ID, OpenTime: at, Symbol: series.Symbol, Interval: series.Interval,
 		Close: result.Close, ProbCandles: result.ProbCandles, ProbFull: result.ProbFull, DisplayProb: display, Calibrated: calibrated,
 		Direction: result.Direction, Confidence: result.Confidence, ExpectedMovePct: result.ExpectedMovePct,
@@ -205,7 +205,7 @@ func (e *Engine) forecast(strategy *Strategy, series *marketdata.Series, at int6
 // verify judges records whose target candle has closed.
 func (e *Engine) verify() {
 	now := e.now().UnixMilli()
-	records, err := e.Store.DueRecords(now, verifyBatch)
+	records, err := e.Store.DueSignals(now, verifyBatch)
 	if err != nil {
 		logger.Warnf("Forecast: read due records: %v", err)
 		return
@@ -214,7 +214,7 @@ func (e *Engine) verify() {
 	if err != nil {
 		return
 	}
-	byID := make(map[int64]*marketdata.Series, len(series))
+	byID := make(map[int64]*feed.Series, len(series))
 	for _, row := range series {
 		byID[row.ID] = row
 	}
@@ -235,14 +235,14 @@ func (e *Engine) verify() {
 		} else {
 			Judge(record, candles[0].Close, now)
 		}
-		if err := e.Store.saveVerification(record); err != nil {
+		if err := e.Store.saveVerification(record, feed.IntervalMillis(record.Interval)); err != nil {
 			logger.Warnf("Forecast: save verification: %v", err)
 		}
 	}
 }
 
 // Judge fills in how a record turned out, given its target candle's close.
-func Judge(record *Record, targetClose float64, now int64) {
+func Judge(record *Signal, targetClose float64, now int64) {
 	record.Status = StatusVerified
 	record.TargetClose = targetClose
 	record.VerifiedAt = now
@@ -277,11 +277,10 @@ func (e *Engine) calibrateIfDue(strategy *Strategy) {
 // Calibrate rebuilds an interval's curve from verified forecasts that do not
 // overlap, once there are enough of them.
 func (e *Engine) Calibrate(strategy *Strategy, interval string) error {
-	records, err := e.Store.VerifiedRecords(strategy.ID, interval)
+	points, err := e.Store.IndependentPoints(strategy.ID, interval)
 	if err != nil {
 		return err
 	}
-	points := nonOverlapping(records, intervalMillis(interval))
 	if len(points) < MinCalibrationSamples {
 		return nil
 	}
@@ -291,30 +290,12 @@ func (e *Engine) Calibrate(strategy *Strategy, interval string) error {
 	})
 }
 
-// nonOverlapping keeps records whose forecast windows do not overlap within a
-// series, and that had a real move. Records must be ordered by series and time.
-func nonOverlapping(records []Record, step int64) []CalibrationPoint {
-	var points []CalibrationPoint
-	var series, next int64
-	for _, record := range records {
-		if record.SeriesID != series {
-			series, next = record.SeriesID, 0
-		}
-		if record.OpenTime < next || record.TargetClose == record.Close {
-			continue
-		}
-		next = record.OpenTime + int64(record.Horizon)*step
-		points = append(points, CalibrationPoint{Prob: record.ProbFull, Up: record.TargetClose > record.Close})
-	}
-	return points
-}
-
 // Score is a probability as the 0-100 number shown to the user.
 func Score(prob float64) int { return int(math.Round(prob * 100)) }
 
 // alert sends watchlist signals crossing the threshold, once each time: a series
 // that alerted is silent until its score comes back inside.
-func (e *Engine) alert(ctx context.Context, created []Record) {
+func (e *Engine) alert(ctx context.Context, created []Signal) {
 	if e.notify == nil || len(created) == 0 {
 		return
 	}
@@ -327,7 +308,7 @@ func (e *Engine) alert(ctx context.Context, created []Record) {
 		return
 	}
 	watched := map[string]bool{}
-	for _, symbol := range marketSettings.WatchSymbols() {
+	for _, symbol := range marketSettings.Watchlist {
 		watched[symbol] = true
 	}
 	var lines []string
@@ -367,7 +348,7 @@ func (e *Engine) alert(ctx context.Context, created []Record) {
 	}
 }
 
-func alertLine(record *Record, score int) string {
+func alertLine(record *Signal, score int) string {
 	direction := "Up"
 	if record.DisplayProb < 0.5 {
 		direction = "Down"
@@ -399,7 +380,7 @@ func (e *Engine) Candles(symbol, interval string, from, to int64) ([]market.Klin
 	if err != nil {
 		return nil, err
 	}
-	return marketdata.ToKlines(candles, interval), nil
+	return feed.ToKlines(candles, interval), nil
 }
 
 // Readings reads local derivatives history, for backtests.
@@ -409,7 +390,7 @@ func (e *Engine) Readings(symbol string, from, to int64) (Readings, error) {
 
 // StartBacktest runs a backtest in the background, one at a time. It reads only
 // the local store and never requests anything from the exchange.
-func (e *Engine) StartBacktest(ctx context.Context, strategyID int64, options BacktestOptions) (*Backtest, error) {
+func (e *Engine) StartBacktest(ctx context.Context, strategyID string, options BacktestOptions) (*Backtest, error) {
 	strategy, err := e.Store.StrategyByID(strategyID)
 	if err != nil {
 		return nil, errors.New("strategy strategy not found")
@@ -460,46 +441,46 @@ const (
 	PendingUnavailable      = "unavailable" // The exchange has no such coin.
 )
 
-// Signal is one row of the signal table: a series and its latest forecast.
-type Signal struct {
+// CoinSignal is one row of the signal table: a series and its latest forecast.
+type CoinSignal struct {
 	Symbol   string   `json:"symbol"`
 	Interval string   `json:"interval"`
 	Tier     int      `json:"tier"`
 	Price    *float64 `json:"price"`
-	Record   *Record  `json:"record"`
+	Signal   *Signal  `json:"record"`
 	Stale    bool     `json:"stale"`
 	// Pending says why there is no forecast yet.
 	Pending string `json:"pending,omitempty"`
 }
 
 // Signals lists every tracked coin at an interval with its latest forecast.
-func (e *Engine) Signals(strategy *Strategy, interval string, prices map[string]float64) ([]Signal, error) {
+func (e *Engine) Signals(strategy *Strategy, interval string, prices map[string]float64) ([]CoinSignal, error) {
 	series, err := e.market.Store.ListSeries()
 	if err != nil {
 		return nil, err
 	}
-	records, err := e.Store.LatestRecords(strategy.ID, interval)
+	records, err := e.Store.LatestSignals(strategy.ID, interval)
 	if err != nil {
 		return nil, err
 	}
-	bySeries := make(map[int64]*Record, len(records))
+	bySeries := make(map[int64]*Signal, len(records))
 	for i := range records {
 		bySeries[records[i].SeriesID] = &records[i]
 	}
 	now := e.now().UnixMilli()
 	step := intervalMillis(interval)
-	signals := []Signal{}
+	signals := []CoinSignal{}
 	for _, row := range series {
-		if row.Status != marketdata.StatusActive || row.Interval != interval {
+		if row.Status != feed.StatusActive || row.Interval != interval {
 			continue
 		}
-		signal := Signal{Symbol: row.Symbol, Interval: interval, Tier: row.Tier, Record: bySeries[row.ID]}
+		signal := CoinSignal{Symbol: row.Symbol, Interval: interval, Tier: row.Tier, Signal: bySeries[row.ID]}
 		if price, ok := prices[row.Symbol]; ok {
 			signal.Price = &price
 		}
 		switch {
-		case signal.Record != nil:
-			signal.Stale = now-signal.Record.OpenTime > 3*step
+		case signal.Signal != nil:
+			signal.Stale = now-signal.Signal.OpenTime > 3*step
 		case row.LastClosedTime == 0:
 			signal.Pending = PendingFetching
 		default:
@@ -521,9 +502,9 @@ type Detail struct {
 	Ready      bool        `json:"ready"`
 	Pending    string      `json:"pending,omitempty"`
 	Result     *Result     `json:"result"`
-	Latest     *Record     `json:"latest"`
-	Records    []Record    `json:"records"`
-	Stats      RecordStats `json:"stats"`
+	Latest     *Signal     `json:"latest"`
+	Records    []Signal    `json:"records"`
+	Stats      SignalStats `json:"stats"`
 	Candles    []CandleRow `json:"candles"`
 	LastClosed int64       `json:"last_closed"`
 	// Forming is the candle still open, while the stream is delivering it. Forecasts
@@ -559,7 +540,7 @@ func (e *Engine) Detail(strategy *Strategy, symbol, interval string, prices map[
 	if err != nil {
 		return nil, err
 	}
-	detail := &Detail{Symbol: symbol, Interval: interval, Records: []Record{}, Candles: []CandleRow{}, Projection: []CandleRow{}, LastClosed: series.LastClosedTime}
+	detail := &Detail{Symbol: symbol, Interval: interval, Records: []Signal{}, Candles: []CandleRow{}, Projection: []CandleRow{}, LastClosed: series.LastClosedTime}
 	if price, ok := prices[symbol]; ok {
 		detail.Price = &price
 	}
@@ -570,7 +551,7 @@ func (e *Engine) Detail(strategy *Strategy, symbol, interval string, prices map[
 		}
 		return detail, nil
 	}
-	step := marketdata.IntervalMillis(interval)
+	step := feed.IntervalMillis(interval)
 	candles, err := e.market.Store.Range(series.ID, series.LastClosedTime-(detailCandles-1)*step, series.LastClosedTime)
 	if err != nil {
 		return nil, err
@@ -591,7 +572,7 @@ func (e *Engine) Detail(strategy *Strategy, symbol, interval string, prices map[
 		detail.Ready = true
 		detail.Result = &result
 	}
-	records, err := e.Store.RecentRecords(strategy.ID, series.ID, recentRecordRows)
+	records, err := e.Store.RecentSignals(strategy.ID, series.ID, recentRecordRows)
 	if err != nil {
 		return nil, err
 	}
@@ -599,7 +580,7 @@ func (e *Engine) Detail(strategy *Strategy, symbol, interval string, prices map[
 	if len(records) > 0 {
 		detail.Latest = &records[0]
 	}
-	detail.Stats, err = e.Store.RecordStats(strategy.ID, series.ID)
+	detail.Stats, err = e.Store.SignalStats(strategy.ID, series.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -620,13 +601,13 @@ func (e *Engine) Detail(strategy *Strategy, symbol, interval string, prices map[
 
 // addIndicators reads enough candles before the shown ones to warm up, so the first
 // point on the chart means the same as the last.
-func (e *Engine) addIndicators(detail *Detail, series *marketdata.Series, step int64) error {
+func (e *Engine) addIndicators(detail *Detail, series *feed.Series, step int64) error {
 	from := series.LastClosedTime - (detailCandles+WindowBars-1)*step
 	candles, err := e.market.Store.Range(series.ID, from, series.LastClosedTime)
 	if err != nil {
 		return err
 	}
-	indicators := IndicatorSeries(marketdata.ToKlines(candles, series.Interval), detailCandles)
+	indicators := IndicatorSeries(feed.ToKlines(candles, series.Interval), detailCandles)
 	detail.Indicators = &indicators
 	return nil
 }
@@ -641,7 +622,7 @@ type Overlay struct {
 	Direction   string      `json:"direction,omitempty"`
 	DisplayProb float64     `json:"display_prob"`
 	Calibrated  bool        `json:"calibrated"`
-	Stats       RecordStats `json:"stats"`
+	Stats       SignalStats `json:"stats"`
 	Projection  []CandleRow `json:"projection"`
 }
 
@@ -654,7 +635,7 @@ func (e *Engine) OverlayFor(strategy *Strategy, symbol, interval string) (*Overl
 		return nil, err
 	}
 	overlay := &Overlay{Symbol: symbol, Interval: interval, Projection: []CandleRow{}}
-	step := marketdata.IntervalMillis(interval)
+	step := feed.IntervalMillis(interval)
 	switch {
 	case series.LastClosedTime == 0 && series.FailCount > 0:
 		overlay.Pending = PendingUnavailable
@@ -674,7 +655,7 @@ func (e *Engine) OverlayFor(strategy *Strategy, symbol, interval string) (*Overl
 	}
 	overlay.Direction = result.Direction
 	overlay.DisplayProb = result.ProbFull
-	records, err := e.Store.RecentRecords(strategy.ID, series.ID, 1)
+	records, err := e.Store.RecentSignals(strategy.ID, series.ID, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -682,7 +663,7 @@ func (e *Engine) OverlayFor(strategy *Strategy, symbol, interval string) (*Overl
 		overlay.DisplayProb = records[0].DisplayProb
 		overlay.Calibrated = records[0].Calibrated
 	}
-	overlay.Stats, err = e.Store.RecordStats(strategy.ID, series.ID)
+	overlay.Stats, err = e.Store.SignalStats(strategy.ID, series.ID)
 	if err != nil {
 		return nil, err
 	}

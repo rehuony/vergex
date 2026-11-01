@@ -53,14 +53,26 @@ const show = () =>
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.strategies.mockResolvedValue({
-    active_strategy_id: 2,
+    active_strategy_id: 'strategy-2',
     default_config: config,
     strategies: [
-      { id: 2, name: 'Current', engine_version: 1, config, created_at: 1 },
-      { id: 1, name: 'First', engine_version: 1, config, created_at: 1 },
+      {
+        id: 'strategy-2',
+        name: 'Current',
+        engine_version: 1,
+        config,
+        created_at: 1,
+      },
+      {
+        id: 'strategy-1',
+        name: 'First',
+        engine_version: 1,
+        config,
+        created_at: 1,
+      },
     ],
   })
-  mocks.create.mockResolvedValue({ id: 3 })
+  mocks.create.mockResolvedValue({ id: 'strategy-3' })
 })
 afterEach(cleanup)
 
@@ -98,7 +110,7 @@ it('deletes only a strategy that is not in use', async () => {
   fireEvent.click(screen.getByRole('button', { name: /First/ }))
   await waitFor(() => expect(remove).toBeEnabled())
   fireEvent.click(remove)
-  await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith(1))
+  await waitFor(() => expect(mocks.remove).toHaveBeenCalledWith('strategy-1'))
 })
 
 it('will not save with every factor off', async () => {

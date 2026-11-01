@@ -10,12 +10,12 @@ import (
 	"math/big"
 	"strings"
 	"time"
-	"vergex/internal/trader/execution"
+	"vergex/internal/trading"
 )
 
 // Decimal is an exact base-10 number encoded as a JSON string. No binary floats
 // participate in risk calculations or quantity rounding.
-type Decimal = execution.Decimal
+type Decimal = trading.Decimal
 
 func rat(d Decimal) (*big.Rat, error) {
 	if len(d) == 0 || len(d) > 40 {

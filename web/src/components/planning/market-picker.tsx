@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { format } from './planning-labels'
 

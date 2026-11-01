@@ -2,10 +2,10 @@ package trader
 
 import (
 	"math"
-	"vergex/internal/kernel"
 	"vergex/internal/logger"
 	"vergex/internal/market"
 	"vergex/internal/store"
+	"vergex/internal/trader/agent"
 )
 
 // ============================================================================
@@ -44,7 +44,7 @@ func (at *AutoTrader) calculateATRBounds(price float64, mktData *market.Data, co
 
 // initializeGridLevels creates the grid level structure
 func (at *AutoTrader) initializeGridLevels(currentPrice float64, config *store.GridStrategyConfig) {
-	levels := make([]kernel.GridLevelInfo, config.GridCount)
+	levels := make([]agent.GridLevelInfo, config.GridCount)
 	totalWeight := 0.0
 	weights := make([]float64, config.GridCount)
 
@@ -76,7 +76,7 @@ func (at *AutoTrader) initializeGridLevels(currentPrice float64, config *store.G
 			side = "sell"
 		}
 
-		levels[i] = kernel.GridLevelInfo{
+		levels[i] = agent.GridLevelInfo{
 			Index:        i,
 			Price:        price,
 			State:        "empty",
@@ -271,7 +271,7 @@ func (at *AutoTrader) autoAdjustGrid() {
 	defer at.gridState.mu.Unlock()
 
 	// Preserve filled positions before reinitializing
-	filledPositions := make(map[int]kernel.GridLevelInfo)
+	filledPositions := make(map[int]agent.GridLevelInfo)
 	for i, level := range at.gridState.Levels {
 		if level.State == "filled" {
 			filledPositions[i] = level
@@ -361,7 +361,7 @@ func (at *AutoTrader) calculateATRBoundsLocked(price float64, mktData *market.Da
 
 // initializeGridLevelsLocked creates the grid level structure (caller must hold lock)
 func (at *AutoTrader) initializeGridLevelsLocked(currentPrice float64, config *store.GridStrategyConfig) {
-	levels := make([]kernel.GridLevelInfo, config.GridCount)
+	levels := make([]agent.GridLevelInfo, config.GridCount)
 	totalWeight := 0.0
 	weights := make([]float64, config.GridCount)
 
@@ -393,7 +393,7 @@ func (at *AutoTrader) initializeGridLevelsLocked(currentPrice float64, config *s
 			side = "sell"
 		}
 
-		levels[i] = kernel.GridLevelInfo{
+		levels[i] = agent.GridLevelInfo{
 			Index:        i,
 			Price:        price,
 			State:        "empty",

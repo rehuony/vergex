@@ -1,6 +1,6 @@
 import { API_BASE, getAuthHeaders } from './helpers'
 
-export type ActivityKind = 'ai' | 'orders' | 'funds' | 'market'
+export type ActivityKind = 'agent' | 'orders' | 'funds' | 'market'
 
 export type ActivityBlock =
   | 'market'
@@ -11,7 +11,7 @@ export type ActivityBlock =
   | 'models'
   | 'accounts'
   | 'positions'
-  | 'ai_cost'
+  | 'agent_cost'
   | 'fees'
   | 'other'
 
@@ -28,8 +28,8 @@ export interface ActivityEvent {
   at: number
   kind: ActivityKind
   type:
-    | 'ai_call'
-    | 'ai_cost'
+    | 'agent_call'
+    | 'agent_cost'
     | 'decision'
     | 'market_read'
     | 'forecast'
@@ -46,7 +46,7 @@ export interface ActivityEvent {
   tokens?: number
   /** Coins read, or actions decided. */
   items?: number
-  /** In asset, or dollars when there is none. Fees and AI costs are positive. */
+  /** In asset, or dollars when there is none. Fees and agent costs are positive. */
   amount?: number
   asset?: string
   status?: string

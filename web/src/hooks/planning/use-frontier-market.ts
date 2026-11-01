@@ -15,7 +15,7 @@ import {
   preferredAccount as preferredTradingAccount,
   rememberAccount,
 } from '@/utils/planning/frontier-accounts'
-import type { AIModel, Exchange } from '@/types'
+import type { AgentModel, Exchange } from '@/types'
 
 interface FrontierMarketOptions {
   setError: Dispatch<SetStateAction<string>>
@@ -24,7 +24,7 @@ interface FrontierMarketOptions {
 }
 
 const NO_ACCOUNTS: Exchange[] = []
-const NO_MODELS: AIModel[] = []
+const NO_MODELS: AgentModel[] = []
 const MARKET_NAME = /^[A-Z0-9\p{Script=Han}-]{1,40}$/u
 
 // What the address asks for. Anything it cannot use is ignored.
@@ -41,7 +41,7 @@ function readMarketLink(params: URLSearchParams) {
   }
 }
 
-// useFrontierMarket holds what Frontier works on: the enabled AI models and
+// useFrontierMarket holds what Frontier works on: the enabled models and
 // trading accounts, the chosen model and account, and the open venue and
 // market. Connections come from settings through the shared cache, so a change
 // saved there applies here at once. On load it opens what the address names, or
@@ -51,20 +51,20 @@ export function useFrontierMarket({
   onAccountSwitch,
 }: FrontierMarketOptions) {
   const exchanges = useExchangeConfigs()
-  const aiModels = useModelConfigs()
+  const agentModels = useModelConfigs()
   const accounts = useMemo(
     () =>
-      (exchanges.data ?? NO_ACCOUNTS).filter(
-        (a) => a.enabled && frontierVenues.includes(a.exchange_type || '')
+      (exchanges.data ?? NO_ACCOUNTS).filter((a) =>
+        frontierVenues.includes(a.exchange_type || '')
       ),
     [exchanges.data]
   )
   const models = useMemo(
     () =>
-      (aiModels.data ?? NO_MODELS).filter((m) => m.enabled && m.has_api_key),
-    [aiModels.data]
+      (agentModels.data ?? NO_MODELS).filter((m) => m.enabled && m.has_api_key),
+    [agentModels.data]
   )
-  const configsLoaded = Boolean(exchanges.data && aiModels.data)
+  const configsLoaded = Boolean(exchanges.data && agentModels.data)
   const [params] = useSearchParams()
   const [link] = useState(() => readMarketLink(params))
   const [exchangeID, setExchangeID] = useState('')
@@ -78,9 +78,9 @@ export function useFrontierMarket({
   const [symbol, setSymbol] = useState(link.symbol ?? defaultMarket(venue))
 
   useEffect(() => {
-    const failure = exchanges.error || aiModels.error
+    const failure = exchanges.error || agentModels.error
     if (failure) setError(String(failure.message))
-  }, [exchanges.error, aiModels.error])
+  }, [exchanges.error, agentModels.error])
 
   useEffect(() => {
     if (!configsLoaded) return

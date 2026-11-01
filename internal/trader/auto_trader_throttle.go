@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"vergex/internal/kernel"
-	"vergex/internal/market"
+	"vergex/internal/market/instrument"
 	"vergex/internal/store"
+	"vergex/internal/trader/agent"
 )
 
 const (
@@ -27,7 +27,7 @@ const (
 
 // positionPricePnLPct converts the margin-based UnrealizedPnLPct reported for
 // a position into the underlying price-move percentage.
-func positionPricePnLPct(pos *kernel.PositionInfo) float64 {
+func positionPricePnLPct(pos *agent.PositionInfo) float64 {
 	if pos == nil {
 		return 0
 	}
@@ -78,10 +78,10 @@ func openActionSide(action string) string {
 }
 
 func normalizedDecisionSymbol(symbol string) string {
-	return market.Normalize(strings.TrimSpace(symbol))
+	return instrument.Normalize(strings.TrimSpace(symbol))
 }
 
-func (at *AutoTrader) tradeThrottleReason(decision kernel.Decision, ctx *kernel.Context) string {
+func (at *AutoTrader) tradeThrottleReason(decision agent.Decision, ctx *agent.Context) string {
 	if ctx == nil {
 		return ""
 	}
@@ -96,7 +96,7 @@ func (at *AutoTrader) tradeThrottleReason(decision kernel.Decision, ctx *kernel.
 	}
 }
 
-func (at *AutoTrader) openThrottleReason(decision kernel.Decision, ctx *kernel.Context) string {
+func (at *AutoTrader) openThrottleReason(decision agent.Decision, ctx *agent.Context) string {
 	symbol := normalizedDecisionSymbol(decision.Symbol)
 	if symbol == "" {
 		return ""
@@ -118,7 +118,7 @@ func (at *AutoTrader) openThrottleReason(decision kernel.Decision, ctx *kernel.C
 	return ""
 }
 
-func (at *AutoTrader) closeThrottleReason(decision kernel.Decision, ctx *kernel.Context) string {
+func (at *AutoTrader) closeThrottleReason(decision agent.Decision, ctx *agent.Context) string {
 	symbol := normalizedDecisionSymbol(decision.Symbol)
 	side := closeActionSide(decision.Action)
 	if symbol == "" || side == "" {
@@ -171,7 +171,7 @@ func (at *AutoTrader) closeThrottleReason(decision kernel.Decision, ctx *kernel.
 
 	remaining := autopilotMinHoldDuration - heldFor
 	return fmt.Sprintf(
-		"trade throttle: %s %s has only been held for %s with price PnL %.2f%%; min AI-managed hold is %s unless price loss <= %.1f%% or price profit >= %.1f%%",
+		"trade throttle: %s %s has only been held for %s with price PnL %.2f%%; min agent-managed hold is %s unless price loss <= %.1f%% or price profit >= %.1f%%",
 		symbol,
 		side,
 		roundDuration(heldFor),
@@ -182,7 +182,7 @@ func (at *AutoTrader) closeThrottleReason(decision kernel.Decision, ctx *kernel.
 	) + fmt.Sprintf("; wait about %s", roundDuration(remaining))
 }
 
-func findContextPosition(ctx *kernel.Context, symbol string, side string) *kernel.PositionInfo {
+func findContextPosition(ctx *agent.Context, symbol string, side string) *agent.PositionInfo {
 	if ctx == nil {
 		return nil
 	}
@@ -195,7 +195,7 @@ func findContextPosition(ctx *kernel.Context, symbol string, side string) *kerne
 	return nil
 }
 
-func findAnyContextPosition(ctx *kernel.Context, symbol string) *kernel.PositionInfo {
+func findAnyContextPosition(ctx *agent.Context, symbol string) *agent.PositionInfo {
 	if ctx == nil {
 		return nil
 	}

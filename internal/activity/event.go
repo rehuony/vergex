@@ -1,12 +1,12 @@
 // Package activity turns what the system records into a stream of events for the
-// Dashboard: AI calls, orders, money and market reads, each with where it came
+// Dashboard: model calls, orders, money and market reads, each with where it came
 // from and where it went. It only reads the database, so it never touches the
 // trading loop and makes no exchange requests.
 package activity
 
 // Kinds, the groups the Dashboard filters by.
 const (
-	KindAI     = "ai"
+	KindAgent  = "agent"
 	KindOrders = "orders"
 	KindFunds  = "funds"
 	KindMarket = "market"
@@ -14,8 +14,8 @@ const (
 
 // Event types, which pick the wording of an event.
 const (
-	TypeAICall     = "ai_call"
-	TypeAICost     = "ai_cost"
+	TypeAgentCall  = "agent_call"
+	TypeAgentCost  = "agent_cost"
 	TypeDecision   = "decision"
 	TypeMarketRead = "market_read"
 	TypeForecast   = "forecast"
@@ -36,9 +36,9 @@ const (
 	BlockModels    = "models"
 	BlockAccounts  = "accounts"
 	BlockPositions = "positions"
-	BlockAICost    = "ai_cost"
+	BlockAgentCost = "agent_cost"
 	BlockFees      = "fees"
-	// BlockOther is an AI call outside the scene, such as a model test.
+	// BlockOther is a call outside the scene, such as a model test.
 	BlockOther = "other"
 )
 
@@ -69,7 +69,7 @@ type Event struct {
 	Quantity float64  `json:"quantity,omitempty"`
 	Tokens   int      `json:"tokens,omitempty"`
 	Items    int      `json:"items,omitempty"`  // Coins read, or actions decided.
-	Amount   float64  `json:"amount,omitempty"` // In Asset. Fees and AI costs are positive.
+	Amount   float64  `json:"amount,omitempty"` // In Asset. Fees and agent costs are positive.
 	Asset    string   `json:"asset,omitempty"`
 	Status   string   `json:"status,omitempty"`
 	Detail   string   `json:"detail,omitempty"`

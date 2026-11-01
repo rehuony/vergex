@@ -14,13 +14,15 @@ import (
 	"syscall"
 	"time"
 
-	"vergex/internal/auth"
 	"vergex/internal/config"
-	"vergex/internal/crypto"
 	"vergex/internal/forecast"
 	"vergex/internal/logger"
-	"vergex/internal/marketdata"
+	"vergex/internal/market/feed"
+	"vergex/internal/planning"
+	"vergex/internal/security/auth"
+	"vergex/internal/security/crypto"
 	"vergex/internal/store"
+	"vergex/internal/store/database"
 
 	"github.com/joho/godotenv"
 	"golang.org/x/term"
@@ -67,8 +69,8 @@ func runCLISubcommand(args []string) bool {
 // main one so bulk candle writes never queue up orders and positions.
 const marketPoolSize = 10
 
-func databaseConfig(cfg *config.Config) store.DBConfig {
-	return store.DBConfig{
+func databaseConfig(cfg *config.Config) database.Config {
+	return database.Config{
 		Host:     cfg.DBHost,
 		Port:     cfg.DBPort,
 		User:     cfg.DBUser,
@@ -79,9 +81,12 @@ func databaseConfig(cfg *config.Config) store.DBConfig {
 }
 
 // openMarketStore opens the market tables on their own connection pool.
-func openMarketStore(cfg *config.Config) (*marketdata.Store, error) {
-	gdb, err := store.InitGorm(databaseConfig(cfg))
+func openMarketStore(cfg *config.Config) (*feed.Store, error) {
+	gdb, err := database.Open(databaseConfig(cfg))
 	if err != nil {
+		return nil, err
+	}
+	if err := database.Migrate(gdb); err != nil {
 		return nil, err
 	}
 	sqlDB, err := gdb.DB()
@@ -89,7 +94,7 @@ func openMarketStore(cfg *config.Config) (*marketdata.Store, error) {
 		return nil, err
 	}
 	sqlDB.SetMaxOpenConns(marketPoolSize)
-	return marketdata.NewStore(gdb)
+	return feed.NewStore(gdb), nil
 }
 
 // runMarketBackfill loads deep history from Binance's published files. Usage:
@@ -118,13 +123,13 @@ func runMarketBackfill(args []string) {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	options := marketdata.BackfillOptions{
+	options := feed.BackfillOptions{
 		Symbols:     strings.Split(strings.ToUpper(*symbols), ","),
 		Intervals:   strings.Split(*intervals, ","),
 		Months:      *months,
 		Derivatives: *derivatives,
 	}
-	err = marketdata.NewService(marketStore).RunBackfill(ctx, options, func(progress marketdata.BackfillProgress) {
+	err = feed.NewService(marketStore).RunBackfill(ctx, options, func(progress feed.BackfillProgress) {
 		if progress.Current != "" {
 			fmt.Printf("[%d/%d] %s\n", progress.Done, progress.Total, progress.Current)
 		}
@@ -144,7 +149,7 @@ func runForecastBacktest(args []string) {
 	symbols := fs.String("symbols", "", "comma-separated symbols (required)")
 	intervals := fs.String("intervals", "1h,4h,1d", "comma-separated intervals: 15m, 1h, 4h, 1d")
 	months := fs.Int("months", 12, "months back from now")
-	strategyID := fs.Int64("strategy", 0, "strategy id; defaults to the one in use")
+	strategyID := fs.String("strategy", "", "strategy id; defaults to the one in use")
 	_ = fs.Parse(args)
 	if strings.TrimSpace(*symbols) == "" {
 		fs.Usage()
@@ -160,13 +165,9 @@ func runForecastBacktest(args []string) {
 		os.Exit(1)
 	}
 	defer marketStore.Close()
-	forecasts, err := forecast.NewStore(marketStore.DB())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "open forecast tables: %v\n", err)
-		os.Exit(1)
-	}
+	forecasts := forecast.NewStore(marketStore.DB())
 	strategy, err := forecasts.ActiveStrategy(time.Now())
-	if *strategyID != 0 {
+	if *strategyID != "" {
 		strategy, err = forecasts.StrategyByID(*strategyID)
 	}
 	if err != nil {
@@ -175,7 +176,7 @@ func runForecastBacktest(args []string) {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	engine := forecast.NewEngine(forecasts, marketdata.NewService(marketStore), nil)
+	engine := forecast.NewEngine(forecasts, feed.NewService(marketStore), nil)
 	now := time.Now()
 	report, err := forecast.RunBacktest(ctx, engine, strategy.Config, forecast.BacktestOptions{
 		Symbols:   strings.Split(strings.ToUpper(*symbols), ","),
@@ -190,8 +191,8 @@ func runForecastBacktest(args []string) {
 	printBacktest(strategy.ID, report)
 }
 
-func printBacktest(strategyID int64, report forecast.Report) {
-	fmt.Printf("Strategy strategy %d, %s to %s, fees %.2f%% round trip\n", strategyID,
+func printBacktest(strategyID string, report forecast.Report) {
+	fmt.Printf("Strategy %s, %s to %s, fees %.2f%% round trip\n", strategyID,
 		time.UnixMilli(report.FirstTime).UTC().Format("2006-01-02"), time.UnixMilli(report.LastTime).UTC().Format("2006-01-02"), report.FeePct)
 	fmt.Printf("%-16s %8s %8s %8s %8s %8s %8s %8s %8s %8s\n", "", "samples", "signals", "hit", "up base", "brier", "lift", "ret", "net ret", "in move")
 	row := func(name string, m forecast.Metrics) {
@@ -288,13 +289,10 @@ func runResetPassword(args []string) {
 // resetTables lists every table Vergex creates. reset-account empties all of
 // them; cli_test.go fails when a table is missing here.
 var resetTables = []string{
-	"users", "ai_models", "exchanges", "traders", "strategies",
-	"decision_records", "trader_positions", "trader_orders", "trader_fills",
-	"trader_equity_snapshots", "ai_charges", "telegram_configs", "telegram_alert_marks",
-	"grid_configs", "grid_instances", "grid_levels", "grid_events", "grid_regime_assessments",
-	"planning_drafts", "planning_conversations", "planning_preferences",
-	"planning_live_runs", "planning_live_leases", "planning_account_closes",
-	"system_config",
+	"frontier.account_closes", "frontier.run_orders", "frontier.runs", "frontier.plans",
+	"trader.decisions", "trader.cycles", "trader.equity_snapshots", "trader.traders",
+	"trading.skipped_fills", "trading.fills", "trading.positions", "trading.orders", "trading.account_leases", "core.users", "agent.models", "agent.calls", "agent.conversations", "agent.messages", "trading.accounts",
+	"telegram.bot", "telegram.alert_marks",
 }
 
 // planningDataDir holds Frontier's per-user entry calculators and data plugin
@@ -303,9 +301,9 @@ var planningDataDir = filepath.Join("data", "planning")
 
 const resetAccountWarning = `This wipes Vergex back to a fresh install. It permanently deletes:
   - the account
-  - AI models and exchange accounts, API keys included
+  - models and exchange accounts, API keys included
   - traders, strategies and grid settings
-  - decisions, positions, orders, equity history and AI costs
+  - decisions, positions, orders, equity history and agent costs
   - Frontier plans, conversations and entry calculators
   - the Telegram bot token and chat binding
 Positions and orders on the exchange are not touched.
@@ -347,15 +345,13 @@ func runResetAccount(args []string) {
 func wipeAllData(st *store.Store, planningDir string) error {
 	err := st.Transaction(func(tx *gorm.DB) error {
 		for _, table := range resetTables {
-			// Frontier creates its tables on first use.
-			if !tx.Migrator().HasTable(table) {
-				continue
-			}
 			if err := tx.Exec("DELETE FROM " + table).Error; err != nil {
 				return fmt.Errorf("clear %s: %w", table, err)
 			}
 		}
-		return nil
+		// Market and forecast data outlive an account, and so do their settings and
+		// forecast strategies. Trading strategies went with the user they belong to.
+		return tx.Exec("DELETE FROM core.settings WHERE module = ?", planning.SettingsModule).Error
 	})
 	if err != nil {
 		return err

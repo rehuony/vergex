@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import {
   getExchangeDisplayName,
   getTraderModelLabel,
@@ -11,7 +11,7 @@ import { SortHeader, type ColumnSort } from '@/components/common/sort-header'
 import { SettingsLink } from '@/components/settings/settings-link'
 import { buttonVariants } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import type { AIModel, Exchange, TraderInfo, TraderMetrics } from '@/types'
+import type { AgentModel, Exchange, TraderInfo, TraderMetrics } from '@/types'
 import { cn } from '@/utils/cn'
 import { getTraderSlug } from '@/utils/trader-slug'
 import { fmtPct, fmtUsd } from '@/utils/trader-format'
@@ -100,7 +100,7 @@ interface TradersListProps {
   traders?: TraderInfo[]
   metrics?: Record<string, TraderMetrics>
   failed: boolean
-  models: AIModel[]
+  models: AgentModel[]
   exchanges: Exchange[]
   modelCount: number
   exchangeCount: number
@@ -128,7 +128,7 @@ export function TradersList({
 
   const describe = (trader: TraderInfo) =>
     [
-      getTraderModelLabel(trader.ai_model, models),
+      getTraderModelLabel(trader.agent_model, models),
       getExchangeDisplayName(trader.exchange_id, exchanges),
     ].join(' · ')
 

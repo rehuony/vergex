@@ -25,18 +25,13 @@ export function formatRequestError(
       raw
     )
   if (protocol || /(?:\\x[\da-f]{2}){2,}/i.test(raw)) {
-    return language === 'zh'
-      ? '网络协议异常，未能读取响应。请检查客户端连接配置。'
-      : 'A network protocol error prevented the response from being read. Check the client connection configuration.'
+    return t('requestProtocolError', language)
   }
   const text = raw
     .replace(/\p{Cc}/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-  if (!text)
-    return language === 'zh'
-      ? '请求失败，请检查服务状态。'
-      : 'Request failed. Check the service status.'
+  if (!text) return t('requestFailed', language)
   return text.length > 500 ? `${text.slice(0, 500)}…` : text
 }
-import type { Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'

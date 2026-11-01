@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Page } from '@/components/common/page'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { forecastTabs } from './forecast-tabs'
 import { StrategySelect } from './strategy-select'
 

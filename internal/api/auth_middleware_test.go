@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"vergex/internal/auth"
+	"vergex/internal/security/auth"
 	"vergex/internal/store"
 	"vergex/internal/store/storetest"
 
@@ -16,14 +16,14 @@ func TestAuthMiddlewareRejectsTokensOfMissingAccounts(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	auth.SetJWTSecret("test-secret-long-enough-for-hs256-signing")
 	st := storetest.New(t)
-	if err := st.User().Create(&store.User{ID: "present", Email: "me@example.com", PasswordHash: "x"}); err != nil {
+	if err := st.User().Create(&store.User{ID: storetest.UserID, Email: "me@example.com", PasswordHash: "x"}); err != nil {
 		t.Fatal(err)
 	}
 	s := &Server{store: st}
 	r := gin.New()
 	r.GET("/", s.authMiddleware(), func(c *gin.Context) { c.Status(http.StatusOK) })
 
-	for userID, want := range map[string]int{"present": http.StatusOK, "gone": http.StatusUnauthorized} {
+	for userID, want := range map[string]int{storetest.UserID: http.StatusOK, "gone": http.StatusUnauthorized} {
 		token, err := auth.GenerateJWT(userID, "me@example.com")
 		if err != nil {
 			t.Fatal(err)

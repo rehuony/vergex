@@ -4,7 +4,6 @@ export interface Strategy {
   name: string
   description: string
   is_active: boolean
-  is_default: boolean
   config: StrategyConfig
   created_at: string
   updated_at: string
@@ -36,17 +35,17 @@ export interface PromptSectionsConfig {
   decision_process?: string
 }
 
-export type StrategyType = 'ai_trading' | 'grid_trading'
+export type StrategyType = 'agent_trading' | 'grid_trading'
 
 export interface StrategyConfig {
-  // Strategy type: "ai_trading" (default) or "grid_trading"
+  // Strategy type: "agent_trading" (default) or "grid_trading"
   strategy_type?: StrategyType
   // Language setting: "zh" for Chinese, "en" for English
   // Determines the language used for data formatting and prompt generation
   language?: 'zh' | 'en'
-  // AI trading configuration. Legacy flat fields below are accepted only for
+  // agent trading configuration. Legacy flat fields below are accepted only for
   // old data returned before the schema was split by strategy type.
-  ai_config?: AIStrategyConfig
+  agent_config?: AgentStrategyConfig
   coin_source?: CoinSourceConfig
   indicators?: IndicatorConfig
   custom_prompt?: string
@@ -56,7 +55,7 @@ export interface StrategyConfig {
   grid_config?: GridStrategyConfig | null
 }
 
-export interface AIStrategyConfig {
+export interface AgentStrategyConfig {
   coin_source: CoinSourceConfig
   indicators: IndicatorConfig
   custom_prompt?: string
@@ -126,7 +125,7 @@ export interface CoinSourceConfig {
 
 export interface IndicatorConfig {
   klines: KlineConfig
-  // Raw OHLCV kline data - required for AI analysis
+  // Raw OHLCV kline data - required for agent analysis
   enable_raw_klines: boolean
   // Technical indicators (optional)
   enable_ema: boolean
@@ -168,7 +167,7 @@ export interface RiskControlConfig {
   // Max number of coins held simultaneously (CODE ENFORCED)
   max_positions: number
 
-  // Trading Leverage - exchange leverage for opening positions (AI guided)
+  // Trading Leverage - exchange leverage for opening positions (agent guided)
   btc_eth_max_leverage: number // BTC/ETH max exchange leverage
   altcoin_max_leverage: number // Altcoin max exchange leverage
 
@@ -180,8 +179,8 @@ export interface RiskControlConfig {
   // Risk Parameters
   max_margin_usage: number // Max margin utilization, e.g. 0.9 = 90% (CODE ENFORCED)
   min_position_size: number // Min position size in USDT (CODE ENFORCED)
-  min_risk_reward_ratio: number // Min take_profit / stop_loss ratio (AI guided)
-  min_confidence: number // Min AI confidence to open position (AI guided)
+  min_risk_reward_ratio: number // Min take_profit / stop_loss ratio (agent guided)
+  min_confidence: number // Min agent confidence to open position (agent guided)
 }
 
 // The server's prompt size estimate for a config (POST /strategies/estimate-tokens).
@@ -207,6 +206,6 @@ export interface StrategyTestRun {
   user_prompt: string
   candidate_count: number
   candidates: { symbol: string; sources: string[] }[]
-  ai_response?: string
-  ai_error?: string
+  agent_response?: string
+  agent_error?: string
 }

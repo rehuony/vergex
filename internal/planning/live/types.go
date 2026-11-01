@@ -1,17 +1,17 @@
 // Package live executes only finite, immutable, human-approved order baskets.
-// Its broker interface has no autonomous strategy or AI capability.
+// Its broker interface has no autonomous strategy or agent capability.
 package live
 
 import (
 	"context"
 	"time"
 	"vergex/internal/planning/core"
-	"vergex/internal/trader/execution"
+	"vergex/internal/trading"
 )
 
-// Aliases preserve persisted run JSON while execution belongs to Vergex.
-type Order = execution.Order
-type Account = execution.Account
+// Aliases keep execution's contract in one place while it belongs to Vergex.
+type Order = trading.Order
+type Account = trading.Account
 
 // ClientIDRouter supplies an exchange-native route before intent is persisted.
 // Empty routes on historical records retain their original raw ID for lookup.
@@ -40,36 +40,27 @@ type Broker interface {
 }
 type Run struct {
 	ID           string     `gorm:"primaryKey" json:"id"`
-	UserID       string     `gorm:"index;not null" json:"-"`
-	ExchangeID   string     `gorm:"index;not null" json:"exchange_id"`
-	AccountKey   string     `json:"-"`
-	PlanID       string     `gorm:"index;not null" json:"plan_id"`
-	PlanHash     string     `json:"plan_hash"`
-	ApprovalHash string     `json:"approval_hash"`
-	State        string     `gorm:"index" json:"state"`
-	PlanJSON     string     `gorm:"type:text" json:"-"`
-	OrdersJSON   string     `gorm:"type:text" json:"-"`
-	ApprovedAt   time.Time  `json:"approved_at"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	Deadline     *time.Time `json:"deadline,omitempty"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	Error        string     `json:"error,omitempty"`
+	UserID       string     `gorm:"column:user_id" json:"-"`
+	ExchangeID   string     `gorm:"column:account_id" json:"exchange_id"`
+	AccountKey   string     `gorm:"column:account_identity" json:"-"`
+	PlanID       string     `gorm:"column:plan_id" json:"plan_id"`
+	PlanHash     string     `gorm:"column:plan_hash" json:"plan_hash"`
+	ApprovalHash string     `gorm:"column:approval_hash" json:"approval_hash"`
+	State        string     `gorm:"column:state" json:"state"`
+	ApprovedAt   time.Time  `gorm:"column:approved_at" json:"approved_at"`
+	StartedAt    *time.Time `gorm:"column:started_at" json:"started_at,omitempty"`
+	Deadline     *time.Time `gorm:"column:deadline" json:"deadline,omitempty"`
+	UpdatedAt    time.Time  `gorm:"column:updated_at" json:"updated_at"`
+	Error        string     `gorm:"column:error;serializer:nulltext" json:"error,omitempty"`
 }
 
-func (Run) TableName() string { return "planning_live_runs" }
-
-type Lease struct {
-	AccountKey string `gorm:"primaryKey"`
-	RunID      string `gorm:"uniqueIndex"`
-	UserID     string
-	ExchangeID string `gorm:"index"`
-}
-
-func (Lease) TableName() string { return "planning_live_leases" }
+func (Run) TableName() string { return "frontier.runs" }
 
 type View struct {
 	Run
 	Plan   core.Plan `json:"plan"`
 	Orders []Order   `json:"orders"`
+	// stored is what the database holds, so a save writes only what changed.
+	stored storedRun
 }
 type Factory func(context.Context, string, string) (Broker, string, error)

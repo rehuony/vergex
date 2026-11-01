@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 	"vergex/internal/config"
-	"vergex/internal/crypto"
+	"vergex/internal/security/crypto"
 
 	"github.com/gin-gonic/gin"
 )

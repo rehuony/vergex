@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { mutate } from 'swr'
 import { api } from '@/api'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import type { Position } from '@/types'
 import { cn } from '@/utils/cn'
 import { confirmToast, notify } from '@/components/common/notify'

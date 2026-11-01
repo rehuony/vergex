@@ -1,4 +1,4 @@
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 
 export function validationSummary(
   reason: string,

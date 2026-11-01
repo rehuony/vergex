@@ -1,5 +1,5 @@
 import { ArrowRight } from 'lucide-react'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import type { DecisionRecord, Position } from '@/types'
 import { cn } from '@/utils/cn'
 import { Panel, PanelState } from '@/components/common/panel'
@@ -37,7 +37,7 @@ function Layer({ title, items }: { title: string; items: Item[] }) {
   )
 }
 
-// DecisionFunnel follows the latest cycle: the coins the AI judged, the orders
+// DecisionFunnel follows the latest cycle: the coins the agent judged, the orders
 // that went through, and what the trader holds now.
 export function DecisionFunnel({
   latest,

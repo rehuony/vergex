@@ -26,7 +26,6 @@ const mocks = vi.hoisted(() => ({
     name: string
     account_name?: string
     exchange_type: string
-    enabled: boolean
   }[],
   chartOptions: undefined as
     | undefined
@@ -162,7 +161,6 @@ beforeEach(() => {
       id: 'ex',
       name: 'Connected account',
       exchange_type: 'binance',
-      enabled: true,
     },
   ]
   mocks.api.mockReset()
@@ -216,7 +214,7 @@ describe('Vergex live planning', () => {
     const card = await screen.findByRole('button', { name: /Test plan one/ })
     fireEvent.click(card)
     await waitFor(() =>
-      expect(screen.getByLabelText('Vergex AI model')).toHaveValue('model')
+      expect(screen.getByLabelText('Model')).toHaveValue('model')
     )
     fireEvent.click(screen.getByRole('button', { name: 'Review order' }))
     const execute = await screen.findByRole('button', {
@@ -292,7 +290,6 @@ it('opens the only connected account by default and switches venues', async () =
       id: 'okx-main',
       name: 'OKX account',
       exchange_type: 'okx',
-      enabled: true,
     },
   ]
   open()
@@ -331,7 +328,6 @@ it('keeps a venue chosen while account configuration is still loading', async ()
       id: 'okx-main',
       name: 'OKX account',
       exchange_type: 'okx',
-      enabled: true,
     },
   ]
   mocks.exchangesGate = new Promise<void>((resolve) => {
@@ -453,7 +449,7 @@ it('opens settings before a paid request and retains the original idea when AI i
   mocks.models = []
   open()
   await waitFor(() =>
-    expect(screen.getByRole('link', { name: 'Add an AI model' })).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Add a model' })).toBeVisible()
   )
   const idea = screen.getByRole('textbox', { name: 'Trade idea' })
   fireEvent.change(idea, {
@@ -470,7 +466,7 @@ it('opens settings before a paid request and retains the original idea when AI i
 it('offers a safe starting point, keeps real account activity separate and keeps plans visible outside the assistant', async () => {
   open()
   await waitFor(() =>
-    expect(screen.getByLabelText('Vergex AI model')).toHaveValue('model')
+    expect(screen.getByLabelText('Model')).toHaveValue('model')
   )
   fireEvent.click(screen.getByRole('tab', { name: 'Positions and orders' }))
   expect(
@@ -506,7 +502,7 @@ it('shows generated plans automatically and uses the user idea instead of a gene
   })
   open()
   await waitFor(() =>
-    expect(screen.getByLabelText('Vergex AI model')).toHaveValue('model')
+    expect(screen.getByLabelText('Model')).toHaveValue('model')
   )
   fireEvent.change(screen.getByLabelText('Trade idea'), {
     target: { value: 'Compare timed entries for a pullback.' },
@@ -547,7 +543,7 @@ it('starts a separate draft from a locked trade without revising or executing th
   mocks.stream.mockResolvedValue(undefined)
   open()
   await waitFor(() =>
-    expect(screen.getByLabelText('Vergex AI model')).toHaveValue('model')
+    expect(screen.getByLabelText('Model')).toHaveValue('model')
   )
   fireEvent.click(screen.getByRole('tab', { name: 'History' }))
   fireEvent.click(await screen.findByRole('button', { name: /Test plan one/ }))
@@ -843,20 +839,17 @@ it('distinguishes Binance accounts by their names and remembers each venue selec
       name: 'Binance Futures',
       account_name: 'Main portfolio',
       exchange_type: 'binance',
-      enabled: true,
     },
     {
       id: 'binance-b',
       name: 'Binance Futures',
       account_name: 'Second portfolio',
       exchange_type: 'binance',
-      enabled: true,
     },
     {
       id: 'okx-main',
       name: 'OKX',
       exchange_type: 'okx',
-      enabled: true,
     },
   ]
   const view = open()
@@ -925,18 +918,16 @@ describe('the address', () => {
         id: 'ex',
         name: 'Connected account',
         exchange_type: 'binance',
-        enabled: true,
       },
       {
         id: 'okx-one',
         name: 'OKX account',
         exchange_type: 'okx',
-        enabled: true,
       },
     ]
     open('/frontier?account=okx-one&symbol=ETHUSDT&tab=history')
     await waitFor(() => expect(address().get('account')).toBe('okx-one'))
-    expect(address().get('venue')).toBe('okx')
+    await waitFor(() => expect(address().get('venue')).toBe('okx'))
     expect(address().get('symbol')).toBe('ETH-USDT-SWAP')
     expect(screen.getByRole('tab', { name: 'History' })).toHaveAttribute(
       'aria-selected',

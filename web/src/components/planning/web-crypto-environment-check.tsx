@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Loader2, ShieldAlert, ShieldCheck, ShieldMinus } from 'lucide-react'
 import { CryptoService, diagnoseWebCryptoEnvironment } from '@/utils/crypto'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 
 export type WebCryptoCheckStatus =
   | 'idle'

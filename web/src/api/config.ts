@@ -1,5 +1,5 @@
 import type {
-  AIModel,
+  AgentModel,
   Exchange,
   ExchangeAccountState,
   ExchangeAccountStateResponse,
@@ -25,15 +25,15 @@ async function sealCredentials(request: object): Promise<unknown> {
 }
 
 export const configApi = {
-  async getModelConfigs(): Promise<AIModel[]> {
-    const result = await httpClient.get<AIModel[]>(`${API_BASE}/models`)
+  async getModelConfigs(): Promise<AgentModel[]> {
+    const result = await httpClient.get<AgentModel[]>(`${API_BASE}/models`)
     if (!result.success) throw new Error('Failed to fetch model configs')
     if (!Array.isArray(result.data)) return []
     return result.data
   },
 
-  async getSupportedModels(): Promise<AIModel[]> {
-    const result = await httpClient.get<AIModel[]>(
+  async getSupportedModels(): Promise<AgentModel[]> {
+    const result = await httpClient.get<AgentModel[]>(
       `${API_BASE}/supported-models`
     )
     if (!result.success) throw new Error('Failed to fetch supported models')

@@ -26,7 +26,7 @@ type Label = (key: string, params?: Record<string, string | number>) => string
 
 export type FlowKind = 'all' | ActivityKind
 
-const KINDS: FlowKind[] = ['all', 'ai', 'funds', 'orders', 'market']
+const KINDS: FlowKind[] = ['all', 'agent', 'funds', 'orders', 'market']
 
 const rowClass = 'block px-4 py-2 hover:bg-vergex-bg hover:duration-0'
 

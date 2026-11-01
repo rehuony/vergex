@@ -81,12 +81,12 @@ it('says the session expired after a 401 sent the user here', () => {
   expect(sessionStorage.getItem('from401')).toBeNull()
 })
 
-it('counts the exchanges and AI providers the server supports', async () => {
+it('counts the exchanges and Model providers the server supports', async () => {
   renderPage()
   expect(
     (await screen.findByText('Exchanges')).previousSibling
   ).toHaveTextContent('2')
-  expect(screen.getByText('AI providers').previousSibling).toHaveTextContent(
+  expect(screen.getByText('Model providers').previousSibling).toHaveTextContent(
     '3'
   )
 })

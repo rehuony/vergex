@@ -10,12 +10,12 @@ import {
 } from 'lucide-react'
 import { api } from '@/api'
 import { cn } from '@/utils/cn'
-import { gridRisk, ts } from '@/i18n/strategy-translations'
+import { t, type Language } from '@/i18n'
 import { Button } from '@/components/ui/button'
 
 interface GridRiskPanelProps {
   traderId: string
-  language?: string
+  language?: Language
   refreshInterval?: number // ms, default 5000
 }
 
@@ -133,10 +133,12 @@ export function GridRiskPanel({
   } = useSWR(['grid-risk', traderId], () => api.getGridRiskInfo(traderId), {
     refreshInterval,
   })
-  const text = (key: keyof typeof gridRisk) => ts(gridRisk[key], language)
+  const text = (key: string) => t(`gridRisk.${key}`, language)
   // Server values such as "volatile" or "up" double as translation keys.
-  const label = (value: string, fallback: keyof typeof gridRisk) =>
-    ts(gridRisk[value as keyof typeof gridRisk] ?? gridRisk[fallback], language)
+  const label = (value: string, fallback: string) => {
+    const known = text(value)
+    return known === `gridRisk.${value}` ? text(fallback) : known
+  }
 
   const frame = 'rounded-xl border border-[var(--line)] bg-[var(--surface)]'
   if (isLoading || error || !risk)

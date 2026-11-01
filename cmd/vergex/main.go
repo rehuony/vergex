@@ -8,21 +8,22 @@ import (
 	"os/signal"
 	"syscall"
 	"vergex/internal/activity"
+	"vergex/internal/agent"
+	"vergex/internal/agent/pricing"
+	_ "vergex/internal/agent/provider"
 	"vergex/internal/api"
-	"vergex/internal/auth"
 	"vergex/internal/config"
-	"vergex/internal/crypto"
 	"vergex/internal/forecast"
-	"vergex/internal/llm"
-	_ "vergex/internal/llm/provider"
 	"vergex/internal/logger"
-	"vergex/internal/manager"
 	"vergex/internal/market"
-	"vergex/internal/marketdata"
-	"vergex/internal/pricing"
+	"vergex/internal/market/feed"
 	"vergex/internal/safe"
+	"vergex/internal/security/auth"
+	"vergex/internal/security/crypto"
 	"vergex/internal/store"
 	"vergex/internal/telegram"
+	"vergex/internal/trader/manager"
+	"vergex/internal/trading/accountsync"
 
 	"github.com/joho/godotenv"
 )
@@ -43,7 +44,7 @@ func main() {
 	logger.Init(nil)
 
 	logger.Info("╔════════════════════════════════════════════════════════════╗")
-	logger.Info("║          🚀 Vergex - AI-Powered Trading System             ║")
+	logger.Info("║          🚀 Vergex - Agent Trading System                  ║")
 	logger.Info("╚════════════════════════════════════════════════════════════╝")
 
 	// Initialize global configuration (loaded from .env).
@@ -69,13 +70,13 @@ func main() {
 	}
 	defer st.Close()
 
-	// AI cost tracking: record token usage of every AI call in ai_charges,
-	// priced from the models.dev catalog cached in the data directory.
+	// Agent cost tracking: record every call to a model in agent.calls, priced from
+	// the models.dev catalog cached in the data directory.
 	pricingCtx, stopPricing := context.WithCancel(context.Background())
 	defer stopPricing()
 	prices := pricing.NewService("data")
 	prices.Start(pricingCtx)
-	llm.TokenUsageCallback = recordAIUsage(st, prices)
+	agent.CallCallback = recordAgentCalls(st, prices)
 
 	// Set JWT secret
 	auth.SetJWTSecret(cfg.JWTSecret)
@@ -85,13 +86,13 @@ func main() {
 	// rest of the system running: trading reads the exchange directly without it.
 	marketCtx, stopMarket := context.WithCancel(context.Background())
 	defer stopMarket()
-	var marketData *marketdata.Service
+	var marketData *feed.Service
 	marketStore, err := openMarketStore(cfg)
 	if err != nil {
 		logger.Errorf("Market data is unavailable: %v", err)
 	} else {
 		defer marketStore.Close()
-		marketData = marketdata.NewService(marketStore)
+		marketData = feed.NewService(marketStore)
 		marketData.Start(marketCtx)
 		market.SetLiveSource(marketData)
 	}
@@ -104,60 +105,38 @@ func main() {
 		logger.Fatalf("❌ Failed to load traders: %v", err)
 	}
 
-	// Display loaded trader information
-	traders, err := st.Trader().List("default")
-	if err != nil {
-		logger.Fatalf("❌ Failed to get trader list: %v", err)
-	}
-
-	logger.Info("🤖 AI Trader Configurations in Database:")
-	if len(traders) == 0 {
-		logger.Info("  (No trader configurations, please create via Web interface)")
-	} else {
-		for _, t := range traders {
-			status := "❌ Stopped"
-			if t.IsRunning {
-				status = "✅ Running"
-			}
-			idShort := t.ID
-			if len(idShort) > 8 {
-				idShort = idShort[:8]
-			}
-			logger.Infof("  • %s [%s] %s - AI Model: %s, Exchange: %s",
-				t.Name, idShort, status, t.AIModelID, t.ExchangeID)
-		}
-	}
-
 	// Start API server
 	server := api.NewServer(traderManager, st, cryptoService, cfg.APIServerPort)
+
+	// Keep the trading ledger up to date with every account in use.
+	accountSyncCtx, stopAccountSync := context.WithCancel(context.Background())
+	defer stopAccountSync()
+	accountSync := accountsync.New(st)
+	accountSync.Start(accountSyncCtx)
+	server.SetAccountSync(accountSync)
 
 	var forecastStore *forecast.Store
 	if marketData != nil {
 		server.SetMarketData(marketData)
 
-		forecasts, err := forecast.NewStore(marketStore.DB())
-		if err != nil {
-			logger.Errorf("Forecast is unavailable: %v", err)
-		} else {
-			engine := forecast.NewEngine(forecasts, marketData, func(ctx context.Context, text string) error {
-				cfg, err := st.TelegramConfig().Get()
-				if err != nil || cfg.AlertMuted(telegram.AlertForecast) {
-					return nil
-				}
-				return telegram.Notify(ctx, st, text)
-			})
-			engine.Start(marketCtx)
-			server.SetForecast(engine)
-			forecastStore = forecasts
-		}
+		forecastStore = forecast.NewStore(marketStore.DB())
+		engine := forecast.NewEngine(forecastStore, marketData, func(ctx context.Context, text string) error {
+			cfg, err := st.TelegramConfig().Get()
+			if err != nil || cfg.AlertMuted(telegram.AlertForecast) {
+				return nil
+			}
+			return telegram.Notify(ctx, st, text)
+		})
+		engine.Start(marketCtx)
+		server.SetForecast(engine)
 	}
 
 	// The Dashboard's event feed only reads the database.
 	activityCtx, stopActivity := context.WithCancel(context.Background())
 	defer stopActivity()
-	feed := activity.New(activity.Sources{Store: st, Forecasts: forecastStore, PlanRuns: server.PlanRunsChanged})
-	feed.Start(activityCtx)
-	server.SetActivity(feed)
+	activityFeed := activity.New(activity.Sources{Store: st, Forecasts: forecastStore, RefusedOrders: server.RefusedPlanOrders})
+	activityFeed.Start(activityCtx)
+	server.SetActivity(activityFeed)
 
 	// Telegram bot: saving its token, model or binding in Settings restarts it.
 	telegramReload := make(chan struct{}, 1)

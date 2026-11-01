@@ -8,7 +8,7 @@ const trader = (name: string, running = false) =>
   ({
     trader_id: name,
     trader_name: name,
-    ai_model: 'deepseek',
+    agent_model: 'deepseek',
     exchange_id: 'binance',
     is_running: running,
   }) as TraderInfo
@@ -44,7 +44,7 @@ const names = () =>
   screen
     .getAllByRole('link')
     .map((link) => link.textContent)
-    .filter((text) => text !== 'Add AI model')
+    .filter((text) => text !== 'Add model')
 
 afterEach(cleanup)
 
@@ -72,9 +72,9 @@ it('filters by the search and says when nothing matches', () => {
 it('points a first trader at what is still missing', () => {
   show({ traders: [], modelCount: 0, exchangeCount: 0 })
   expect(
-    screen.getByText('A trader needs an AI model and an exchange account.')
+    screen.getByText('A trader needs a model and an exchange account.')
   ).toBeInTheDocument()
-  expect(screen.getByRole('link', { name: 'Add AI model' })).toHaveAttribute(
+  expect(screen.getByRole('link', { name: 'Add model' })).toHaveAttribute(
     'href',
     '?settings=models'
   )

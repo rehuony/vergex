@@ -20,7 +20,7 @@ import { PositionsOverview } from '@/components/dashboard/positions-overview'
 import { useActivity } from '@/components/dashboard/use-activity'
 import { useAuth } from '@/contexts/auth-context'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { pollEvery } from '@/utils/poll'
 
 function clock(at: number) {

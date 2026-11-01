@@ -3,10 +3,11 @@ package trader
 import (
 	"fmt"
 	"time"
-	"vergex/internal/kernel"
 	"vergex/internal/logger"
 	"vergex/internal/market"
+	"vergex/internal/market/instrument"
 	"vergex/internal/store"
+	"vergex/internal/trader/agent"
 )
 
 const (
@@ -23,8 +24,8 @@ const (
 	positionSizeSafetyFactor = 0.98
 )
 
-// executeDecisionWithRecord executes AI decision and records detailed information
-func (at *AutoTrader) executeDecisionWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
+// executeDecisionWithRecord executes agent decision and records detailed information
+func (at *AutoTrader) executeDecisionWithRecord(decision *agent.Decision, actionRecord *store.DecisionAction) error {
 	switch decision.Action {
 	case "open_long":
 		return at.executeOpenLongWithRecord(decision, actionRecord)
@@ -42,7 +43,7 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *kernel.Decision, actio
 }
 
 // executeOpenLongWithRecord executes open long position and records detailed information
-func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
+func (at *AutoTrader) executeOpenLongWithRecord(decision *agent.Decision, actionRecord *store.DecisionAction) error {
 	logger.Infof("  📈 Open long: %s", decision.Symbol)
 
 	// ⚠️ Get current positions for multiple checks
@@ -133,15 +134,10 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 		return fmt.Errorf("failed to open long position for %s: %w", decision.Symbol, err)
 	}
 
-	// Record order ID
-	if orderID, ok := order["orderId"].(int64); ok {
-		actionRecord.OrderID = orderID
-	}
-
 	logger.Infof("  ✓ Position opened successfully, order ID: %v, quantity: %.4f", order["orderId"], quantity)
 
-	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, "open_long", quantity, marketData.CurrentPrice, decision.Leverage, 0)
+	// Record the order in the ledger, and which order this decision became
+	actionRecord.OrderID = at.recordOrder(order, decision.Symbol, "open_long", quantity, decision.Leverage)
 
 	// Record position opening time
 	posKey := decision.Symbol + "_long"
@@ -158,7 +154,7 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *kernel.Decision, actio
 }
 
 // executeOpenShortWithRecord executes open short position and records detailed information
-func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
+func (at *AutoTrader) executeOpenShortWithRecord(decision *agent.Decision, actionRecord *store.DecisionAction) error {
 	logger.Infof("  📉 Open short: %s", decision.Symbol)
 
 	// ⚠️ Get current positions for multiple checks
@@ -249,15 +245,10 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 		return fmt.Errorf("failed to open short position for %s: %w", decision.Symbol, err)
 	}
 
-	// Record order ID
-	if orderID, ok := order["orderId"].(int64); ok {
-		actionRecord.OrderID = orderID
-	}
-
 	logger.Infof("  ✓ Position opened successfully, order ID: %v, quantity: %.4f", order["orderId"], quantity)
 
-	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, "open_short", quantity, marketData.CurrentPrice, decision.Leverage, 0)
+	// Record the order in the ledger, and which order this decision became
+	actionRecord.OrderID = at.recordOrder(order, decision.Symbol, "open_short", quantity, decision.Leverage)
 
 	// Record position opening time
 	posKey := decision.Symbol + "_short"
@@ -274,7 +265,7 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *kernel.Decision, acti
 }
 
 // executeCloseLongWithRecord executes close long position and records detailed information
-func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
+func (at *AutoTrader) executeCloseLongWithRecord(decision *agent.Decision, actionRecord *store.DecisionAction) error {
 	logger.Infof("  🔄 Close long: %s", decision.Symbol)
 
 	// Get current price
@@ -285,7 +276,7 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 	actionRecord.Price = marketData.CurrentPrice
 
 	// Normalize symbol for database lookup
-	normalizedSymbol := market.Normalize(decision.Symbol)
+	normalizedSymbol := instrument.Normalize(decision.Symbol)
 
 	// Get entry price and quantity - prioritize local database for accurate quantity
 	var entryPrice float64
@@ -325,20 +316,15 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *kernel.Decision, acti
 		return fmt.Errorf("failed to close long position for %s: %w", decision.Symbol, err)
 	}
 
-	// Record order ID
-	if orderID, ok := order["orderId"].(int64); ok {
-		actionRecord.OrderID = orderID
-	}
-
-	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, "close_long", quantity, marketData.CurrentPrice, 0, entryPrice)
+	// Record the order in the ledger, and which order this decision became
+	actionRecord.OrderID = at.recordOrder(order, decision.Symbol, "close_long", quantity, 0)
 
 	logger.Infof("  ✓ Position closed successfully")
 	return nil
 }
 
 // executeCloseShortWithRecord executes close short position and records detailed information
-func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, actionRecord *store.DecisionAction) error {
+func (at *AutoTrader) executeCloseShortWithRecord(decision *agent.Decision, actionRecord *store.DecisionAction) error {
 	logger.Infof("  🔄 Close short: %s", decision.Symbol)
 
 	// Get current price
@@ -349,7 +335,7 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 	actionRecord.Price = marketData.CurrentPrice
 
 	// Normalize symbol for database lookup
-	normalizedSymbol := market.Normalize(decision.Symbol)
+	normalizedSymbol := instrument.Normalize(decision.Symbol)
 
 	// Get entry price and quantity - prioritize local database for accurate quantity
 	var entryPrice float64
@@ -389,13 +375,8 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *kernel.Decision, act
 		return fmt.Errorf("failed to close short position for %s: %w", decision.Symbol, err)
 	}
 
-	// Record order ID
-	if orderID, ok := order["orderId"].(int64); ok {
-		actionRecord.OrderID = orderID
-	}
-
-	// Record order to database and poll for confirmation
-	at.recordAndConfirmOrder(order, decision.Symbol, "close_short", quantity, marketData.CurrentPrice, 0, entryPrice)
+	// Record the order in the ledger, and which order this decision became
+	actionRecord.OrderID = at.recordOrder(order, decision.Symbol, "close_short", quantity, 0)
 
 	logger.Infof("  ✓ Position closed successfully")
 	return nil

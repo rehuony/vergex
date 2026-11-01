@@ -6,7 +6,7 @@ import (
 )
 
 // diagnose runs a fixed troubleshooting path per topic and returns the facts
-// it collected plus hints keyed to known failure states. The LLM explains the
+// it collected plus hints keyed to known failure states. The model explains the
 // findings; it does not decide which checks to run.
 
 type diagnoseArgs struct {
@@ -97,7 +97,7 @@ func (a *Agent) diagnoseModel(ref *targetRef) map[string]any {
 	for _, m := range models {
 		users := []string{}
 		for _, t := range traders {
-			if t.AIModel == m.ID {
+			if t.AgentModel == m.ID {
 				users = append(users, t.Name)
 			}
 		}
@@ -108,7 +108,7 @@ func (a *Agent) diagnoseModel(ref *targetRef) map[string]any {
 		}
 		switch {
 		case !m.Enabled:
-			findings = append(findings, finding{Check: m.Name, Detail: "disabled; " + usedBy, Hint: "Enable the model in the web UI (Settings → AI models)."})
+			findings = append(findings, finding{Check: m.Name, Detail: "disabled; " + usedBy, Hint: "Enable the model in the web UI (Settings → Models)."})
 		case !m.HasAPIKey:
 			findings = append(findings, finding{Check: m.Name, Detail: "enabled but no API key; " + usedBy, Hint: "Add the provider API key in the web UI."})
 		case m.CustomAPIURL != "" || m.CustomModelName != "":
@@ -128,7 +128,7 @@ func (a *Agent) diagnoseExchange(ref *targetRef) map[string]any {
 		return errResult(err)
 	}
 	if !ref.empty() {
-		e, rerr := resolve("exchange", exchangeNames(exchanges, false), ref)
+		e, rerr := resolve("exchange", exchangeNames(exchanges), ref)
 		if rerr != nil {
 			return toMap(rerr)
 		}
@@ -192,6 +192,6 @@ func (a *Agent) diagnoseOrders(ref *targetRef) map[string]any {
 		}
 		out[key] = rawResult(raw)
 	}
-	out["note"] = "Look for AI call errors, safe mode after repeated AI failures, risk-control rejections, insufficient margin or exchange errors in the decisions."
+	out["note"] = "Look for model call errors, safe mode after repeated model failures, risk-control rejections, insufficient margin or exchange errors in the decisions."
 	return out
 }

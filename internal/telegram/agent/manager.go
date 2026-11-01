@@ -3,7 +3,7 @@ package agent
 import (
 	"sync"
 	"time"
-	"vergex/internal/llm"
+	"vergex/internal/agent"
 	"vergex/internal/logger"
 )
 
@@ -16,29 +16,32 @@ type Manager struct {
 	apiPort      int
 	botToken     string
 	userID       string
-	getLLM       func() llm.AIClient
+	getClient    func() agent.Client
 	systemPrompt string
+	history      History
 }
 
 // NewManager creates a Manager.
 // userEmail is the registered email shown to the user when they ask "who am I".
 // userID is the internal DB UUID used for API authentication.
-func NewManager(apiPort int, botToken, userEmail, userID string, getLLM func() llm.AIClient) *Manager {
+// history keeps chats across restarts; nil keeps them in memory only.
+func NewManager(apiPort int, botToken, userEmail, userID string, getClient func() agent.Client, history History) *Manager {
 	return &Manager{
 		agents:       make(map[int64]*Agent),
 		lanes:        make(map[int64]chan struct{}),
 		apiPort:      apiPort,
 		botToken:     botToken,
 		userID:       userID,
-		getLLM:       getLLM,
+		getClient:    getClient,
 		systemPrompt: BuildAgentPrompt(userEmail),
+		history:      history,
 	}
 }
 
 // Run processes a message for the given chat ID.
 // If the same chat is already processing a message, this call blocks until it completes
 // or the lane wait times out (60 s), whichever comes first.
-// onChunk is optional — when set, LLM reply chunks are forwarded progressively (SSE streaming).
+// onChunk is optional — when set, model reply chunks are forwarded progressively (SSE streaming).
 func (m *Manager) Run(chatID int64, userMessage string, onChunk func(string)) string {
 	a, lane := m.getOrCreate(chatID)
 	select {
@@ -51,14 +54,11 @@ func (m *Manager) Run(chatID int64, userMessage string, onChunk func(string)) st
 	return a.Run(userMessage, onChunk)
 }
 
-// Reset clears memory for the given chat (called on /start).
+// Reset begins a new conversation for the given chat (called on /start). A chat with
+// no agent yet gets one, so a restart cannot bring the old conversation back.
 func (m *Manager) Reset(chatID int64) {
-	m.mu.Lock()
-	a, ok := m.agents[chatID]
-	m.mu.Unlock()
-	if ok {
-		a.ResetMemory()
-	}
+	a, _ := m.getOrCreate(chatID)
+	a.ResetMemory()
 }
 
 func (m *Manager) getOrCreate(chatID int64) (*Agent, chan struct{}) {
@@ -67,7 +67,8 @@ func (m *Manager) getOrCreate(chatID int64) (*Agent, chan struct{}) {
 
 	a, ok := m.agents[chatID]
 	if !ok {
-		a = New(m.apiPort, m.botToken, m.userID, m.getLLM, m.systemPrompt)
+		a = New(m.apiPort, m.botToken, m.userID, m.getClient, m.systemPrompt)
+		a.resume(m.history, chatID)
 		m.agents[chatID] = a
 	}
 	lane, ok := m.lanes[chatID]

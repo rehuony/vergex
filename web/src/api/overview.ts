@@ -22,7 +22,7 @@ export interface OverviewTrader {
   trader_id: string
   trader_name: string
   is_running: boolean
-  ai_model_id: string
+  agent_model_id: string
   exchange_id: string
   strategy_name?: string
 }

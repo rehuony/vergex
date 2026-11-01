@@ -1,8 +1,9 @@
 """Extract a replayable dataset from the PostgreSQL database.
 
-Reads decision_records and emits three CSVs under scripts/optimize/data/:
+Reads each trader's cycles, their decisions and the prompts in their conversations,
+and emits these CSVs under scripts/optimize/data/:
   cycles.csv    - one row per decision cycle (timestamp, recorded equity)
-  decisions.csv - the AI's intended actions per cycle (including throttled ones)
+  decisions.csv - the agent's intended actions per cycle (including throttled ones)
   candles.csv   - deduplicated per-symbol 15m OHLCV parsed from input prompts
   prices.csv    - per-cycle current_price for every symbol present in the prompt
 
@@ -12,7 +13,6 @@ Needs the psycopg package.
 
 import argparse
 import csv
-import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -75,15 +75,9 @@ def parse_prompt(prompt, cycle_ts):
     return equity, prices, candles
 
 
-def parse_decisions(raw):
-    try:
-        items = json.loads(raw or "[]")
-    except json.JSONDecodeError:
-        return []
+def parse_decisions(items):
     out = []
-    for d in items if isinstance(items, list) else []:
-        if not isinstance(d, dict):
-            continue
+    for d in items or []:
         out.append(
             {
                 "action": str(d.get("action", "")).strip().lower(),
@@ -110,8 +104,21 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     conn = psycopg.connect(args.dsn)
     rows = conn.execute(
-        "SELECT id, timestamp, input_prompt, decisions FROM decision_records"
-        " ORDER BY timestamp"
+        """
+        SELECT c.id, c.finished_at,
+               (SELECT m.content FROM agent.messages m
+                WHERE m.conversation_id = c.conversation_id AND m.role = 'user'
+                ORDER BY m.seq LIMIT 1),
+               (SELECT json_agg(json_build_object(
+                           'action', d.action, 'symbol', d.symbol, 'leverage', d.leverage,
+                           'price', d.price, 'stop_loss', d.stop_loss,
+                           'take_profit', d.take_profit, 'confidence', d.confidence,
+                           'success', d.outcome IN ('executed', 'hold'),
+                           'error', COALESCE(d.error, '')) ORDER BY d.seq)
+                FROM trader.decisions d WHERE d.cycle_id = c.id)
+        FROM trader.cycles c
+        ORDER BY c.finished_at
+        """
     )
 
     cycles, decisions = [], []

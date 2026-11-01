@@ -1,10 +1,10 @@
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { Segmented } from '@/components/common/segmented'
 import { SettingRow } from '@/components/common/setting-row'
 import { Button } from '@/components/ui/button'
 import { AppSelect } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import type { AIStrategyConfig, IndicatorConfig, KlineConfig } from '@/types'
+import type { AgentStrategyConfig, IndicatorConfig, KlineConfig } from '@/types'
 import {
   MAX_TIMEFRAMES,
   TIMEFRAMES,
@@ -34,25 +34,27 @@ const INDICATORS: Array<{
 
 // The candles the model reads and the indicators worked out from them.
 export function MarketDataSection({
-  ai,
+  agent,
   language,
-  onPatchAI,
+  onPatchAgent,
 }: {
-  ai: AIStrategyConfig
+  agent: AgentStrategyConfig
   language: Language
-  onPatchAI: (patch: (ai: AIStrategyConfig) => AIStrategyConfig) => void
+  onPatchAgent: (
+    patch: (agent: AgentStrategyConfig) => AgentStrategyConfig
+  ) => void
 }) {
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`strategy.${key}`, language, params)
-  const klines = ai.indicators.klines
+  const klines = agent.indicators.klines
   const selected = klines.selected_timeframes ?? []
   const patchIndicators = (next: Partial<IndicatorConfig>) =>
-    onPatchAI((current) => ({
+    onPatchAgent((current) => ({
       ...current,
       indicators: { ...current.indicators, ...next },
     }))
   const patchKlines = (next: Partial<KlineConfig>) =>
-    onPatchAI((current) => ({
+    onPatchAgent((current) => ({
       ...current,
       indicators: {
         ...current.indicators,
@@ -77,7 +79,9 @@ export function MarketDataSection({
             value={klines.primary_timeframe}
             options={TIMEFRAMES.map((value) => ({ value, label: value }))}
             onChange={(timeframe) =>
-              onPatchAI((current) => withPrimaryTimeframe(current, timeframe))
+              onPatchAgent((current) =>
+                withPrimaryTimeframe(current, timeframe)
+              )
             }
           />
         </SettingRow>
@@ -145,7 +149,7 @@ export function MarketDataSection({
       </FieldGrid>
       <FieldGrid className="border-t border-[var(--line)]">
         {INDICATORS.map(({ name, enabled, periods }) => {
-          const on = Boolean(ai.indicators[enabled])
+          const on = Boolean(agent.indicators[enabled])
           const title = label(`indicator.${name}`)
           return (
             <SettingRow
@@ -163,7 +167,7 @@ export function MarketDataSection({
                 <div className="ml-2 flex min-w-0 flex-1 items-center gap-2">
                   <PeriodsField
                     ariaLabel={label('indicatorPeriods', { name: title })}
-                    value={ai.indicators[periods] ?? []}
+                    value={agent.indicators[periods] ?? []}
                     onChange={(next) => patchIndicators({ [periods]: next })}
                   />
                 </div>

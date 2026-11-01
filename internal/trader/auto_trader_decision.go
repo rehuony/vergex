@@ -1,17 +1,20 @@
 package trader
 
 import (
+	"context"
 	"fmt"
+	"github.com/shopspring/decimal"
 	"math"
 	"time"
-	"vergex/internal/kernel"
+	"vergex/internal/exchange/okx"
 	"vergex/internal/logger"
-	"vergex/internal/market"
+	"vergex/internal/market/instrument"
 	"vergex/internal/store"
+	"vergex/internal/trader/agent"
 )
 
-// saveEquitySnapshot saves equity snapshot independently (for drawing profit curve, decoupled from AI decision)
-func (at *AutoTrader) saveEquitySnapshot(ctx *kernel.Context) {
+// saveEquitySnapshot saves equity snapshot independently (for drawing profit curve, decoupled from agent decision)
+func (at *AutoTrader) saveEquitySnapshot(ctx *agent.Context) {
 	if at.store == nil || ctx == nil {
 		return
 	}
@@ -32,7 +35,11 @@ func (at *AutoTrader) saveEquitySnapshot(ctx *kernel.Context) {
 	}
 }
 
-// saveDecision saves AI decision log to database (only records AI input/output, for debugging)
+// cycleSaveWait bounds saving a cycle. Its orders are already on the exchange, and a
+// cycle's record points at its conversation, so a stuck conversation can hold this up.
+const cycleSaveWait = 5 * time.Second
+
+// saveDecision saves agent decision log to database (only records agent input/output, for debugging)
 func (at *AutoTrader) saveDecision(record *store.DecisionRecord) error {
 	summarizeDecisionExecution(record)
 	if at.store == nil {
@@ -47,7 +54,9 @@ func (at *AutoTrader) saveDecision(record *store.DecisionRecord) error {
 		record.Timestamp = time.Now().UTC()
 	}
 
-	if err := at.store.Decision().LogDecision(record); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), cycleSaveWait)
+	defer cancel()
+	if err := at.store.Decision().WithContext(ctx).LogDecision(record); err != nil {
 		logger.Infof("⚠️ Failed to save decision record: %v", err)
 		return err
 	}
@@ -77,9 +86,9 @@ func summarizeDecisionExecution(record *store.DecisionRecord) {
 
 // GetStatus gets system status (for API)
 func (at *AutoTrader) GetStatus() map[string]interface{} {
-	aiProvider := "DeepSeek"
+	agentProvider := "DeepSeek"
 	if at.config.UseQwen {
-		aiProvider = "Qwen"
+		agentProvider = "Qwen"
 	}
 
 	at.isRunningMutex.RLock()
@@ -89,7 +98,7 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 	result := map[string]interface{}{
 		"trader_id":       at.id,
 		"trader_name":     at.name,
-		"ai_model":        at.aiModel,
+		"agent_model":     at.agentModel,
 		"exchange":        at.exchange,
 		"is_running":      isRunning,
 		"start_time":      at.startTime.Format(time.RFC3339),
@@ -99,7 +108,7 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"scan_interval":   at.config.ScanInterval.String(),
 		"stop_until":      at.stopUntil.Format(time.RFC3339),
 		"last_reset_time": at.lastResetTime.Format(time.RFC3339),
-		"ai_provider":     aiProvider,
+		"agent_provider":  agentProvider,
 	}
 
 	// Add strategy info
@@ -110,7 +119,7 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		}
 	}
 
-	// Runtime health: safe mode + AI fee wallet, so the dashboard can show a
+	// Runtime health: safe mode + agent fee wallet, so the dashboard can show a
 	// persistent banner instead of the user digging through logs.
 	safeMode, safeModeReason := at.safeModeState()
 	result["safe_mode"] = safeMode
@@ -272,275 +281,88 @@ func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
 	return result, nil
 }
 
-// recordAndConfirmOrder polls order status for actual fill data and records position
+// recordOrder puts a placed order in the ledger, with what only placing it knows: who
+// placed it, why, and at what leverage. Its fills reach the ledger through the account's
+// sync, whichever gets there first. A failure is only logged: the order is already on
+// the exchange, and without this record its fills still arrive. It returns the order's
+// ID in the ledger, or 0 without one.
 // action: open_long, open_short, close_long, close_short
-// entryPrice: entry price when closing (0 when opening)
-func (at *AutoTrader) recordAndConfirmOrder(orderResult map[string]interface{}, symbol, action string, quantity float64, price float64, leverage int, entryPrice float64) {
+func (at *AutoTrader) recordOrder(orderResult map[string]interface{}, symbol, action string, quantity float64, leverage int) int64 {
 	if at.store == nil {
-		return
+		return 0
 	}
-
-	// Get order ID (supports multiple types)
-	var orderID string
-	switch v := orderResult["orderId"].(type) {
-	case int64:
-		orderID = fmt.Sprintf("%d", v)
-	case float64:
-		orderID = fmt.Sprintf("%.0f", v)
-	case string:
-		orderID = v
-	default:
-		orderID = fmt.Sprintf("%v", v)
-	}
-
+	orderID := orderIDOf(orderResult["orderId"])
 	if orderID == "" || orderID == "0" {
 		logger.Infof("  ⚠️ Order ID is empty, skipping record")
-		return
+		return 0
 	}
+	clientOrderID, _ := orderResult["clientOrderId"].(string)
 
-	// Determine positionSide
-	var positionSide string
-	switch action {
-	case "open_long", "close_long":
-		positionSide = "LONG"
-	case "open_short", "close_short":
-		positionSide = "SHORT"
-	}
-
-	var actualPrice = price
-	var actualQty = quantity
-	var fee float64
-
-	// Exchanges with OrderSync: Skip immediate order recording, let OrderSync handle it
-	// This ensures accurate data from GetTrades API and avoids duplicate records
-	switch at.exchange {
-	case "binance", "okx":
-		logger.Infof("  📝 Order submitted (id: %s), will be synced by OrderSync", orderID)
-		return
-	}
-
-	// For exchanges without OrderSync (e.g., Binance): record immediately and poll for fill data
-	orderRecord := at.createOrderRecord(orderID, symbol, action, positionSide, quantity, price, leverage)
-	if err := at.store.Order().CreateOrder(orderRecord); err != nil {
-		logger.Infof("  ⚠️ Failed to record order: %v", err)
-	} else {
-		logger.Infof("  📝 Order recorded: %s [%s] %s", orderID, action, symbol)
-	}
-
-	// Wait for order to be filled and get actual fill data
-	time.Sleep(500 * time.Millisecond)
-	for i := 0; i < 5; i++ {
-		status, err := at.trader.GetOrderStatus(symbol, orderID)
-		if err == nil {
-			statusStr, _ := status["status"].(string)
-			if statusStr == "FILLED" {
-				// Get actual fill price
-				if avgPrice, ok := status["avgPrice"].(float64); ok && avgPrice > 0 {
-					actualPrice = avgPrice
-				}
-				// Get actual executed quantity
-				if execQty, ok := status["executedQty"].(float64); ok && execQty > 0 {
-					actualQty = execQty
-				}
-				// Get commission/fee
-				if commission, ok := status["commission"].(float64); ok {
-					fee = commission
-				}
-				logger.Infof("  ✅ Order filled: avgPrice=%.6f, qty=%.6f, fee=%.6f", actualPrice, actualQty, fee)
-
-				// Update order status to FILLED
-				if err := at.store.Order().UpdateOrderStatus(orderRecord.ID, "FILLED", actualQty, actualPrice, fee); err != nil {
-					logger.Infof("  ⚠️ Failed to update order status: %v", err)
-				}
-
-				// Record fill details
-				at.recordOrderFill(orderRecord.ID, orderID, symbol, action, actualPrice, actualQty, fee)
-				break
-			} else if statusStr == "CANCELED" || statusStr == "EXPIRED" || statusStr == "REJECTED" {
-				logger.Infof("  ⚠️ Order %s, skipping position record", statusStr)
-				// Update order status
-				if err := at.store.Order().UpdateOrderStatus(orderRecord.ID, statusStr, 0, 0, 0); err != nil {
-					logger.Infof("  ⚠️ Failed to update order status: %v", err)
-				}
-				return
-			}
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-
-	// Normalize symbol for position record consistency
-	normalizedSymbolForPosition := market.Normalize(symbol)
-
-	logger.Infof("  📝 Recording position (ID: %s, action: %s, price: %.6f, qty: %.6f, fee: %.4f)",
-		orderID, action, actualPrice, actualQty, fee)
-
-	// Record position change with actual fill data (use normalized symbol)
-	at.recordPositionChange(orderID, normalizedSymbolForPosition, positionSide, action, actualQty, actualPrice, leverage, entryPrice, fee)
-}
-
-// recordPositionChange records position change (create record on open, update record on close)
-func (at *AutoTrader) recordPositionChange(orderID, symbol, side, action string, quantity, price float64, leverage int, entryPrice float64, fee float64) {
-	if at.store == nil {
-		return
-	}
-
-	switch action {
-	case "open_long", "open_short":
-		// Open position: create new position record
-		nowMs := time.Now().UTC().UnixMilli()
-		pos := &store.TraderPosition{
-			TraderID:     at.id,
-			ExchangeID:   at.exchangeID, // Exchange account UUID
-			ExchangeType: at.exchange,   // Exchange type: binance/okx
-			Symbol:       symbol,
-			Side:         side, // LONG or SHORT
-			Quantity:     quantity,
-			EntryPrice:   price,
-			EntryOrderID: orderID,
-			EntryTime:    nowMs,
-			Leverage:     leverage,
-			Status:       "OPEN",
-			CreatedAt:    nowMs,
-			UpdatedAt:    nowMs,
-		}
-		if err := at.store.Position().Create(pos); err != nil {
-			logger.Infof("  ⚠️ Failed to record position: %v", err)
-		} else {
-			logger.Infof("  📊 Position recorded [%s] %s %s @ %.4f", at.id[:8], symbol, side, price)
-		}
-
-	case "close_long", "close_short":
-		// Close position using PositionBuilder for consistent handling
-		// PositionBuilder will handle both cases:
-		// 1. If open position exists: close it properly
-		// 2. If no open position (e.g., table cleared): create a closed position record
-		posBuilder := store.NewPositionBuilder(at.store.Position())
-		if err := posBuilder.ProcessTrade(
-			at.id, at.exchangeID, at.exchange,
-			symbol, side, action,
-			quantity, price, fee, 0, // realizedPnL will be calculated
-			time.Now().UTC().UnixMilli(), orderID,
-		); err != nil {
-			logger.Infof("  ⚠️ Failed to process close position: %v", err)
-		} else {
-			logger.Infof("  ✅ Position closed [%s] %s %s @ %.4f", at.id[:8], symbol, side, price)
-		}
-	}
-}
-
-// createOrderRecord creates an order record struct from order details
-func (at *AutoTrader) createOrderRecord(orderID, symbol, action, positionSide string, quantity, price float64, leverage int) *store.TraderOrder {
-	// Determine order type (market for auto trader)
-	orderType := "MARKET"
-
-	// Determine side (BUY/SELL)
-	var side string
-	switch action {
-	case "open_long", "close_short":
-		side = "BUY"
-	case "open_short", "close_long":
-		side = "SELL"
-	}
-
-	// Use action as orderAction directly (keep lowercase format)
-	orderAction := action
-
-	// Determine if it's a reduce only order
-	reduceOnly := (action == "close_long" || action == "close_short")
-
-	// Normalize symbol for consistency
-	normalizedSymbol := market.Normalize(symbol)
-
-	return &store.TraderOrder{
-		TraderID:        at.id,
-		ExchangeID:      at.exchangeID,
-		ExchangeType:    at.exchange,
+	order := store.LedgerOrder{
+		AccountID:       at.exchangeID,
+		Source:          store.SourceTrader,
+		SourceID:        at.id,
+		Role:            store.RoleEntry,
 		ExchangeOrderID: orderID,
-		Symbol:          normalizedSymbol,
-		Side:            side,
-		PositionSide:    positionSide,
-		Type:            orderType,
-		TimeInForce:     "GTC",
-		Quantity:        quantity,
-		Price:           price,
-		Status:          "NEW",
-		FilledQuantity:  0,
-		AvgFillPrice:    0,
-		Commission:      0,
-		CommissionAsset: "USDT",
-		Leverage:        leverage,
-		ReduceOnly:      reduceOnly,
-		ClosePosition:   reduceOnly,
-		OrderAction:     orderAction,
-		CreatedAt:       time.Now().UTC().UnixMilli(),
-		UpdatedAt:       time.Now().UTC().UnixMilli(),
+		ClientOrderID:   clientOrderID,
+		Side:            store.SideBuy,
+		PositionSide:    store.SideLong,
+		Type:            "MARKET",
+		Status:          store.OrderNew,
+		Quantity:        decimal.NewFromFloat(quantity),
+	}
+	switch action {
+	case "open_short":
+		order.Side, order.PositionSide = store.SideSell, store.SideShort
+	case "close_long":
+		order.Role, order.Side, order.ReduceOnly = store.RoleClose, store.SideSell, true
+	case "close_short":
+		order.Role, order.PositionSide, order.ReduceOnly = store.RoleClose, store.SideShort, true
+	}
+	if leverage > 0 {
+		order.Leverage = &leverage
+		order.MarginMode = at.marginMode()
+	}
+	if err := at.saveOrder(&order, symbol); err != nil {
+		logger.Infof("  ⚠️ Failed to record order %s: %v", orderID, err)
+		return 0
+	}
+	logger.Infof("  📝 Order recorded: %s [%s] %s", orderID, action, symbol)
+	return order.ID
+}
+
+func orderIDOf(value interface{}) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case int64:
+		return fmt.Sprintf("%d", v)
+	case float64:
+		return fmt.Sprintf("%.0f", v)
+	case string:
+		return v
+	default:
+		return fmt.Sprintf("%v", v)
 	}
 }
 
-// recordOrderFill records order fill/trade details
-func (at *AutoTrader) recordOrderFill(orderRecordID int64, exchangeOrderID, symbol, action string, price, quantity, fee float64) {
-	if at.store == nil {
-		return
+func (at *AutoTrader) marginMode() string {
+	return store.MarginModeOf(at.config.IsCrossMargin)
+}
+
+// saveOrder records an order on the instrument a symbol names on this trader's venue.
+func (at *AutoTrader) saveOrder(order *store.LedgerOrder, symbol string) error {
+	symbol = instrument.Normalize(symbol)
+	native := symbol
+	if at.exchange == "okx" {
+		native = okx.InstrumentID(symbol)
 	}
-
-	// Determine side (BUY/SELL)
-	var side string
-	switch action {
-	case "open_long", "close_short":
-		side = "BUY"
-	case "open_short", "close_long":
-		side = "SELL"
+	instrumentID, err := instrument.Ensure(at.store.GormDB(), at.exchange, instrument.KindPerpetual, symbol, native)
+	if err != nil {
+		return err
 	}
-
-	// Generate a simple trade ID (exchange doesn't always provide one)
-	tradeID := fmt.Sprintf("%s-%d", exchangeOrderID, time.Now().UnixNano())
-
-	// Normalize symbol for consistency
-	normalizedSymbol := market.Normalize(symbol)
-
-	fill := &store.TraderFill{
-		TraderID:        at.id,
-		ExchangeID:      at.exchangeID,
-		ExchangeType:    at.exchange,
-		OrderID:         orderRecordID,
-		ExchangeOrderID: exchangeOrderID,
-		ExchangeTradeID: tradeID,
-		Symbol:          normalizedSymbol,
-		Side:            side,
-		Price:           price,
-		Quantity:        quantity,
-		QuoteQuantity:   price * quantity,
-		Commission:      fee,
-		CommissionAsset: "USDT",
-		RealizedPnL:     0,     // Will be calculated for close orders
-		IsMaker:         false, // Market orders are usually taker
-		CreatedAt:       time.Now().UTC().UnixMilli(),
-	}
-
-	// Calculate realized PnL for close orders
-	if action == "close_long" || action == "close_short" {
-		// Try to get the entry price from the open position
-		var positionSide string
-		if action == "close_long" {
-			positionSide = "LONG"
-		} else {
-			positionSide = "SHORT"
-		}
-
-		if openPos, err := at.store.Position().GetOpenPositionBySymbol(at.id, symbol, positionSide); err == nil && openPos != nil {
-			if positionSide == "LONG" {
-				fill.RealizedPnL = (price - openPos.EntryPrice) * quantity
-			} else {
-				fill.RealizedPnL = (openPos.EntryPrice - price) * quantity
-			}
-		}
-	}
-
-	if err := at.store.Order().CreateFill(fill); err != nil {
-		logger.Infof("  ⚠️ Failed to record fill: %v", err)
-	} else {
-		logger.Infof("  📋 Fill recorded: %.4f @ %.6f, fee: %.4f", quantity, price, fee)
-	}
+	order.InstrumentID = instrumentID
+	return at.store.Ledger().RecordOrder(order)
 }
 
 // GetOpenOrders returns open orders (pending SL/TP) from exchange

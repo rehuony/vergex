@@ -1,9 +1,9 @@
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { Segmented } from '@/components/common/segmented'
 import { SettingRow } from '@/components/common/setting-row'
 import { AppSelect } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import type { AIStrategyConfig, CoinSourceConfig } from '@/types'
+import type { AgentStrategyConfig, CoinSourceConfig } from '@/types'
 import {
   COIN_SOURCE_TYPES,
   RANKED_SOURCES,
@@ -22,17 +22,17 @@ const OI_WINDOWS = ['1h', '4h', '24h'] as const
 // Where candidate coins come from: a static list, a ranking or a mix of them,
 // plus the coins that are always left out.
 export function CoinSourceSection({
-  ai,
+  agent,
   language,
   onPatch,
 }: {
-  ai: AIStrategyConfig
+  agent: AgentStrategyConfig
   language: Language
   onPatch: (patch: Partial<CoinSourceConfig>) => void
 }) {
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`strategy.${key}`, language, params)
-  const source = ai.coin_source
+  const source = agent.coin_source
   const sourceType = source.source_type || 'static'
   const isRanked = sourceType !== 'static'
   const usesOI =

@@ -4,16 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/gin-gonic/gin"
 	"net/http/httptest"
 	"testing"
+	"time"
+	"vergex/internal/trading"
 
-	"github.com/google/uuid"
-	"vergex/internal/planning/core"
+	"github.com/gin-gonic/gin"
+	"vergex/internal/planning"
 	"vergex/internal/planning/live"
 	"vergex/internal/store"
-	"vergex/internal/testdb"
-	"vergex/internal/trader/execution"
+	"vergex/internal/store/storetest"
+
+	"github.com/google/uuid"
 )
 
 type fakeAccountCloser struct {
@@ -21,12 +23,12 @@ type fakeAccountCloser struct {
 	calls     int
 	lookups   int
 	fail      bool
-	last      execution.Order
+	last      trading.Order
 }
 
 func (f *fakeAccountCloser) GetPositions() ([]map[string]interface{}, error) { return f.positions, nil }
 func (f *fakeAccountCloser) RouteClientID(id string) (string, error)         { return "broker-" + id, nil }
-func (f *fakeAccountCloser) SubmitOrder(_ context.Context, o execution.Order) (execution.Order, error) {
+func (f *fakeAccountCloser) SubmitOrder(_ context.Context, o trading.Order) (trading.Order, error) {
 	f.calls++
 	f.last = o
 	if f.fail {
@@ -37,44 +39,45 @@ func (f *fakeAccountCloser) SubmitOrder(_ context.Context, o execution.Order) (e
 	o.OrderID = "123"
 	return o, nil
 }
-func (f *fakeAccountCloser) LookupOrder(_ context.Context, o execution.Order) (execution.Order, error) {
+func (f *fakeAccountCloser) LookupOrder(_ context.Context, o trading.Order) (trading.Order, error) {
 	f.lookups++
 	return o, errors.New("unconfirmed")
 }
+
+const (
+	firstAccount   = "00000000-0000-4000-8000-0000000000f1"
+	secondAccount  = "00000000-0000-4000-8000-0000000000f2"
+	foreignAccount = "00000000-0000-4000-8000-0000000000f3"
+)
+
 func closeFixture(t *testing.T) (*Server, *fakeAccountCloser, accountCloseRequest) {
 	t.Helper()
-	db := testdb.Open(t)
-	sql, _ := db.DB()
-	t.Cleanup(func() { sql.Close() })
-	st, e := store.NewFromGorm(db)
-	if e != nil {
-		t.Fatal(e)
-	}
-	if e = db.AutoMigrate(&store.Exchange{}, &store.Trader{}, &accountCloseIntent{}, &live.Run{}); e != nil {
-		t.Fatal(e)
-	}
+	st := storetest.New(t)
+	db := st.GormDB()
+	storetest.Account(t, st)
+	storetest.OtherAccount(t, st)
 	for _, ex := range []store.Exchange{
-		{ID: "first", UserID: "alice", ExchangeType: "binance", APIKey: "first-key", Enabled: true},
-		{ID: "second", UserID: "alice", ExchangeType: "binance", APIKey: "second-key", Enabled: true},
-		{ID: "foreign", UserID: "bob", ExchangeType: "binance", APIKey: "foreign-key", Enabled: true},
+		{ID: firstAccount, UserID: storetest.UserID, ExchangeType: "binance", APIKey: "first-key"},
+		{ID: secondAccount, UserID: storetest.UserID, ExchangeType: "binance", APIKey: "second-key"},
+		{ID: foreignAccount, UserID: storetest.OtherUserID, ExchangeType: "binance", APIKey: "foreign-key"},
 	} {
-		if e = db.Create(&ex).Error; e != nil {
+		if e := db.Create(&ex).Error; e != nil {
 			t.Fatal(e)
 		}
 	}
 	f := &fakeAccountCloser{positions: []map[string]interface{}{{"symbol": "BTCUSDT", "side": "short", "positionAmt": -0.019, "entryPrice": 81798.3}}}
-	in := accountCloseRequest{ExchangeID: "second", RequestID: uuid.NewString(), Symbol: "BTCUSDT", Side: "short", Quantity: "0.019", Entry: "81798.3"}
+	in := accountCloseRequest{ExchangeID: secondAccount, RequestID: uuid.NewString(), Symbol: "BTCUSDT", Side: "short", Quantity: "0.019", Entry: "81798.3"}
 	return &Server{store: st}, f, in
 }
 func TestAccountCloseUsesSelectedBinanceWithoutAutopilot(t *testing.T) {
 	s, f, in := closeFixture(t)
 	factory := func(ex *store.Exchange) (accountCloser, error) {
-		if ex.ID != "second" {
+		if ex.ID != secondAccount {
 			t.Fatalf("wrong account: %s", ex.ID)
 		}
 		return f, nil
 	}
-	order, err := s.closeFuturesAccount(context.Background(), "alice", in, factory)
+	order, err := s.closeFuturesAccount(context.Background(), storetest.UserID, in, factory)
 	if err != nil || order.Status != "FILLED" {
 		t.Fatal(order, err)
 	}
@@ -87,33 +90,31 @@ func TestAccountCloseUsesSelectedBinanceWithoutAutopilot(t *testing.T) {
 		t.Fatal("close created an Autopilot")
 	}
 	// Retransmission returns the persisted result, without sending a second order.
-	if _, err = s.closeFuturesAccount(context.Background(), "alice", in, factory); err != nil || f.calls != 1 {
+	if _, err = s.closeFuturesAccount(context.Background(), storetest.UserID, in, factory); err != nil || f.calls != 1 {
 		t.Fatal(err, f.calls)
 	}
 }
 func TestAccountCloseBlocksForeignChangedAndRunningAccounts(t *testing.T) {
-	for _, name := range []string{"foreign", "missing", "disabled", "increased", "new-entry", "running", "no-position", "wrong-side"} {
+	for _, name := range []string{foreignAccount, "missing", "increased", "new-entry", "running", "no-position", "wrong-side"} {
 		t.Run(name, func(t *testing.T) {
 			s, f, in := closeFixture(t)
 			switch name {
-			case "foreign":
-				in.ExchangeID = "foreign"
+			case foreignAccount:
+				in.ExchangeID = foreignAccount
 			case "missing":
 				in.ExchangeID = ""
-			case "disabled":
-				s.store.GormDB().Model(&store.Exchange{}).Where("id = ?", "second").Update("enabled", false)
 			case "increased":
 				f.positions[0]["positionAmt"] = -0.02
 			case "new-entry":
 				f.positions[0]["entryPrice"] = 81800.0
 			case "running":
-				s.store.GormDB().Create(&store.Trader{ID: "auto", UserID: "alice", ExchangeID: "second", IsRunning: true})
+				storetest.AddTrader(t, s.store, &store.Trader{ExchangeID: secondAccount, IsRunning: true})
 			case "no-position":
 				f.positions = nil
 			case "wrong-side":
 				in.Side = "long"
 			}
-			_, err := s.closeFuturesAccount(context.Background(), "alice", in, func(*store.Exchange) (accountCloser, error) { return f, nil })
+			_, err := s.closeFuturesAccount(context.Background(), storetest.UserID, in, func(*store.Exchange) (accountCloser, error) { return f, nil })
 			if err == nil || f.calls != 0 {
 				t.Fatal("unsafe close", err, f.calls)
 			}
@@ -124,11 +125,11 @@ func TestAccountCloseTimeoutCannotRepeatWithNewRequestID(t *testing.T) {
 	s, f, in := closeFixture(t)
 	f.fail = true
 	factory := func(*store.Exchange) (accountCloser, error) { return f, nil }
-	if _, err := s.closeFuturesAccount(context.Background(), "alice", in, factory); err == nil {
+	if _, err := s.closeFuturesAccount(context.Background(), storetest.UserID, in, factory); err == nil {
 		t.Fatal("timeout hidden")
 	}
 	in.RequestID = uuid.NewString()
-	if _, err := s.closeFuturesAccount(context.Background(), "alice", in, factory); err == nil || f.calls != 1 || f.lookups != 1 {
+	if _, err := s.closeFuturesAccount(context.Background(), storetest.UserID, in, factory); err == nil || f.calls != 1 || f.lookups != 1 {
 		t.Fatal("ambiguous order repeated", err, f.calls, f.lookups)
 	}
 }
@@ -136,11 +137,20 @@ func TestAccountCloseWaitsForScheduledAndUnknownEntries(t *testing.T) {
 	for _, status := range []string{"scheduled", "submitting", "NEW", "UNKNOWN", "PARTIALLY_FILLED"} {
 		t.Run(status, func(t *testing.T) {
 			s, f, in := closeFixture(t)
-			ex, _ := s.store.Exchange().GetByID("alice", "second")
-			plan, _ := json.Marshal(core.Plan{Snapshot: core.Snapshot{Symbol: "BTCUSDT"}})
-			orders, _ := json.Marshal([]execution.Order{{Role: "entry", Status: status}})
-			s.store.GormDB().Create(&live.Run{ID: "run", UserID: "alice", ExchangeID: "second", AccountKey: accountKey(ex), State: "stopping", PlanJSON: string(plan), OrdersJSON: string(orders)})
-			_, err := s.closeFuturesAccount(context.Background(), "alice", in, func(*store.Exchange) (accountCloser, error) { return f, nil })
+			ex, _ := s.store.Exchange().GetByID(storetest.UserID, secondAccount)
+			db := s.store.GormDB()
+			now := time.Now().UTC()
+			if e := db.Create(&planning.Draft{UserID: storetest.UserID, ID: "plan", ExchangeID: secondAccount, Venue: "binance", Symbol: "BTCUSDT", Status: "approved", Body: "{}"}).Error; e != nil {
+				t.Fatal(e)
+			}
+			run := live.Run{ID: uuid.NewString(), UserID: storetest.UserID, ExchangeID: secondAccount, AccountKey: ex.Identity, PlanID: "plan", PlanHash: "h", ApprovalHash: "h", State: "stopping", ApprovedAt: now, UpdatedAt: now}
+			if e := db.Create(&run).Error; e != nil {
+				t.Fatal(e)
+			}
+			if e := db.Exec(`INSERT INTO frontier.run_orders (run_id, seq, role, symbol, side, client_id, status) VALUES (?, 0, 'entry', 'BTCUSDT', 'long', 'c', ?)`, run.ID, status).Error; e != nil {
+				t.Fatal(e)
+			}
+			_, err := s.closeFuturesAccount(context.Background(), storetest.UserID, in, func(*store.Exchange) (accountCloser, error) { return f, nil })
 			if err == nil || f.calls != 0 {
 				t.Fatal("entry can reopen position", status, err)
 			}
@@ -152,7 +162,7 @@ func TestAccountCloseSupportsOKXWithoutAutopilot(t *testing.T) {
 	for _, venue := range []string{"okx"} {
 		t.Run(venue, func(t *testing.T) {
 			s, f, in := closeFixture(t)
-			if e := s.store.GormDB().Model(&store.Exchange{}).Where("id = ?", "second").Update("exchange_type", venue).Error; e != nil {
+			if e := s.store.GormDB().Model(&store.Exchange{}).Where("id = ?", secondAccount).Update("venue", venue).Error; e != nil {
 				t.Fatal(e)
 			}
 			if venue == "okx" {
@@ -160,19 +170,19 @@ func TestAccountCloseSupportsOKXWithoutAutopilot(t *testing.T) {
 				f.positions[0]["symbol"] = in.Symbol
 			}
 			factory := func(ex *store.Exchange) (accountCloser, error) {
-				if ex.ID != "second" || ex.ExchangeType != venue {
+				if ex.ID != secondAccount || ex.ExchangeType != venue {
 					t.Fatal("wrong account")
 				}
 				return f, nil
 			}
-			order, e := s.closeFuturesAccount(context.Background(), "alice", in, factory)
+			order, e := s.closeFuturesAccount(context.Background(), storetest.UserID, in, factory)
 			if e != nil || order.Status != "FILLED" || !f.last.ReduceOnly || f.last.Symbol != in.Symbol {
 				t.Fatalf("close %+v %v", order, e)
 			}
-			if _, e = s.closeFuturesAccount(context.Background(), "alice", in, factory); e != nil || f.calls != 1 {
+			if _, e = s.closeFuturesAccount(context.Background(), storetest.UserID, in, factory); e != nil || f.calls != 1 {
 				t.Fatal("duplicate close", e)
 			}
-			ex, e := s.planningWorkspace("alice", "second", venue)
+			ex, e := s.planningWorkspace(storetest.UserID, secondAccount, venue)
 			if e != nil || ex.ExchangeType != venue {
 				t.Fatal("workspace rejected", e)
 			}
@@ -184,17 +194,17 @@ func TestAccountCloseAcceptsWeightedAverageWithoutRounding(t *testing.T) {
 	for _, venue := range []string{"binance", "okx"} {
 		t.Run(venue, func(t *testing.T) {
 			s, f, in := closeFixture(t)
-			s.store.GormDB().Model(&store.Exchange{}).Where("id = ?", "second").Update("exchange_type", venue)
+			s.store.GormDB().Model(&store.Exchange{}).Where("id = ?", secondAccount).Update("venue", venue)
 			in.Symbol, in.Quantity, in.Entry = "QUSDT", "12257", "0.1287878419678551"
 			if venue == "okx" {
 				in.Symbol = "Q-USDT-SWAP"
 			}
 			f.positions = []map[string]interface{}{{"symbol": in.Symbol, "side": "short", "positionAmt": float64(-12257), "entryPrice": 0.1287878419678551}}
-			o, err := s.closeFuturesAccount(context.Background(), "alice", in, func(*store.Exchange) (accountCloser, error) { return f, nil })
-			if err != nil || f.calls != 1 || o.Price != execution.Decimal(in.Entry) || o.Quantity != "12257" || !o.ReduceOnly {
+			o, err := s.closeFuturesAccount(context.Background(), storetest.UserID, in, func(*store.Exchange) (accountCloser, error) { return f, nil })
+			if err != nil || f.calls != 1 || o.Price != trading.Decimal(in.Entry) || o.Quantity != "12257" || !o.ReduceOnly {
 				t.Fatal(o, err, f.calls)
 			}
-			if !execution.ValidOrderPrice(o) {
+			if !trading.ValidOrderPrice(o) {
 				t.Fatal("adapter would reject weighted entry")
 			}
 		})
@@ -215,10 +225,10 @@ func TestAccountCloseErrorsDistinguishNotSentFromUnconfirmed(t *testing.T) {
 				f.fail = true
 			case "previous-timeout":
 				f.fail = true
-				s.closeFuturesAccount(context.Background(), "alice", in, factory)
+				s.closeFuturesAccount(context.Background(), storetest.UserID, in, factory)
 				in.RequestID = uuid.NewString()
 			}
-			_, err := s.closeFuturesAccount(context.Background(), "alice", in, factory)
+			_, err := s.closeFuturesAccount(context.Background(), storetest.UserID, in, factory)
 			if err == nil {
 				t.Fatal("expected close error")
 			}

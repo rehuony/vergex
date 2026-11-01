@@ -28,7 +28,7 @@ pnpm format   # format src/ with Prettier
 | `hooks/`, `contexts/` | Shared hooks and React contexts |
 | `utils/` | Shared helpers outside components |
 | `constants/` | Shared values such as route paths and model providers |
-| `i18n/` | UI copy |
+| `i18n/` | UI copy, one folder per language under `locales/`, read through `@/i18n` |
 | `styles/` | Global styles (`index.css`) and theme variables (`brand.css`) |
 | `types/` | Shared types |
 | `tests/` | Vitest tests, mirroring the paths above; `setup.ts` runs before them |

@@ -2,14 +2,16 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+	"vergex/internal/market/instrument"
 
-	"vergex/internal/llm"
-	"vergex/internal/market"
+	"vergex/internal/agent"
+	"vergex/internal/logger"
 	"vergex/internal/safe"
 	"vergex/internal/servicestate"
 	"vergex/internal/store"
@@ -49,7 +51,7 @@ type overviewTrader struct {
 	TraderID     string `json:"trader_id"`
 	TraderName   string `json:"trader_name"`
 	IsRunning    bool   `json:"is_running"`
-	AIModelID    string `json:"ai_model_id"`
+	AgentModelID string `json:"agent_model_id"`
 	ExchangeID   string `json:"exchange_id"`
 	StrategyName string `json:"strategy_name,omitempty"`
 }
@@ -166,10 +168,10 @@ func (s *Server) buildOverview(user string) overviewResponse {
 		Attention:   []overviewAttention{},
 	}
 
-	if models, err := s.store.AIModel().List(user); err == nil {
+	if models, err := s.store.AgentModel().List(user); err == nil {
 		for _, model := range models {
 			if model.Enabled {
-				out.Models = append(out.Models, overviewModel{ID: model.ID, Name: model.Name, Provider: model.Provider, Model: model.CustomModelName, Host: llm.ProviderHost(model.Provider, model.CustomAPIURL)})
+				out.Models = append(out.Models, overviewModel{ID: model.ID, Name: model.Name, Provider: model.Provider, Model: model.CustomModelName, Host: agent.ProviderHost(model.Provider, model.CustomAPIURL)})
 			}
 		}
 	}
@@ -181,6 +183,8 @@ func (s *Server) buildOverview(user string) overviewResponse {
 	exchanges, _ := s.store.Exchange().List(user)
 	ready := s.addOverviewAccounts(user, exchanges, &out)
 	addOverviewExchangeData(user, ready, &out)
+	s.addOverviewSkippedFills(user, &out)
+	s.addOverviewRealized(exchanges, &out)
 
 	s.addOverviewServices(&out)
 	s.addOverviewFeeds(&out)
@@ -207,15 +211,13 @@ func (s *Server) addOverviewFeeds(out *overviewResponse) {
 }
 
 func (s *Server) addOverviewTraders(user string, traders []*store.Trader, out *overviewResponse) {
-	ids := make([]string, 0, len(traders))
 	for _, trader := range traders {
-		ids = append(ids, trader.ID)
 		row := overviewTrader{
-			TraderID:   trader.ID,
-			TraderName: trader.Name,
-			IsRunning:  trader.IsRunning,
-			AIModelID:  trader.AIModelID,
-			ExchangeID: trader.ExchangeID,
+			TraderID:     trader.ID,
+			TraderName:   trader.Name,
+			IsRunning:    trader.IsRunning,
+			AgentModelID: trader.AgentModelID,
+			ExchangeID:   trader.ExchangeID,
 		}
 		if trader.StrategyID != "" {
 			if strategy, err := s.store.Strategy().Get(user, trader.StrategyID); err == nil {
@@ -240,9 +242,20 @@ func (s *Server) addOverviewTraders(user string, traders []*store.Trader, out *o
 		}
 		out.Traders = append(out.Traders, row)
 	}
+}
 
+// addOverviewRealized sums today's realized P/L on the user's accounts, whoever traded:
+// a trader, Frontier or a manual close. With no account there is nothing to report.
+func (s *Server) addOverviewRealized(exchanges []*store.Exchange, out *overviewResponse) {
+	if len(exchanges) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(exchanges))
+	for _, exchange := range exchanges {
+		ids = append(ids, exchange.ID)
+	}
 	startOfDay := time.Now().UTC().Truncate(24 * time.Hour).UnixMilli()
-	if realized, err := s.store.Position().RealizedSince(ids, startOfDay); err == nil && len(ids) > 0 {
+	if realized, err := s.store.Position().RealizedOnAccounts(ids, startOfDay); err == nil {
 		out.RealizedToday = &realized
 	}
 }
@@ -309,7 +322,7 @@ func (s *Server) addOverviewAccounts(user string, exchanges []*store.Exchange, o
 		state, known := states[exchange.ID]
 		row := overviewAccount{ID: exchange.ID, Name: exchange.AccountName, ExchangeType: exchange.ExchangeType, Status: exchangeAccountStatusUnavailable}
 		if row.Name == "" {
-			row.Name = exchange.Name
+			row.Name = exchange.VenueName()
 		}
 		if known {
 			row.Status = state.Status
@@ -324,7 +337,7 @@ func (s *Server) addOverviewAccounts(user string, exchanges []*store.Exchange, o
 		switch row.Status {
 		case exchangeAccountStatusOK:
 			ready = append(ready, exchange)
-		case exchangeAccountStatusDisabled, exchangeAccountStatusMissingCredentials:
+		case exchangeAccountStatusMissingCredentials:
 			// Not set up, which is a choice rather than a fault.
 		default:
 			// Its positions and orders are unknown, which is not the same as none.
@@ -333,6 +346,39 @@ func (s *Server) addOverviewAccounts(user string, exchanges []*store.Exchange, o
 		}
 	}
 	return ready
+}
+
+// How long a trade that could not be booked stays on the Dashboard, and how many it spells out.
+const (
+	skippedFillsShownFor = 30 * 24 * time.Hour
+	skippedFillsSpelled  = 5
+)
+
+// addOverviewSkippedFills says which trades the ledger is missing. It takes one row, so
+// its detail is not lost to the list merging rows of a kind.
+func (s *Server) addOverviewSkippedFills(user string, out *overviewResponse) {
+	fills, err := s.store.Ledger().SkippedFillsSince(user, time.Now().Add(-skippedFillsShownFor), skippedFillsSpelled+1)
+	if err != nil {
+		logger.Warnf("Overview: read skipped fills: %v", err)
+		return
+	}
+	if len(fills) == 0 {
+		return
+	}
+	var lines []string
+	for i, fill := range fills {
+		if i == skippedFillsSpelled {
+			lines = append(lines, "and more")
+			break
+		}
+		line := fmt.Sprintf("trade %s: %s", fill.ExchangeTradeID, fill.Detail)
+		// The row already names the first contract, and a phone has little room.
+		if fill.NativeSymbol != fills[0].NativeSymbol {
+			line = fill.NativeSymbol + " " + line
+		}
+		lines = append(lines, line)
+	}
+	out.Attention = append(out.Attention, overviewAttention{Kind: "account_fill_skipped", Name: fills[0].NativeSymbol, Detail: strings.Join(lines, "; ")})
 }
 
 type overviewAccountData struct {
@@ -443,7 +489,7 @@ func overviewPositionOwner(traders []overviewTrader, runs []overviewRun, exchang
 		}
 	}
 	for _, run := range runs {
-		if run.ExchangeID == exchangeID && market.Normalize(run.Symbol) == market.Normalize(symbol) {
+		if run.ExchangeID == exchangeID && instrument.Normalize(run.Symbol) == instrument.Normalize(symbol) {
 			return ""
 		}
 	}

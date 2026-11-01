@@ -19,7 +19,7 @@ func walk(n int, drift float64) []market.Kline {
 		price = math.Max(1, price+drift+wiggle*0.3)
 		high, low := math.Max(open, price)+0.4, math.Min(open, price)-0.4
 		klines[i] = market.Kline{
-			OpenTime: int64(i) * hour, Open: open, High: high, Low: low, Close: price,
+			OpenTime: int64(i+1) * hour, Open: open, High: high, Low: low, Close: price,
 			Volume: 100 + 20*math.Abs(wiggle), TakerBuyBaseVolume: 50 + 10*wiggle,
 		}
 	}
@@ -211,7 +211,7 @@ func TestBacktestMatchesLiveEvaluationAndDoesNotOverlap(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, sample := range samples {
-		i := int(sample.time / hour)
+		i := int(sample.time/hour) - 1
 		live, err := Evaluate(DefaultConfig(), "1h", candles[i-WindowBars+1:i+1], Derivatives{})
 		if err != nil {
 			t.Fatal(err)

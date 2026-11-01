@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { buildTraderPath } from '@/constants/route-paths'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import type { TraderInfo } from '@/types'
 import { getTraderSlug } from '@/utils/trader-slug'
 

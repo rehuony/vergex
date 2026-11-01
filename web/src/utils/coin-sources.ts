@@ -1,4 +1,4 @@
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import type { CoinSourceConfig } from '@/types'
 
 export type CoinSourceType = CoinSourceConfig['source_type']

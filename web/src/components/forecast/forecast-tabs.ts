@@ -1,6 +1,6 @@
 import { ROUTES } from '@/constants/route-paths'
 import type { PageTab } from '@/components/common/page'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 
 // Sections of the Forecast page.
 export function forecastTabs(language: Language): PageTab[] {

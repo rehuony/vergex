@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import type { Plan } from '@/api/planning'
 import { Button } from '@/components/ui/button'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { ExecutionSchedule } from './execution-schedule'
 
 interface FrontierChartPanelProps {

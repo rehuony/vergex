@@ -3,8 +3,8 @@ import { SettingsLink } from '@/components/settings/settings-link'
 import { Button } from '@/components/ui/button'
 import { AppSelect } from '@/components/ui/select'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
-import type { AIModel } from '@/types'
+import { t } from '@/i18n'
+import type { AgentModel } from '@/types'
 import { AssistantThread } from './assistant-thread'
 import type { ActivityItem } from './planning-activity'
 import type { ChatMessage } from './use-planning-assistant'
@@ -18,7 +18,7 @@ interface FrontierAssistantProps {
   busy: boolean
   planningBusy: boolean
   status: string
-  models: AIModel[]
+  models: AgentModel[]
   modelID: string
   onModelChange: (id: string) => void
   instruction: string
@@ -64,7 +64,7 @@ export function FrontierAssistant({
       <header className="flex items-center gap-2 border-b border-[var(--line)] p-2">
         {models.length > 0 ? (
           <AppSelect
-            aria-label={label('aiModel')}
+            aria-label={label('agentModel')}
             className="h-9 min-w-0 flex-1 max-sm:h-10"
             value={modelID}
             disabled={busy}

@@ -4,16 +4,16 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"vergex/internal/kernel"
+	"vergex/internal/trader/agent"
 )
 
-func throttleContext(symbol, side string, heldFor time.Duration, pnlPct float64) *kernel.Context {
+func throttleContext(symbol, side string, heldFor time.Duration, pnlPct float64) *agent.Context {
 	return leveragedThrottleContext(symbol, side, heldFor, pnlPct, 1)
 }
 
-func leveragedThrottleContext(symbol, side string, heldFor time.Duration, pnlPct float64, leverage int) *kernel.Context {
-	return &kernel.Context{
-		Positions: []kernel.PositionInfo{
+func leveragedThrottleContext(symbol, side string, heldFor time.Duration, pnlPct float64, leverage int) *agent.Context {
+	return &agent.Context{
+		Positions: []agent.PositionInfo{
 			{
 				Symbol:           symbol,
 				Side:             side,
@@ -29,8 +29,8 @@ func TestTradeThrottleBlocksEarlyNoiseClose(t *testing.T) {
 	at := &AutoTrader{}
 	ctx := throttleContext("SOLUSDT", "long", 20*time.Minute, -0.3)
 
-	reason := at.tradeThrottleReason(kernel.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
-	if !strings.Contains(reason, "min AI-managed hold") {
+	reason := at.tradeThrottleReason(agent.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
+	if !strings.Contains(reason, "min agent-managed hold") {
 		t.Fatalf("expected early close to be blocked by min hold, got %q", reason)
 	}
 }
@@ -40,7 +40,7 @@ func TestTradeThrottleAllowsEarlyHardStop(t *testing.T) {
 	// A price loss beyond the default -3% bypass unlocks the min hold.
 	ctx := throttleContext("SOLUSDT", "long", 20*time.Minute, -6.0)
 
-	reason := at.tradeThrottleReason(kernel.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
+	reason := at.tradeThrottleReason(agent.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
 	if reason != "" {
 		t.Fatalf("expected hard stop close to pass, got %q", reason)
 	}
@@ -52,14 +52,14 @@ func TestTradeThrottleBypassIsPriceBasisNotMarginBasis(t *testing.T) {
 	// only a -0.6% price move — noise, must NOT bypass the min hold.
 	ctx := leveragedThrottleContext("SOLUSDT", "long", 20*time.Minute, -6.0, 10)
 
-	reason := at.tradeThrottleReason(kernel.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
-	if !strings.Contains(reason, "min AI-managed hold") {
+	reason := at.tradeThrottleReason(agent.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
+	if !strings.Contains(reason, "min agent-managed hold") {
 		t.Fatalf("expected -0.6%% price move to stay blocked at 10x, got %q", reason)
 	}
 
 	// -60% margin at 10x is a real -6% price move — bypass allowed.
 	ctx = leveragedThrottleContext("SOLUSDT", "long", 20*time.Minute, -60.0, 10)
-	reason = at.tradeThrottleReason(kernel.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
+	reason = at.tradeThrottleReason(agent.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
 	if reason != "" {
 		t.Fatalf("expected -6%% price move to bypass min hold at 10x, got %q", reason)
 	}
@@ -71,7 +71,7 @@ func TestTradeThrottleNoiseBandIsPriceBasisNotMarginBasis(t *testing.T) {
 	// inside the default -2%..+3% noise band — flat close must stay blocked.
 	ctx := leveragedThrottleContext("SOLUSDT", "long", 2*time.Hour, 20.0, 10)
 
-	reason := at.tradeThrottleReason(kernel.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
+	reason := at.tradeThrottleReason(agent.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
 	if !strings.Contains(reason, "noise band") {
 		t.Fatalf("expected +2%% price move to be blocked inside noise band at 10x, got %q", reason)
 	}
@@ -83,7 +83,7 @@ func TestTradeThrottleBlocksFlatCloseInsideNoiseWindow(t *testing.T) {
 	// under the 3h noise window.
 	ctx := throttleContext("SOLUSDT", "long", 2*time.Hour, 0.4)
 
-	reason := at.tradeThrottleReason(kernel.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
+	reason := at.tradeThrottleReason(agent.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
 	if !strings.Contains(reason, "noise band") {
 		t.Fatalf("expected flat close to be blocked inside noise window, got %q", reason)
 	}
@@ -94,7 +94,7 @@ func TestTradeThrottleAllowsConfirmedLossAfterMinimumHold(t *testing.T) {
 	// Past the min hold, loss beyond the -2% noise floor → close allowed.
 	ctx := throttleContext("SOLUSDT", "long", 2*time.Hour, -2.5)
 
-	reason := at.tradeThrottleReason(kernel.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
+	reason := at.tradeThrottleReason(agent.Decision{Symbol: "SOLUSDT", Action: "close_long"}, ctx)
 	if reason != "" {
 		t.Fatalf("expected confirmed loss after min hold to pass, got %q", reason)
 	}
@@ -106,18 +106,18 @@ func TestTradeThrottleBlocksQuickReentryAfterClose(t *testing.T) {
 	// requires a store — covered by the throttle reason path being non-empty
 	// only when a recent close order exists (nil store returns no orders).
 	at := &AutoTrader{}
-	ctx := &kernel.Context{}
-	if reason := at.tradeThrottleReason(kernel.Decision{Symbol: "SOLUSDT", Action: "open_long"}, ctx); reason != "" {
+	ctx := &agent.Context{}
+	if reason := at.tradeThrottleReason(agent.Decision{Symbol: "SOLUSDT", Action: "open_long"}, ctx); reason != "" {
 		t.Fatalf("expected open with no order history to be allowed, got %q", reason)
 	}
 }
 
 func TestTradeThrottleDoesNotCapOpensPerCycle(t *testing.T) {
 	at := &AutoTrader{}
-	ctx := &kernel.Context{}
+	ctx := &agent.Context{}
 
 	for _, symbol := range []string{"SOLUSDT", "DOGEUSDT", "XRPUSDT", "ADAUSDT", "LINKUSDT"} {
-		if reason := at.tradeThrottleReason(kernel.Decision{Symbol: symbol, Action: "open_long"}, ctx); reason != "" {
+		if reason := at.tradeThrottleReason(agent.Decision{Symbol: symbol, Action: "open_long"}, ctx); reason != "" {
 			t.Fatalf("expected %s open to have no per-cycle count cap, got %q", symbol, reason)
 		}
 	}
@@ -127,7 +127,7 @@ func TestTradeThrottleBlocksOpeningAgainstExistingPosition(t *testing.T) {
 	at := &AutoTrader{}
 	ctx := throttleContext("SOLUSDT", "long", 2*time.Hour, 1.0)
 
-	reason := at.tradeThrottleReason(kernel.Decision{Symbol: "SOLUSDT", Action: "open_short"}, ctx)
+	reason := at.tradeThrottleReason(agent.Decision{Symbol: "SOLUSDT", Action: "open_short"}, ctx)
 	if !strings.Contains(reason, "already has an open") {
 		t.Fatalf("expected opposite open to be blocked when position exists, got %q", reason)
 	}

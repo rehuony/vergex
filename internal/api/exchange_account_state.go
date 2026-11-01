@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
+	"vergex/internal/exchange/binance"
+	"vergex/internal/exchange/okx"
 	"vergex/internal/logger"
 	"vergex/internal/store"
 	"vergex/internal/trader"
-	"vergex/internal/trader/binance"
-	"vergex/internal/trader/okx"
 
 	"github.com/gin-gonic/gin"
 )
@@ -22,7 +22,6 @@ const exchangeAccountStateCacheTTL = 30 * time.Second
 
 const (
 	exchangeAccountStatusOK                 = "ok"
-	exchangeAccountStatusDisabled           = "disabled"
 	exchangeAccountStatusMissingCredentials = "missing_credentials"
 	exchangeAccountStatusInvalidCredentials = "invalid_credentials"
 	exchangeAccountStatusPermissionDenied   = "permission_denied"
@@ -167,13 +166,6 @@ func probeExchangeAccountState(exchangeCfg *store.Exchange, userID string) Excha
 		ExchangeID: exchangeCfg.ID,
 		CheckedAt:  time.Now().UTC(),
 		Asset:      accountAssetForExchange(exchangeCfg.ExchangeType),
-	}
-
-	if !exchangeCfg.Enabled {
-		state.Status = exchangeAccountStatusDisabled
-		state.ErrorCode = "EXCHANGE_DISABLED"
-		state.ErrorMessage = "Exchange account is disabled"
-		return state
 	}
 
 	if status, code, message, missing := missingExchangeCredentials(exchangeCfg); missing {

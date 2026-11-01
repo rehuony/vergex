@@ -7,13 +7,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"vergex/internal/agent"
+	_ "vergex/internal/agent/provider"
 	"vergex/internal/config"
-	"vergex/internal/llm"
-	_ "vergex/internal/llm/provider"
 	"vergex/internal/logger"
 	"vergex/internal/servicestate"
 	"vergex/internal/store"
-	"vergex/internal/telegram/agent"
+	telegramagent "vergex/internal/telegram/agent"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -57,7 +57,7 @@ func Start(cfg *config.Config, st *store.Store, reloadCh <-chan struct{}) {
 func resolveToken(cfg *config.Config, st *store.Store) string {
 	dbCfg, err := st.TelegramConfig().Get()
 	if err == nil && dbCfg.BotToken != "" {
-		return dbCfg.BotToken
+		return string(dbCfg.BotToken)
 	}
 	return ""
 }
@@ -83,7 +83,7 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 		botUserID    string
 		botUserEmail string
 		botToken     string
-		agents       *agent.Manager
+		agents       *telegramagent.Manager
 	)
 
 	resolveBotUser := func() bool {
@@ -95,7 +95,7 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 		if u.ID == botUserID {
 			return true
 		}
-		newToken, err := agent.GenerateBotToken(u.ID)
+		newToken, err := telegramagent.GenerateBotToken(u.ID)
 		if err != nil {
 			logger.Errorf("Failed to generate bot JWT for user %s: %v", u.ID, err)
 			return false
@@ -104,8 +104,9 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 		botUserID = u.ID
 		botUserEmail = u.Email
 		botToken = newToken
-		agents = agent.NewManager(cfg.APIServerPort, botToken, botUserEmail, botUserID,
-			func() llm.AIClient { return newLLMClient(st, botUserID) },
+		agents = telegramagent.NewManager(cfg.APIServerPort, botToken, botUserEmail, botUserID,
+			func() agent.Client { return newAgentClient(st, botUserID) },
+			&chatHistory{conversations: st.AgentConversation(), userID: botUserID},
 		)
 		if prev == "" {
 			logger.Infof("Bot: resolved user %s (%s)", botUserID, botUserEmail)
@@ -208,7 +209,7 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 			continue
 		}
 
-		// ── Refresh user before every AI call ────────────────────────────────
+		// ── Refresh user before every model call ────────────────────────────────
 		resolveBotUser()
 		if botUserID == "" {
 			sendMsg(bot, chatID, "No account found. Open the web dashboard to register.")
@@ -218,12 +219,12 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 		lang := st.TelegramConfig().GetLanguage()
 
 		// ── Guard: show status if not ready for trading ───────────────────────
-		if newLLMClient(st, botUserID) == nil {
+		if newAgentClient(st, botUserID) == nil {
 			sendMarkdownMsg(bot, chatID, statusMsg(st, botUserID, cfg.APIServerPort, lang))
 			continue
 		}
 
-		// ── AI agent ─────────────────────────────────────────────────────────
+		// ── agent ─────────────────────────────────────────────────────────
 		go func(chatID int64, text string) {
 			sent, err := bot.Send(tgbotapi.NewMessage(chatID, "⏳"))
 			placeholderID := 0
@@ -286,12 +287,12 @@ func sendMarkdownMsg(bot *tgbotapi.BotAPI, chatID int64, text string) {
 	}
 }
 
-// ── LLM client ───────────────────────────────────────────────────────────────
+// ── model client ───────────────────────────────────────────────────────────────
 
-func newLLMClient(st *store.Store, userID string) llm.AIClient {
-	// 1. Prefer the model explicitly configured for Telegram (Settings → Telegram → AI Model)
-	if tgCfg, err := st.TelegramConfig().Get(); err == nil && tgCfg.ModelID != "" {
-		if model, err := st.AIModel().Get(userID, tgCfg.ModelID); err == nil && model.Enabled {
+func newAgentClient(st *store.Store, userID string) agent.Client {
+	// 1. Prefer the model explicitly configured for Telegram (Settings → Telegram → Model)
+	if tgCfg, err := st.TelegramConfig().Get(); err == nil && tgCfg.AgentModelID != "" {
+		if model, err := st.AgentModel().Get(userID, tgCfg.AgentModelID); err == nil && model.Enabled {
 			apiKey := string(model.APIKey)
 			if apiKey != "" {
 				client := clientForProvider(model.Provider)
@@ -303,7 +304,7 @@ func newLLMClient(st *store.Store, userID string) llm.AIClient {
 	}
 
 	// 2. Fall back to first enabled model
-	if model, err := st.AIModel().GetDefault(userID); err == nil {
+	if model, err := st.AgentModel().GetDefault(userID); err == nil {
 		apiKey := string(model.APIKey)
 		if apiKey != "" {
 			client := clientForProvider(model.Provider)
@@ -315,7 +316,7 @@ func newLLMClient(st *store.Store, userID string) llm.AIClient {
 
 	// 3. Environment variable fallback
 	for _, pair := range []struct{ provider, key, url string }{
-		{"deepseek", os.Getenv("DEEPSEEK_API_KEY"), llm.DefaultDeepSeekBaseURL},
+		{"deepseek", os.Getenv("DEEPSEEK_API_KEY"), agent.DefaultDeepSeekBaseURL},
 		{"openai", os.Getenv("OPENAI_API_KEY"), ""},
 		{"claude", os.Getenv("ANTHROPIC_API_KEY"), ""},
 	} {
@@ -328,12 +329,12 @@ func newLLMClient(st *store.Store, userID string) llm.AIClient {
 	return nil
 }
 
-func clientForProvider(provider string) llm.AIClient {
-	client := llm.NewAIClientByProvider(provider)
+func clientForProvider(provider string) agent.Client {
+	client := agent.NewClientByProvider(provider)
 	if client == nil {
-		client = llm.NewAIClientByProvider("deepseek")
+		client = agent.NewClientByProvider("deepseek")
 	}
-	llm.TagUsage(client, llm.OwnerTelegram)
+	agent.TagUsage(client, agent.FeatureTelegram, "")
 	return client
 }
 
@@ -346,25 +347,20 @@ func statusMsg(st *store.Store, userID string, apiPort int, lang string) string 
 
 	// Determine what's missing.
 	hasModel := false
-	if _, err := st.AIModel().GetDefault(userID); err == nil {
+	if _, err := st.AgentModel().GetDefault(userID); err == nil {
 		hasModel = true
 	}
 
 	hasExchange := false
 	if exchanges, err := st.Exchange().List(userID); err == nil {
-		for _, e := range exchanges {
-			if e.Enabled {
-				hasExchange = true
-				break
-			}
-		}
+		hasExchange = len(exchanges) > 0
 	}
 
 	if !hasModel || !hasExchange {
 		missing := ""
 		if lang == "zh" {
 			if !hasModel {
-				missing += "\n❌ AI Model → Settings → AI Models → Add"
+				missing += "\n❌ Model → Settings → Models → Add"
 			}
 			if !hasExchange {
 				missing += "\n❌ Exchange → Settings → Exchanges → Add"
@@ -372,7 +368,7 @@ func statusMsg(st *store.Store, userID string, apiPort int, lang string) string 
 			return "⚙️ *Setup required*\n\nOpen the web dashboard to complete setup:\n→ " + webURL + "\n" + missing + "\n\nSend /start when done."
 		}
 		if !hasModel {
-			missing += "\n❌ AI Model → Settings → AI Models → Add"
+			missing += "\n❌ Model → Settings → Models → Add"
 		}
 		if !hasExchange {
 			missing += "\n❌ Exchange → Settings → Exchanges → Add"

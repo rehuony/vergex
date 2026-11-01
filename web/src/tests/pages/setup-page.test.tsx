@@ -47,7 +47,7 @@ describe('first-time setup', () => {
     fireEvent.change(screen.getByPlaceholderText('At least 8 characters'), {
       target: { value: 'StrongPass123!' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Get Started' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Get started' }))
 
     await waitFor(() => {
       expect(mocks.register).toHaveBeenCalledWith(

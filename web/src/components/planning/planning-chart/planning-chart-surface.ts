@@ -1,3 +1,4 @@
+import { activeLanguage, t } from '@/i18n'
 import {
   type IPrimitivePaneRenderer,
   type IPrimitivePaneView,
@@ -25,7 +26,10 @@ export function chartFrame(onResolution: (resolution: string) => void) {
   const toolbar = document.createElement('div')
   toolbar.className = 'planning-chart-toolbar'
   toolbar.setAttribute('role', 'group')
-  toolbar.setAttribute('aria-label', 'Chart timeframe')
+  toolbar.setAttribute(
+    'aria-label',
+    t('frontier.chartTimeframe', activeLanguage())
+  )
   for (const [resolution, label] of Object.entries(resolutions)) {
     const button = document.createElement('button')
     button.type = 'button'

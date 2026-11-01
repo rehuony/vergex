@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '@/api'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { Dialog, DialogField, DialogNote } from '@/components/common/dialog'
 import { StoredText } from '@/components/common/stored-text'
 import { SettingsLink } from '@/components/settings/settings-link'
@@ -45,13 +45,13 @@ export function StrategyTestDialog({
     try {
       const run = await api.testRunStrategy({
         config,
-        ai_model_id: withModel ? modelId : '',
+        agent_model_id: withModel ? modelId : '',
         run_real_ai: withModel,
       })
       // Without a model, the server's answer field only holds a reminder.
       setResult({
         ...run,
-        ai_response: withModel && !run.ai_error ? run.ai_response : '',
+        agent_response: withModel && !run.agent_error ? run.agent_response : '',
       })
     } catch (err) {
       setResult(null)
@@ -156,14 +156,14 @@ export function StrategyTestDialog({
                 </dd>
               </div>
             </dl>
-            {result.ai_error && (
+            {result.agent_error && (
               <p role="alert" className="pb-3 text-[13px] text-vergex-danger">
-                {label('testModelFailed')} {result.ai_error}
+                {label('testModelFailed')} {result.agent_error}
               </p>
             )}
             <StoredText
               title={label('modelAnswer')}
-              text={result.ai_response}
+              text={result.agent_response}
             />
             <StoredText
               title={label('systemPrompt')}

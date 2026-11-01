@@ -1,5 +1,5 @@
 import type { SystemStatus } from '@/types'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { formatRequestError } from '@/utils/request-errors'
 import { SettingsLink } from '@/components/settings/settings-link'
 
@@ -7,7 +7,7 @@ const dangerClass =
   'rounded-xl border border-vergex-danger/30 bg-vergex-danger/10 px-4 py-3 text-sm text-vergex-danger'
 
 // TraderBanners explains a run state the numbers alone would hide: trading
-// blocked by the exchange, safe mode after repeated AI failures, or a fresh
+// blocked by the exchange, safe mode after repeated model failures, or a fresh
 // trader that has not decided yet.
 export function TraderBanners({
   status,

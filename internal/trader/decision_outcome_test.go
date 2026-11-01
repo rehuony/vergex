@@ -12,7 +12,7 @@ func (*rejectedAuthorizationTrader) CheckTradingAuthorization() error {
 	return errors.New("agent mismatch")
 }
 
-func TestCycleChecksAuthorizationBeforeFetchingDataOrCallingAI(t *testing.T) {
+func TestCycleChecksAuthorizationBeforeFetchingDataOrCallingAgent(t *testing.T) {
 	// Nil data/model dependencies would panic if the paid context path ran.
 	at := &AutoTrader{isRunning: true, trader: &rejectedAuthorizationTrader{}}
 	if err := at.runCycle(); err == nil {

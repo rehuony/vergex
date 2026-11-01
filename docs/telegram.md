@@ -8,9 +8,11 @@ In **Settings → Telegram**:
 
 1. Create a bot with [@BotFather](https://t.me/BotFather) and paste its token.
 2. Send `/start` to your bot. It binds to your account.
-3. Choose the AI model, or leave it on auto-select.
+3. Choose the model, or leave it on auto-select.
 
 Saving the token, model or binding restarts the bot.
+
+A chat is stored in `agent.conversations` and `agent.messages`: what you and the assistant said, the account state it was given, its thinking where the model returns one, and each skill call with its result. After a restart the assistant picks up from the latest 40 things said. `/start` begins a new conversation; the old one stays stored, and nothing cleans it up automatically (see [Data and backups](getting-started.md#data-and-backups)).
 
 ## Skills
 
@@ -22,7 +24,7 @@ Defined in `internal/telegram/agent/skills.go`:
 | `strategy_management` | create, update, delete, activate, duplicate, query |
 | `model_management` | query |
 | `exchange_management` | query, with account connection state |
-| `account_query` | overview, balance, positions, position history, trades, orders, open orders, decisions, statistics, AI costs |
+| `account_query` | overview, balance, positions, position history, trades, orders, open orders, decisions, statistics, agent costs |
 | `close_position` | closes a position after checking that it exists |
 | `diagnose` | `trader_start`, `model`, `exchange`, `order_execution` |
 

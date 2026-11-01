@@ -4,12 +4,12 @@ For people and coding agents working in this repository. Read the [Rules](#rules
 
 ## Project
 
-vergex is a personal, self-hosted AI trading system, forked from an upstream project (see the README's License section) and no longer synced with it.
+vergex is a personal, self-hosted agent trading system, forked from an upstream project (see the README's License section) and no longer synced with it.
 
 - **Markets:** crypto only, on Binance USDT-M futures and OKX USDT perpetuals.
 - **Models:** direct calls with your own API key to DeepSeek, OpenAI, Claude, Qwen, Gemini, Grok, Kimi or MiniMax, with an optional custom base URL. There is no paid gateway, paid data source, referral tagging or telemetry.
 - **Users:** single user. The first account registered is the only one.
-- **Features:** Traders (automated trading on a strategy), Frontier (AI-assisted planning of individual trades), grid trading, a Telegram assistant and Forecast (experimental signals, not connected to trading).
+- **Features:** Traders (automated trading on a strategy), Frontier (agent-assisted planning of individual trades), grid trading, a Telegram assistant and Forecast (experimental signals, not connected to trading).
 - **Deployment:** local builds only, with Docker Compose and the Makefile. Remote access adds nginx on the host: see [docs/deployment.md](docs/deployment.md).
 
 ## Commands
@@ -22,7 +22,7 @@ go build ./... && go vet ./... && go test ./...
 cd web && pnpm build && pnpm test && pnpm lint
 ```
 
-A Go test that needs a database uses `testdb.Open(t)` or `storetest.New(t)`, which give it a schema of its own in the `<DB_NAME>_test` database of the PostgreSQL in `.env`, or on `VERGEX_TEST_DATABASE_URL`. It fails rather than skips when there is no database.
+A Go test that needs a database uses `testdb.Open(t)` or `storetest.New(t)`, which give it a database of its own, cloned from the template `<DB_NAME>_test` on the PostgreSQL in `.env`, or from the database in `VERGEX_TEST_DATABASE_URL`. The template is dropped and rebuilt when the migrations change, so its name must end in `_test` and any other is refused. Clones are dropped when the test ends. A test fails rather than skips when there is no database.
 
 The Makefile is the entry point for everything else, and `make help` lists it. Targets come in pairs (`run-backend`/`run-frontend`, `build-*`, `test-*`, `lint-*`, `fmt-*`, `deps-*`), and `make dev`, `build`, `test` and `lint` cover both sides.
 
@@ -30,7 +30,17 @@ The Makefile is the entry point for everything else, and `make help` lists it. T
 
 ### Live order paths
 
-`internal/trader/binance`, `internal/trader/okx` and `internal/planning/live` handle real money. Only rename and decouple code there; do not change order logic. If a change is truly needed, add tests and verify it on a small account before calling it done. Exchange testnets are not supported yet and will be added once the features are complete.
+These handle real money. Only rename and decouple code there; do not change order logic. If a change is truly needed, add tests and verify it on a small account before calling it done. Exchange testnets are not supported yet and will be added once the features are complete.
+
+| Path | Files | Live order path |
+| :--- | :---- | :-------------- |
+| `internal/exchange/binance` | `execution.go`, `futures*.go`, `order_sync.go`: account, orders, reading fills | Yes |
+| | `klines.go`, `ranking.go`, `derivatives.go`, `stream.go`, `limiter.go`: public data and the request budget | No |
+| `internal/exchange/okx` | `execution.go`, `frontier_account.go`, `order_sync.go`, `trader*.go`: account, orders, reading fills | Yes |
+| | `klines.go`, `listing.go`, `stream.go`: public data | No |
+| `internal/planning/live` | All | Yes |
+| `internal/trading` | The contract orders go through: `Executor`, `Order`, exact decimals | Yes |
+| `internal/trading/accountsync` | All | No: it places no order and only reads the exchange. But cooldowns and statistics rest on what it books, so a change to how it reads an exchange needs tests and goes on the small-account list |
 
 ### Compatibility
 
@@ -39,7 +49,7 @@ This is a clean rewrite with no old deployments or data to support, so the code 
 - New Binance and OKX orders use the `vergex` clientOrderId prefix. Lookups of persisted Frontier orders accept only that prefix; any other is a route mismatch.
 - Position history and statistics query the current trader ID only and do not chain other traders' records.
 - `NormalizeProductSchema` turns unknown or removed coin source types into `static`. Nothing migrates them at startup.
-- PostgreSQL is the only database. It only migrates incrementally, with GORM AutoMigrate.
+- PostgreSQL is the only database. Its schema comes only from the forward-only SQL migrations in `store/database/migrations`, applied at startup; GORM only reads and writes. To change a table, add a new file; a file changed after it was applied stops startup. See [docs/database.md](docs/database.md).
 - Use `vergex` in all new code, copy, logs and storage keys. Upstream is named only in the README's License section, as AGPL requires of modified versions, and in the fork record ([docs/fork.md](docs/fork.md)).
 - Environment variables use the `VERGEX_*` prefix: `VERGEX_BIND_ADDRESS` (default `127.0.0.1`), `VERGEX_FRONTEND_PORT` (default 8000), and `VERGEX_BACKEND_PORT` (default 3000, used only when the backend port mapping is enabled).
 
@@ -51,7 +61,7 @@ This is a clean rewrite with no old deployments or data to support, so the code 
 ### Documentation
 
 - Technical documentation, including this file, is English only. `docs/` has one page per topic, indexed in `docs/README.md`.
-- The README exists in English (`README.md`) and Chinese (`README.zh-CN.md`); change both together. Other languages can return once multi-language support is in place.
+- The README exists in English (`README.md`) and Chinese (`README.zh-CN.md`); change both together.
 - When a change affects behaviour, settings or commands, update the matching docs in the same work item. Docs describe what the code does today.
 
 ## Stack and runtime
@@ -82,26 +92,27 @@ Packages under `internal/`:
 | Package | Responsibility |
 | :------ | :------------- |
 | `api/` | All HTTP endpoints, JWT auth, rate limiting; `handler_planning*.go` serves Frontier |
-| `manager/` | Trader lifecycle: load from the database, assemble an AutoTrader, start and stop |
+| `trader/manager` | Trader lifecycle: load from the database, assemble an AutoTrader, start and stop |
 | `trader/` | AutoTrader main loop (`auto_trader_*.go`), risk control, grid, position sync |
-| `trader/binance`, `trader/okx` | Exchange adapters for trader orders and Frontier execution |
-| `trader/execution`, `trader/types`, `trader/syncloop` | Execution order types, exchange interfaces, order sync loop |
-| `kernel/` | Strategy engine: coin selection, market data, system and user prompts, parsing and validating AI decisions; grid engine |
-| `market/` | Candles and indicators for trading; reads a `LiveSource`, which `marketdata` provides |
-| `provider/binance` | Rankings from Binance public data (volume, price change, open-interest change), crypto perpetuals only; a request budget (`limiter.go`), candle and derivatives reads, and the market stream (`stream.go`) |
-| `provider/okx` | Tradable OKX USDT perpetuals, used to filter candidates for OKX traders; candles and the candle and mark price streams |
-| `provider/wsfeed` | One WebSocket connection to a changing set of topics, with what differs between exchanges behind a `Protocol` |
-| `marketdata/` | Live data and local candles. `Hub` holds the latest from the streams, `Writer` stores finished candles, `subscriptions` decides what the streams carry, and the hydrator fills the rest within the request budget. Candles and derivatives live in `market_*` tables on their own connection pool |
+| `exchange/binance`, `exchange/okx` | One directory per exchange and nothing else in `exchange/`, not even shared files, so a new exchange adds one directory. Each holds its adapter for trader orders and Frontier execution, which hold keys, and its public data. Binance: rankings from public data (volume, price change, open-interest change), crypto perpetuals only; a request budget (`limiter.go`), candle and derivatives reads, and the market stream (`stream.go`). OKX: tradable USDT perpetuals, used to filter candidates for OKX traders; candles and the candle and mark price streams |
+| `trading/` | What all exchanges share: the `Trader` interface automatic trading uses, the `Executor` contract Frontier uses, order types and exact decimals |
+| `trading/accountsync` | Reads each active account's new trades into the trading ledger |
+| `trader/agent` | Strategy engine: coin selection, market data, system and user prompts, parsing and validating agent decisions; grid engine |
+| `market/` | Candles and indicators for trading; reads a `LiveSource`, which `market/feed` provides |
+| `market/instrument` | What can be traded: venue, market kind and symbol, and `Normalize` for naming a symbol. Market data and the trading ledger both refer to it |
+| `market/wsfeed` | One WebSocket connection to a changing set of topics, with what differs between exchanges behind a `Protocol` |
+| `market/feed` | Live data and local candles. `Hub` holds the latest from the streams, `Writer` stores finished candles, `subscriptions` decides what the streams carry, and the hydrator fills the rest within the request budget. Candles and derivatives live in the `market` schema on their own connection pool |
 | `forecast/` | Forecast: `Evaluate` (factors, regime, score), strategies, records, verification, calibration, alerts and backtests, in the market database |
-| `llm/` | Model clients and provider registry, request building, SSE streaming, token usage callback |
-| `pricing/` | models.dev price cache and cost estimates |
-| `planning/` | Frontier: `harness` (AI chat and tools), `core` (plan compiler, risk and reward), `live` (execution after approval, reconciliation), `market` (market data and discovery), `forge` (Starlark entry calculators), `plugins` (public data such as funding rate and open interest), `model` (adapter over `llm`) |
-| `store/` | GORM models and storage: users, models, exchanges, traders, strategies, decisions, positions, orders, grids, AI charges, Telegram config |
+| `agent/` | Model clients and provider registry, request building, SSE streaming, token usage callback |
+| `agent/pricing` | models.dev price cache and cost estimates |
+| `planning/` | Frontier: `agent` (chat and tools), `core` (plan compiler, risk and reward), `live` (execution after approval, reconciliation), `market` (market data and discovery), `forge` (Starlark entry calculators), `plugins` (public data such as funding rate and open interest), `model` (adapter over `agent`) |
+| `store/` | GORM models and storage: users, exchange accounts and leases, the trading ledger (orders, fills, positions), manual closes, traders, strategies, decisions, agent models, calls and conversations, Telegram config. `store/database` opens PostgreSQL and holds the SQL migrations; `store/database/testdb` and `store/storetest` give tests a database and a store |
 | `telegram/` | Telegram bot; `telegram/agent` is the skill-first assistant |
-| `auth/`, `crypto/`, `security/`, `safe/` | JWT; AES storage and RSA transport encryption; SSRF checks; safe goroutine start |
+| `security/`, `security/auth`, `security/crypto` | SSRF checks; JWT; AES storage and RSA transport encryption |
+| `safe/` | Safe goroutine start |
 | `config/`, `logger/` | `.env` and environment settings; logrus-based logging |
 | `servicestate/` | What each background service last reported, for the Dashboard |
-| `activity/` | The Dashboard's event feed: reads the database and turns new rows into AI, order, money and market events |
+| `activity/` | The Dashboard's event feed: reads the database and turns new rows into agent, order, money and market events |
 
 ## Core flows
 
@@ -110,9 +121,9 @@ Packages under `internal/`:
 Details are in [docs/traders.md](docs/traders.md). The entry point is `runCycle` in `internal/trader/auto_trader_loop.go`:
 
 1. Check the running state, hot-reload the strategy, check risk pauses.
-2. Build the trading context: account, positions, candidates. `kernel.StrategyEngine.GetCandidateCoins` produces candidates from `static`, `volume_top`, `gainers`, `losers`, `oi_top`, `oi_low` or the combined `mixed`. Rankings come from `provider/binance`; OKX traders filter them with `provider/okx`.
-3. `kernel` fetches candles and indicators, builds the prompts, calls the model and parses decisions.
-4. Execute opens and closes by priority, and record orders, positions, decisions and AI usage. Repeated AI failures enter safe mode, which opens no new positions; a drawdown monitor goroutine handles emergency closes.
+2. Build the trading context: account, positions, candidates. `agent.StrategyEngine.GetCandidateCoins` produces candidates from `static`, `volume_top`, `gainers`, `losers`, `oi_top`, `oi_low` or the combined `mixed`. Rankings come from `exchange/binance`; OKX traders filter them with `exchange/okx`.
+3. `trader/agent` fetches candles and indicators, builds the prompts, calls the model and parses decisions.
+4. Execute opens and closes by priority, and record orders, positions, decisions and agent usage. Repeated model failures enter safe mode, which opens no new positions; a drawdown monitor goroutine handles emergency closes.
 
 ### Frontier
 
@@ -120,7 +131,7 @@ Details are in [docs/frontier.md](docs/frontier.md).
 
 | Endpoint (`/api/planning/`) | Role |
 | :-------------------------- | :--- |
-| `chat` | Harness. Its tools only read data, draft plans and draw; they cannot place orders |
+| `chat` | The agent. Its tools only read data, draft plans and draw; they cannot place orders |
 | `compile` | Compile a plan: risk and reward, fees, sizing |
 | `approve` | Lock `plan_hash` and `approval_hash` |
 | `execute` | `planning/live` runs a finite, immutable order basket |
@@ -128,11 +139,11 @@ Details are in [docs/frontier.md](docs/frontier.md).
 | `candles`, `feed` | Chart history and SSE updates |
 | `results` | What finished plans realized, read from the exchange |
 
-`web/src/components/planning/planning-chart/planning-chart.ts` draws plan levels and the AI's drawings (`horizontal_line`, `trend_line`, `rectangle`).
+`web/src/components/planning/planning-chart/planning-chart.ts` draws plan levels and the agent's drawings (`horizontal_line`, `trend_line`, `rectangle`).
 
 ### Market data
 
-Details are in [docs/market-data.md](docs/market-data.md). Binance's rate limits are per IP and shared with live trading, so live data comes from the streams, and REST through `binance.Limiter` only starts history, fills holes and answers trading when the stream cannot vouch for its data. Calculations and backtests read the local market tables and never make requests. Do not call the exchange from them.
+Details are in [docs/market-data.md](docs/market-data.md). Each exchange's public data is in its own directory under `exchange/`, and `market/` and `market/feed` read it from there. Binance's rate limits are per IP and shared with live trading, so live data comes from the streams, and REST through `binance.Limiter` only starts history, fills holes and answers trading when the stream cannot vouch for its data. Calculations and backtests read the local market tables and never make requests. Do not call the exchange from them.
 
 Nothing downstream may hold a stream up: `wsfeed` and `Hub` drop rather than wait, and a lost candle leaves its series behind for the hydrator. Whatever trading reads must carry its age, and go to the exchange when it is too old rather than be used silently.
 
@@ -158,7 +169,7 @@ The model sees only these skills (`internal/telegram/agent/skills.go`):
 | `strategy_management` | create, update, delete, activate, duplicate, query | Update sends only `config_patch`; the server merges it |
 | `model_management` | query | Read-only; keys and endpoints change only in the web UI |
 | `exchange_management` | query | Read-only, with account connection state |
-| `account_query` | overview, balance, positions, position_history, trades, orders, open_orders, decisions, statistics, ai_costs | Read-only, per trader |
+| `account_query` | overview, balance, positions, position_history, trades, orders, open_orders, decisions, statistics, agent_costs | Read-only, per trader |
 | `close_position` | | Checks first that the position exists |
 | `diagnose` | trader_start, model, exchange, order_execution | Collects facts along fixed paths and gives hints (`diagnose.go`) |
 
@@ -190,7 +201,7 @@ Go code decides whether to run it, not the model. The user's next message must b
 - File and directory names use kebab-case.
 - Imports use `./` within a directory and `@/` otherwise, never `../`.
 - Use named exports. Use a default export only where a framework requires one.
-- UI copy goes through `web/src/i18n`, and translations stay in the code. The UI is fixed to English for now, with no language option in the account menu (`LANGUAGE_CHOICE_ENABLED` in `language-context.tsx`). Other languages return once the features are complete.
+- UI copy goes through `web/src/i18n`, imported from `@/i18n`, its one entry point. `locales/en` is the template, split by area; `locales/zh-cn` mirrors it file for file, and its types and `tests/i18n/locales.test.ts` fail on a missing key, an extra key or a changed placeholder. To add copy, add it to both. To add a language, add a folder and list it in `i18n/index.ts`. The language is chosen in the account menu, and otherwise follows the browser. Dates are written in it (`activeLanguage()`); numbers stay in `en-US`.
 - New code must pass ESLint and Prettier.
 - Tests live in `web/src/tests/`, mirroring the source path after `src/`: the test for `components/ui/button.tsx` is `tests/components/ui/button.test.tsx`. A test that covers several components stays whole, under the directory of the area it covers. Not every file needs a test.
 
@@ -220,13 +231,13 @@ Use `components/common/dialog.tsx`, and never hand-write a `fixed inset-0` overl
 
 ### Settings
 
-AI models and exchange accounts are configured only in the Settings dialog; they have no pages of their own. Elsewhere, open a section with `SettingsLink` or `useOpenSettings()` (`?settings=models`, `?settings=exchanges`). Read this data through `hooks/use-connections.ts`, which shares one SWR cache so saved changes appear at once.
+Models and exchange accounts are configured only in the Settings dialog; they have no pages of their own. Elsewhere, open a section with `SettingsLink` or `useOpenSettings()` (`?settings=models`, `?settings=exchanges`). Read this data through `hooks/use-connections.ts`, which shares one SWR cache so saved changes appear at once.
 
 Settings sections, and other forms laid out the same way, use `components/common/setting-row.tsx`:
 
 - **`SettingRow`** for each field: a 160px name column and a 36px-tall control filling the rest, with dividers between rows and no helper text under fields.
-- **`SettingActions`** ends a group that saves together. Buttons sit on the right. Validation and result messages go in a single line on the left of the bar (`messageTone` sets error, success or in progress, as with the AI model test result), never under an input, so the layout doesn't jump.
-- **`SettingList`** for list sections (AI models, exchanges): the list scrolls inside the section, and the bar with the add button stays pinned at the bottom.
+- **`SettingActions`** ends a group that saves together. Buttons sit on the right. Validation and result messages go in a single line on the left of the bar (`messageTone` sets error, success or in progress, as with the model test result), never under an input, so the layout doesn't jump.
+- **`SettingList`** for list sections (models, exchanges): the list scrolls inside the section, and the bar with the add button stays pinned at the bottom.
   - Each entry is a `SettingItem`: icon, name, a `SettingBadge` right after the name, and buttons on the right.
   - Opening one shows its form in the same section, with `SettingBack` at the top.
   - Loading, empty and error states use a centred `SettingState`.

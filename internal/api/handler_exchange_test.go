@@ -3,7 +3,7 @@ package api
 import (
 	"testing"
 
-	"vergex/internal/crypto"
+	"vergex/internal/security/crypto"
 	"vergex/internal/store"
 )
 
@@ -12,9 +12,6 @@ func TestSafeExchangeConfigFromStoreIncludesCredentialPresenceFlags(t *testing.T
 		ID:           "ex-1",
 		ExchangeType: "okx",
 		AccountName:  "OKX Main",
-		Name:         "OKX Main",
-		Type:         "cex",
-		Enabled:      true,
 		APIKey:       crypto.EncryptedString("api-test-123"),
 		SecretKey:    crypto.EncryptedString("secret-test-123"),
 		Passphrase:   crypto.EncryptedString("passphrase-test-123"),

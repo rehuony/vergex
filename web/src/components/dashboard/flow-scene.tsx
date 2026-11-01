@@ -227,9 +227,9 @@ export const FlowScene = forwardRef<FlowSceneHandle, FlowSceneProps>(
             }
             const drawn = flow.fire(ordered, color, {
               delay,
-              // An AI call is one event with two legs: the prompt and the reply.
+              // A call is one event with two legs: the prompt and the reply.
               done:
-                first.type === 'ai_call'
+                first.type === 'agent_call'
                   ? () => flow.fire([...ordered].reverse(), color)
                   : undefined,
             })
@@ -297,7 +297,7 @@ export const FlowScene = forwardRef<FlowSceneHandle, FlowSceneProps>(
         : selection.id
       : null
     const readout = describe(hovered ?? pickedKey)
-    const cost = routeTotal(totals, ['models>ai_cost'], 'h24').amount
+    const cost = routeTotal(totals, ['models>agent_cost'], 'h24').amount
     const fees = routeTotal(totals, ['accounts>fees'], 'h24').amount
     const today = overview.realized_today
     const labelGap = layout ? layout.pitch / 2 + 6 : 0
@@ -457,7 +457,7 @@ export const FlowScene = forwardRef<FlowSceneHandle, FlowSceneProps>(
                 y={layout.costLabel.y - 3}
                 className="fill-vergex-text text-[13px] font-medium"
               >
-                {label('flow.block.ai_cost')}
+                {label('flow.block.agent_cost')}
               </text>
               <text
                 x={layout.costLabel.x - 4}

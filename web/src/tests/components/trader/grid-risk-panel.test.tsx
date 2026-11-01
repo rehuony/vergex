@@ -34,7 +34,7 @@ it('summarises grid risk and expands into the details', async () => {
       <GridRiskPanel traderId="grid-1" language="en" />
     </SWRConfig>
   )
-  const toggle = await screen.findByRole('button', { name: /Grid Risk/ })
+  const toggle = await screen.findByRole('button', { name: /Grid risk/ })
   expect(toggle).toHaveAttribute('aria-expanded', 'false')
   expect(toggle).toHaveTextContent('Volatile')
   expect(screen.queryByText('Liquidation')).toBeNull()

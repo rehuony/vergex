@@ -1,7 +1,7 @@
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { Segmented } from '@/components/common/segmented'
 import { SettingRow } from '@/components/common/setting-row'
-import type { AIStrategyConfig, RiskControlConfig } from '@/types'
+import type { AgentStrategyConfig, RiskControlConfig } from '@/types'
 import {
   applyProfile,
   profileFromConfig,
@@ -13,18 +13,20 @@ import { FieldGrid, NumberField } from '@/components/common/form-fields'
 // A preset risk profile and the individual limits it sets. The ranges match
 // the limits the server clamps to (store.ClampLimits).
 export function RiskProfileSection({
-  ai,
+  agent,
   language,
-  onPatchAI,
+  onPatchAgent,
 }: {
-  ai: AIStrategyConfig
+  agent: AgentStrategyConfig
   language: Language
-  onPatchAI: (patch: (ai: AIStrategyConfig) => AIStrategyConfig) => void
+  onPatchAgent: (
+    patch: (agent: AgentStrategyConfig) => AgentStrategyConfig
+  ) => void
 }) {
   const label = (key: string) => t(`strategy.${key}`, language)
-  const risk = ai.risk_control
+  const risk = agent.risk_control
   const patch = (next: Partial<RiskControlConfig>) =>
-    onPatchAI((current) => ({
+    onPatchAgent((current) => ({
       ...current,
       risk_control: { ...current.risk_control, ...next },
     }))
@@ -35,14 +37,14 @@ export function RiskProfileSection({
       <SettingRow label={label('riskProfile')}>
         <Segmented<Profile | ''>
           aria-label={label('riskProfile')}
-          value={profileFromConfig(ai) ?? ''}
+          value={profileFromConfig(agent) ?? ''}
           options={profileOptions.map((profile) => ({
             value: profile.value,
             label: label(`profile.${profile.value}`),
           }))}
           onChange={(value) => {
             const profile = profileOptions.find((p) => p.value === value)
-            if (profile) onPatchAI((c) => applyProfile(c, profile))
+            if (profile) onPatchAgent((c) => applyProfile(c, profile))
           }}
         />
       </SettingRow>

@@ -6,7 +6,7 @@ import { SortHeader, type ColumnSort } from '@/components/common/sort-header'
 import { PanelState } from '@/components/common/panel'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { buildForecastPath } from '@/constants/route-paths'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { cn } from '@/utils/cn'
 import {
   DirectionIcon,

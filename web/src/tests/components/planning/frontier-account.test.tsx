@@ -55,8 +55,8 @@ function FrontierAccount(
 const account = {
   id: 'account',
   name: 'My Binance',
+  account_name: 'My Binance',
   exchange_type: 'binance',
-  enabled: true,
 } as Exchange
 const positions = [
   {

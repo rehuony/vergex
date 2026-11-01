@@ -29,12 +29,14 @@ make deps          # Go modules and frontend packages
 make dev           # PostgreSQL from .env, backend on :3000, frontend on :8000 with /api proxied to :3000
 ```
 
-`make run-postgresql` starts PostgreSQL with the settings in `.env`: the same container `make up` uses, also published on `127.0.0.1` at `DB_PORT` for the backend and tests running from source. `make test` runs the Go tests in a `<DB_NAME>_test` database on it, each in a schema of its own, and the frontend tests; set `VERGEX_TEST_DATABASE_URL` to use another server. `make build` produces `./vergex` and `web/dist`.
+`make run-postgresql` starts PostgreSQL with the settings in `.env`: the same container `make up` uses, also published on `127.0.0.1` at `DB_PORT` for the backend and tests running from source. `make test` runs the Go tests and the frontend tests. Each Go test gets a database of its own, cloned from the template `<DB_NAME>_test` and dropped when it ends, so a database tool may show those clones briefly while tests run. Set `VERGEX_TEST_DATABASE_URL` to use another server: the tests drop and rebuild the database it names, so that name must end in `_test`, and they refuse any other. `make build` produces `./vergex` and `web/dist`.
 
 ## First session
 
+The interface is in English or Simplified Chinese. It follows your browser until you choose one from the account menu.
+
 1. **Create the account.** The first registered user is the only user of the instance.
-2. **Add an AI model** in Settings → AI models: see [models.md](models.md).
+2. **Add a model** in Settings → Models: see [models.md](models.md).
 3. **Add an exchange account** in Settings → Exchanges: see [exchanges.md](exchanges.md).
 4. **Plan a trade** in [Frontier](frontier.md), which asks for your approval on every order, or create a [strategy and a trader](traders.md), which places orders on its own once started.
 
@@ -52,7 +54,7 @@ Settings come from `.env`; `.env.example` documents each one. Models, exchange a
 | `TRANSPORT_ENCRYPTION` | `false` | Encrypt API keys in the browser before sending; needs HTTPS or localhost |
 | `CORS_ALLOWED_ORIGINS` | localhost origins | Only needed when the UI is served from another origin |
 
-The schema is migrated automatically at startup with GORM AutoMigrate.
+The schema is migrated automatically at startup, by the SQL files in `internal/store/database/migrations`. Migrations only go forward: see [database.md](database.md).
 
 ## Data and backups
 
@@ -62,7 +64,21 @@ Relational data lives in PostgreSQL, in the `vergex-postgres` Docker volume. `da
 docker exec vergex-postgres pg_dump -U vergex vergex > vergex.sql
 ```
 
-Exchange and model keys are stored AES-encrypted with `DATA_ENCRYPTION_KEY`, so back up `.env`, `data/` and the database together and protect both.
+Exchange and model keys and the Telegram bot token are stored AES-encrypted with `DATA_ENCRYPTION_KEY`, so back up `.env`, `data/` and the database together and protect both.
+
+What the models were sent and what they said is kept in `agent.messages` and never cleaned up automatically, not even when a trader is deleted, so keep an eye on the disk. These figures are estimates:
+
+| From | Growth |
+| :--- | :----- |
+| A trader | 10–22 KB a cycle. For one trader, 0.35–0.74 GB a year at the default 15-minute interval, 1.7–3.7 GB a year at 3 minutes |
+| Frontier | About 39 KB of workspace and market data per turn, plus the words and tool results |
+| Telegram | Not measured |
+
+To see its current size:
+
+```bash
+docker exec vergex-postgres psql -U vergex -d vergex -c "SELECT pg_size_pretty(pg_total_relation_size('agent.messages'))"
+```
 
 ## Account recovery
 

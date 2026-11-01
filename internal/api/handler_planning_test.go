@@ -60,9 +60,9 @@ func TestPlanningMarketDoesNotRequireExecutionAccount(t *testing.T) {
 		t.Fatal("unsupported venue accepted")
 	}
 	// Execution still requires a real account; the empty planning binding is
-	// not promoted to an enabled account or an execution broker.
+	// not promoted to an account or an execution broker.
 	workspace, _ := s.planningWorkspace("alice", "", "binance")
-	if workspace.Enabled || workspace.APIKey != "" {
+	if workspace.APIKey != "" {
 		t.Fatal("planning workspace has trading authority")
 	}
 }

@@ -27,14 +27,14 @@ func DefaultGridStrategyConfig() GridStrategyConfig {
 
 // StrategyConfig strategy configuration details (JSON structure)
 type StrategyConfig struct {
-	// Strategy type: "ai_trading" (default) or "grid_trading"
+	// Strategy type: "agent_trading" (default) or "grid_trading"
 	StrategyType string `json:"strategy_type,omitempty"`
 
 	// language setting: "zh" for Chinese, "en" for English
 	// This determines the language used for data formatting and prompt generation
 	Language string `json:"language,omitempty"`
-	// AI trading configuration fields are kept on the Go struct for engine
-	// compatibility, but JSON persistence nests them under ai_config.
+	// Agent trading configuration fields are kept on the Go struct for engine
+	// compatibility, but JSON persistence nests them under agent_config.
 	CoinSource     CoinSourceConfig     `json:"-"`
 	Indicators     IndicatorConfig      `json:"-"`
 	CustomPrompt   string               `json:"-"`
@@ -45,8 +45,8 @@ type StrategyConfig struct {
 	GridConfig *GridStrategyConfig `json:"grid_config,omitempty"`
 }
 
-// AIStrategyConfig contains fields only used by AI trading strategies.
-type AIStrategyConfig struct {
+// AgentStrategyConfig contains fields only used by agent trading strategies.
+type AgentStrategyConfig struct {
 	CoinSource     CoinSourceConfig     `json:"coin_source"`
 	Indicators     IndicatorConfig      `json:"indicators"`
 	CustomPrompt   string               `json:"custom_prompt,omitempty"`
@@ -55,18 +55,18 @@ type AIStrategyConfig struct {
 }
 
 // MarshalJSON writes the product-facing strategy schema:
-// strategy_type + grid_config or ai_config.
+// strategy_type + grid_config or agent_config.
 func (c StrategyConfig) MarshalJSON() ([]byte, error) {
 	strategyType := strings.TrimSpace(c.StrategyType)
 	if strategyType == "" {
-		strategyType = "ai_trading"
+		strategyType = "agent_trading"
 	}
 
 	out := struct {
-		StrategyType string              `json:"strategy_type"`
-		Language     string              `json:"language,omitempty"`
-		AIConfig     *AIStrategyConfig   `json:"ai_config,omitempty"`
-		GridConfig   *GridStrategyConfig `json:"grid_config,omitempty"`
+		StrategyType string               `json:"strategy_type"`
+		Language     string               `json:"language,omitempty"`
+		AgentConfig  *AgentStrategyConfig `json:"agent_config,omitempty"`
+		GridConfig   *GridStrategyConfig  `json:"grid_config,omitempty"`
 	}{
 		StrategyType: strategyType,
 		Language:     c.Language,
@@ -75,7 +75,7 @@ func (c StrategyConfig) MarshalJSON() ([]byte, error) {
 	if strategyType == "grid_trading" {
 		out.GridConfig = c.GridConfig
 	} else {
-		out.AIConfig = &AIStrategyConfig{
+		out.AgentConfig = &AgentStrategyConfig{
 			CoinSource:     c.CoinSource,
 			Indicators:     c.Indicators,
 			CustomPrompt:   c.CustomPrompt,
@@ -88,13 +88,13 @@ func (c StrategyConfig) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON accepts both the new nested schema and old flat configs. Old
-// top-level AI fields are normalized into the Go compatibility fields.
+// top-level agent fields are normalized into the Go compatibility fields.
 func (c *StrategyConfig) UnmarshalJSON(data []byte) error {
 	type rawStrategyConfig struct {
-		StrategyType string              `json:"strategy_type"`
-		Language     string              `json:"language"`
-		AIConfig     *AIStrategyConfig   `json:"ai_config"`
-		GridConfig   *GridStrategyConfig `json:"grid_config"`
+		StrategyType string               `json:"strategy_type"`
+		Language     string               `json:"language"`
+		AgentConfig  *AgentStrategyConfig `json:"agent_config"`
+		GridConfig   *GridStrategyConfig  `json:"grid_config"`
 
 		CoinSource     *CoinSourceConfig     `json:"coin_source"`
 		Indicators     *IndicatorConfig      `json:"indicators"`
@@ -112,12 +112,12 @@ func (c *StrategyConfig) UnmarshalJSON(data []byte) error {
 	c.Language = raw.Language
 	c.GridConfig = raw.GridConfig
 
-	if raw.AIConfig != nil {
-		c.CoinSource = raw.AIConfig.CoinSource
-		c.Indicators = raw.AIConfig.Indicators
-		c.CustomPrompt = raw.AIConfig.CustomPrompt
-		c.RiskControl = raw.AIConfig.RiskControl
-		c.PromptSections = raw.AIConfig.PromptSections
+	if raw.AgentConfig != nil {
+		c.CoinSource = raw.AgentConfig.CoinSource
+		c.Indicators = raw.AgentConfig.Indicators
+		c.CustomPrompt = raw.AgentConfig.CustomPrompt
+		c.RiskControl = raw.AgentConfig.RiskControl
+		c.PromptSections = raw.AgentConfig.PromptSections
 	} else {
 		if raw.CoinSource != nil {
 			c.CoinSource = *raw.CoinSource
@@ -224,7 +224,7 @@ type CoinSourceConfig struct {
 type IndicatorConfig struct {
 	// K-line configuration
 	Klines KlineConfig `json:"klines"`
-	// raw kline data (OHLCV) - always enabled, required for AI analysis
+	// raw kline data (OHLCV) - always enabled, required for agent analysis
 	EnableRawKlines bool `json:"enable_raw_klines"`
 	// technical indicator switches
 	EnableEMA         bool `json:"enable_ema"`
@@ -279,9 +279,9 @@ type RiskControlConfig struct {
 	// Max number of coins held simultaneously (CODE ENFORCED)
 	MaxPositions int `json:"max_positions"`
 
-	// BTC/ETH exchange leverage for opening positions (AI guided)
+	// BTC/ETH exchange leverage for opening positions (agent guided)
 	BTCETHMaxLeverage int `json:"btc_eth_max_leverage"`
-	// Altcoin exchange leverage for opening positions (AI guided)
+	// Altcoin exchange leverage for opening positions (agent guided)
 	AltcoinMaxLeverage int `json:"altcoin_max_leverage"`
 
 	// BTC/ETH single position max value = equity × this ratio (CODE ENFORCED, default: 5)
@@ -294,9 +294,9 @@ type RiskControlConfig struct {
 	// Min position size in USDT (CODE ENFORCED)
 	MinPositionSize float64 `json:"min_position_size"`
 
-	// Min take_profit / stop_loss ratio (AI guided)
+	// Min take_profit / stop_loss ratio (agent guided)
 	MinRiskRewardRatio float64 `json:"min_risk_reward_ratio"`
-	// Min AI confidence to open position (AI guided)
+	// Min agent confidence to open position (agent guided)
 	MinConfidence int `json:"min_confidence"`
 }
 
@@ -323,7 +323,7 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 				EnableMultiTimeframe: true,
 				SelectedTimeframes:   []string{"5m", "15m", "1h"},
 			},
-			EnableRawKlines:   true, // Required - raw OHLCV data for AI analysis
+			EnableRawKlines:   true, // Required - raw OHLCV data for agent analysis
 			EnableEMA:         false,
 			EnableMACD:        false,
 			EnableRSI:         false,
@@ -339,21 +339,21 @@ func GetDefaultStrategyConfig(lang string) StrategyConfig {
 		},
 		RiskControl: RiskControlConfig{
 			MaxPositions:                 3,   // Max 3 coins simultaneously (CODE ENFORCED)
-			BTCETHMaxLeverage:            5,   // BTC/ETH exchange leverage (AI guided)
-			AltcoinMaxLeverage:           5,   // Altcoin exchange leverage (AI guided)
+			BTCETHMaxLeverage:            5,   // BTC/ETH exchange leverage (agent guided)
+			AltcoinMaxLeverage:           5,   // Altcoin exchange leverage (agent guided)
 			BTCETHMaxPositionValueRatio:  5.0, // BTC/ETH: max position = 5x equity (CODE ENFORCED)
 			AltcoinMaxPositionValueRatio: 1.0, // Altcoin: max position = 1x equity (CODE ENFORCED)
 			MaxMarginUsage:               0.9, // Max 90% margin usage (CODE ENFORCED)
 			MinPositionSize:              12,  // Min 12 USDT per position (CODE ENFORCED)
-			MinRiskRewardRatio:           3.0, // Min 3:1 profit/loss ratio (AI guided)
-			MinConfidence:                75,  // Min 75% confidence (AI guided)
+			MinRiskRewardRatio:           3.0, // Min 3:1 profit/loss ratio (agent guided)
+			MinConfidence:                75,  // Min 75% confidence (agent guided)
 		},
 	}
 
-	// System prompts are English-only (see kernel.BuildSystemPrompt), so both
+	// System prompts are English-only (see agent.BuildSystemPrompt), so both
 	// languages share the same built-in prompt sections.
 	config.PromptSections = PromptSectionsConfig{
-		RoleDefinition: `# You are a professional cryptocurrency perpetual futures trading AI
+		RoleDefinition: `# You are a professional cryptocurrency perpetual futures trading agent
 
 Your task is to make trading decisions for USDT-margined perpetual contracts based on the provided market data. You are an experienced quantitative trader skilled in technical analysis and risk management.`,
 		TradingFrequency: `# ⏱️ Trading Frequency Awareness

@@ -10,7 +10,7 @@ import {
   SettingRow,
   SettingState,
 } from '@/components/common/setting-row'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 
 const MAX_WATCHLIST = 100
 

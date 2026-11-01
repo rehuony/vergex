@@ -2,16 +2,20 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"vergex/internal/manager"
+	"vergex/internal/market/instrument"
 	"vergex/internal/store"
 	"vergex/internal/store/storetest"
+	"vergex/internal/trader/manager"
 
 	"github.com/gin-gonic/gin"
+	"github.com/shopspring/decimal"
 )
 
 func TestOverviewPositionsUseOneShapeWhateverTheAdapterReturns(t *testing.T) {
@@ -79,27 +83,42 @@ func TestOverviewCacheBuildsOncePerInterval(t *testing.T) {
 func TestOverviewStaysWithinTheOwnerAndNeedsNoExchange(t *testing.T) {
 	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
-	for _, trader := range []*store.Trader{
-		{ID: "mine", UserID: "alice", Name: "Mine", AIModelID: "m", ExchangeID: "e", InitialBalance: 100},
-		{ID: "theirs", UserID: "bob", Name: "Theirs", AIModelID: "m", ExchangeID: "e", InitialBalance: 100},
+	mine := storetest.AddTrader(t, st, &store.Trader{Name: "Mine"})
+	storetest.AddTrader(t, st, &store.Trader{UserID: storetest.OtherUserID, Name: "Theirs"})
+	ledger := storetest.NewLedger(t, st)
+	ledger.Open(mine.ID, "BTCUSDT", store.SideLong, 1, 100, time.Now().Add(-time.Second))
+	ledger.Close(mine.ID, "BTCUSDT", store.SideLong, 1, 110, 12.5, time.Now())
+	// Realized today is the account's, so a Frontier trade on it counts too.
+	eth, err := instrument.Ensure(st.GormDB(), "binance", instrument.KindPerpetual, "ETHUSDT", "ETHUSDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontier := store.Owner{Source: store.SourceFrontier, SourceID: "run"}
+	for _, trade := range []store.Trade{
+		{ExchangeTradeID: "f1", ExchangeOrderID: "f1", Side: store.SideBuy},
+		{ExchangeTradeID: "f2", ExchangeOrderID: "f2", Side: store.SideSell, RealizedPnL: decimal.NewNullDecimal(decimal.RequireFromString("2.5"))},
 	} {
-		if err := st.Trader().Create(trader); err != nil {
+		trade.AccountID, trade.InstrumentID, trade.PositionSide = ledger.Account, eth, store.SideLong
+		trade.Price, trade.Quantity, trade.QuoteQuantity, trade.ExecutedAt = decimal.NewFromInt(100), decimal.NewFromInt(1), decimal.NewFromInt(100), time.Now()
+		if _, err := st.Ledger().RecordTrade(trade, frontier); err != nil {
 			t.Fatal(err)
 		}
 	}
-	now := time.Now().UnixMilli()
-	position := &store.TraderPosition{TraderID: "mine", ExchangeID: "e", Symbol: "BTCUSDT", Side: "LONG", Quantity: 1, EntryPrice: 100, EntryTime: now - 1000}
-	if err := st.Position().Create(position); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.Position().ClosePosition(position.ID, 110, "exit", 12.5, 0.1, "take_profit"); err != nil {
-		t.Fatal(err)
-	}
 
 	s := &Server{store: st, traderManager: manager.NewTraderManager(), exchangeAccountStateCache: NewExchangeAccountStateCache()}
+	// Known to be unreadable, so nothing tries to reach an exchange.
+	exchanges, err := st.Exchange().List(storetest.UserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := map[string]ExchangeAccountState{}
+	for _, exchange := range exchanges {
+		states[exchange.ID] = ExchangeAccountState{ExchangeID: exchange.ID, Status: exchangeAccountStatusInvalidCredentials}
+	}
+	s.exchangeAccountStateCache.Set(storetest.UserID, states)
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(func(c *gin.Context) { c.Set("user_id", "alice") })
+	r.Use(func(c *gin.Context) { c.Set("user_id", storetest.UserID) })
 	r.GET("/overview", s.handleOverview)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/overview", nil))
@@ -110,21 +129,18 @@ func TestOverviewStaysWithinTheOwnerAndNeedsNoExchange(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatal(err)
 	}
-	if len(body.Traders) != 1 || body.Traders[0].TraderID != "mine" {
+	if len(body.Traders) != 1 || body.Traders[0].TraderID != mine.ID {
 		t.Fatalf("traders: %+v", body.Traders)
 	}
-	if body.RealizedToday == nil || *body.RealizedToday != 12.5 {
+	if body.RealizedToday == nil || *body.RealizedToday != 15 {
 		t.Fatalf("realized today: %v", body.RealizedToday)
-	}
-	if body.PositionsPartial {
-		t.Fatal("with no account, there is nothing left unread")
 	}
 }
 
 func TestOverviewAccountThatCannotBeReadIsNotReportedAsEmpty(t *testing.T) {
 	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
-	exchange := &store.Exchange{ID: "bad", UserID: "alice", ExchangeType: "binance", Name: "Bad", Enabled: true}
+	exchange := &store.Exchange{ID: "bad", UserID: "alice", ExchangeType: "binance", AccountName: "Bad"}
 	s := &Server{store: st, traderManager: manager.NewTraderManager(), exchangeAccountStateCache: NewExchangeAccountStateCache()}
 	s.exchangeAccountStateCache.Set("alice", map[string]ExchangeAccountState{
 		"bad": {ExchangeID: "bad", Status: exchangeAccountStatusInvalidCredentials, ErrorMessage: "invalid"},
@@ -138,6 +154,54 @@ func TestOverviewAccountThatCannotBeReadIsNotReportedAsEmpty(t *testing.T) {
 		t.Fatalf("an unread account looked empty: ready=%d partial=%v", len(ready), out.PositionsPartial)
 	}
 	if len(out.Attention) != 1 || out.Attention[0].Kind != "account_invalid_credentials" {
+		t.Fatalf("attention: %+v", out.Attention)
+	}
+}
+
+func TestOverviewNamesTradesTheLedgerIsMissing(t *testing.T) {
+	st := storetest.New(t)
+	t.Cleanup(func() { _ = st.Close() })
+	ledger := storetest.NewLedger(t, st)
+	s := &Server{store: st}
+
+	var out overviewResponse
+	s.addOverviewSkippedFills(storetest.UserID, &out)
+	if len(out.Attention) != 0 {
+		t.Fatalf("attention with nothing missing: %+v", out.Attention)
+	}
+
+	record := func(id string, at time.Time) {
+		t.Helper()
+		fill := &store.SkippedFill{AccountID: ledger.Account, NativeSymbol: "OLD-USDT-SWAP", ExchangeTradeID: id, Detail: "sell 7 contracts at 3: gone", ExecutedAt: at}
+		if _, err := st.Ledger().RecordSkippedFill(fill); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.GormDB().Model(fill).Update("recorded_at", at).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	record("old", time.Now().Add(-skippedFillsShownFor-time.Hour))
+	s.addOverviewSkippedFills(storetest.UserID, &out)
+	if len(out.Attention) != 0 {
+		t.Fatalf("an old one is still shown: %+v", out.Attention)
+	}
+
+	record("t1", time.Now())
+	s.addOverviewSkippedFills(storetest.UserID, &out)
+	if len(out.Attention) != 1 || out.Attention[0].Kind != "account_fill_skipped" || out.Attention[0].Name != "OLD-USDT-SWAP" {
+		t.Fatalf("attention: %+v", out.Attention)
+	}
+	if out.Attention[0].Detail != "trade t1: sell 7 contracts at 3: gone" {
+		t.Fatalf("detail: %s", out.Attention[0].Detail)
+	}
+
+	// However many there are, they share one row and say there are more.
+	for i := range skippedFillsSpelled + 2 {
+		record(fmt.Sprintf("more-%d", i), time.Now())
+	}
+	out = overviewResponse{}
+	s.addOverviewSkippedFills(storetest.UserID, &out)
+	if len(out.Attention) != 1 || !strings.HasSuffix(out.Attention[0].Detail, "and more") {
 		t.Fatalf("attention: %+v", out.Attention)
 	}
 }

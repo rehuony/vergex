@@ -1,15 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Page } from '@/components/common/page'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { FAQSearchBar } from './faq-search-bar'
 import { FAQSidebar } from './faq-sidebar'
 import { FAQContent } from './faq-content'
-import {
-  faqCategories,
-  type FAQCategory,
-  type FAQItem,
-} from '@/i18n/faq-translations'
+import { faqCategories, type FAQCategory, type FAQItem } from '@/i18n'
 import { Button } from '@/components/ui/button'
 
 /** Plain text of an item, used by the search filter. */

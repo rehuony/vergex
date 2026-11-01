@@ -1,14 +1,14 @@
 package trader
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"sync"
 	"time"
-	"vergex/internal/kernel"
 	"vergex/internal/logger"
 	"vergex/internal/market"
 	"vergex/internal/store"
+	"vergex/internal/trader/agent"
 )
 
 // ============================================================================
@@ -23,7 +23,7 @@ type GridState struct {
 	Config *store.GridStrategyConfig
 
 	// Grid levels
-	Levels []kernel.GridLevelInfo
+	Levels []agent.GridLevelInfo
 
 	// Calculated bounds
 	UpperPrice  float64
@@ -75,7 +75,7 @@ type GridState struct {
 func NewGridState(config *store.GridStrategyConfig) *GridState {
 	return &GridState{
 		Config:           config,
-		Levels:           make([]kernel.GridLevelInfo, 0),
+		Levels:           make([]agent.GridLevelInfo, 0),
 		OrderBook:        make(map[string]int),
 		CurrentDirection: market.GridDirectionNeutral,
 	}
@@ -267,7 +267,7 @@ func (at *AutoTrader) handleBreakout(breakoutType BreakoutType, breakoutPct floa
 	// If breakout is minor (< 2%), consider adjusting grid
 	if breakoutPct >= 1.0 {
 		logger.Infof("[Grid] Minor breakout (%.2f%%), considering grid adjustment", breakoutPct)
-		// Let AI decide whether to adjust
+		// Let agent decide whether to adjust
 	}
 
 	return nil
@@ -413,8 +413,9 @@ func (at *AutoTrader) RunGridCycle() error {
 		return fmt.Errorf("failed to build grid context: %w", err)
 	}
 
-	// Get AI decisions
-	decision, err := kernel.GetGridDecisions(gridCtx, at.llmClient, gridConfig, lang)
+	// Get agent decisions
+	decision, err := agent.GetGridDecisions(gridCtx, at.agentClient, gridConfig, lang, at.openConversation)
+	at.keepConversation(decision)
 	if err != nil {
 		return fmt.Errorf("failed to get grid decisions: %w", err)
 	}
@@ -453,8 +454,8 @@ func (at *AutoTrader) RunGridCycle() error {
 	return nil
 }
 
-// buildGridContext builds the context for AI grid decisions
-func (at *AutoTrader) buildGridContext() (*kernel.GridContext, error) {
+// buildGridContext builds the context for agent grid decisions
+func (at *AutoTrader) buildGridContext() (*agent.GridContext, error) {
 	gridConfig := at.config.StrategyConfig.GridConfig
 
 	// Get market data
@@ -464,7 +465,7 @@ func (at *AutoTrader) buildGridContext() (*kernel.GridContext, error) {
 	}
 
 	// Build base context from market data
-	ctx := kernel.BuildGridContextFromMarketData(mktData, gridConfig)
+	ctx := agent.BuildGridContextFromMarketData(mktData, gridConfig)
 
 	// Add grid state
 	at.gridState.mu.RLock()
@@ -519,7 +520,7 @@ func (at *AutoTrader) buildGridContext() (*kernel.GridContext, error) {
 }
 
 // executeGridDecision executes a single grid decision
-func (at *AutoTrader) executeGridDecision(d *kernel.Decision) error {
+func (at *AutoTrader) executeGridDecision(d *agent.Decision) error {
 	switch d.Action {
 	case "place_buy_limit":
 		return at.placeGridLimitOrder(d, "BUY")
@@ -560,7 +561,7 @@ func (at *AutoTrader) IsGridStrategy() bool {
 }
 
 // saveGridDecisionRecord saves the grid decision to database
-func (at *AutoTrader) saveGridDecisionRecord(decision *kernel.FullDecision) {
+func (at *AutoTrader) saveGridDecisionRecord(decision *agent.FullDecision) {
 	if at.store == nil {
 		return
 	}
@@ -568,43 +569,37 @@ func (at *AutoTrader) saveGridDecisionRecord(decision *kernel.FullDecision) {
 	at.cycleNumber++
 
 	record := &store.DecisionRecord{
-		TraderID:            at.id,
-		CycleNumber:         at.cycleNumber,
-		Timestamp:           time.Now().UTC(),
-		SystemPrompt:        decision.SystemPrompt,
-		InputPrompt:         decision.UserPrompt,
-		CoTTrace:            decision.CoTTrace,
-		RawResponse:         decision.RawResponse,
-		AIRequestDurationMs: decision.AIRequestDurationMs,
-		Success:             true,
+		TraderID:        at.id,
+		CycleNumber:     at.cycleNumber,
+		Timestamp:       time.Now().UTC(),
+		ConversationID:  decision.ConversationID,
+		AgentDurationMs: decision.AgentDurationMs,
+		Success:         true,
 	}
 
-	if len(decision.Decisions) > 0 {
-		decisionJSON, _ := json.MarshalIndent(decision.Decisions, "", "  ")
-		record.DecisionJSON = string(decisionJSON)
-
-		// Convert kernel.Decision to store.DecisionAction for frontend display
-		for _, d := range decision.Decisions {
-			actionRecord := store.DecisionAction{
-				Action:     d.Action,
-				Symbol:     d.Symbol,
-				Quantity:   d.Quantity,
-				Leverage:   d.Leverage,
-				Price:      d.Price,
-				StopLoss:   d.StopLoss,
-				TakeProfit: d.TakeProfit,
-				Confidence: d.Confidence,
-				Reasoning:  d.Reasoning,
-				Timestamp:  time.Now().UTC(),
-				Success:    true, // Grid decisions are executed inline
-			}
-			record.Decisions = append(record.Decisions, actionRecord)
+	// Convert agent.Decision to store.DecisionAction for frontend display
+	for _, d := range decision.Decisions {
+		actionRecord := store.DecisionAction{
+			Action:     d.Action,
+			Symbol:     d.Symbol,
+			Quantity:   d.Quantity,
+			Leverage:   d.Leverage,
+			Price:      d.Price,
+			StopLoss:   d.StopLoss,
+			TakeProfit: d.TakeProfit,
+			Confidence: d.Confidence,
+			Reasoning:  d.Reasoning,
+			Timestamp:  time.Now().UTC(),
+			Success:    true, // Grid decisions are executed inline
 		}
+		record.Decisions = append(record.Decisions, actionRecord)
 	}
 
 	record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf("Grid cycle completed with %d decisions", len(decision.Decisions)))
 
-	if err := at.store.Decision().LogDecision(record); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), cycleSaveWait)
+	defer cancel()
+	if err := at.store.Decision().WithContext(ctx).LogDecision(record); err != nil {
 		logger.Warnf("[Grid] Failed to save decision record: %v", err)
 	}
 }

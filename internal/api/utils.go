@@ -39,9 +39,7 @@ func SanitizeModelConfigForLog(models map[string]ModelConfigUpdate) map[string]i
 func SanitizeExchangeConfigForLog(exchanges map[string]ExchangeConfigUpdate) map[string]interface{} {
 	safe := make(map[string]interface{})
 	for exchangeID, cfg := range exchanges {
-		safeExchange := map[string]interface{}{
-			"enabled": cfg.Enabled,
-		}
+		safeExchange := map[string]interface{}{}
 
 		// Only add masked sensitive fields when they have values
 		if cfg.APIKey != "" {

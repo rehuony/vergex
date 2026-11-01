@@ -1,6 +1,6 @@
-# AI models
+# Models
 
-Models are called directly with your own API key. Nothing goes through a gateway. Add them in **Settings → AI models**.
+Models are called directly with your own API key. Nothing goes through a gateway. Add them in **Settings → Models**.
 
 ## Providers
 
@@ -15,7 +15,7 @@ Models are called directly with your own API key. Nothing goes through a gateway
 | Kimi | `https://api.moonshot.ai/v1` | `moonshot-v1-auto` |
 | MiniMax | `https://api.minimax.io/v1` | `MiniMax-M2.7` |
 
-The defaults live in `internal/llm/`. Leave the base URL and model name empty to use them.
+The defaults live in `internal/agent/`. Leave the base URL and model name empty to use them.
 
 ## Custom endpoints
 
@@ -30,7 +30,7 @@ Use the test button in the model form to check a configuration before saving it.
 
 ## Costs
 
-Token usage of every call is stored locally and priced from the public [models.dev](https://models.dev) list, cached in `data/` and refreshed daily. **Settings → AI costs** shows the estimate per model, for all traders or one. Models without a published price, such as custom model names, are shown as unpriced.
+Every call is stored locally in `agent.calls`, failed attempts included, with its tokens, time and any error (never the API key). Tokens are priced from the public [models.dev](https://models.dev) list, cached in `data/` and refreshed daily. **Settings → Agent costs** shows the estimate per model, for all traders or one. Models without a published price, such as custom model names, are shown as unpriced.
 
 ## Which models see what
 

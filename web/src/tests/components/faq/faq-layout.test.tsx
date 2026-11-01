@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { faqCategories } from '@/i18n/faq-translations'
+import { faqCategories } from '@/i18n'
 import { FAQLayout } from '@/components/faq/faq-layout'
 
 vi.mock('@/contexts/language-context', () => ({

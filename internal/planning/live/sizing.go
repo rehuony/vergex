@@ -4,7 +4,7 @@ import (
 	"errors"
 	"math/big"
 	"vergex/internal/planning/core"
-	"vergex/internal/trader/execution"
+	"vergex/internal/trading"
 )
 
 // AccountLimits derives exact budgets from a fresh Vergex account snapshot.
@@ -50,7 +50,7 @@ func AccountLimits(a Account, c core.Constraints) (core.Constraints, error) {
 // free margin. Equity is a reference budget, never spendable collateral. The
 // preview flag and actual available margin are persisted in the plan hash.
 func DraftAccountLimits(a Account, c core.Constraints) (core.Constraints, error) {
-	available, err := execution.Number(string(a.Available))
+	available, err := trading.Number(string(a.Available))
 	if err != nil || !core.Positive(a.Equity) {
 		return c, errors.New("Could not verify account equity and available margin for planning. Refresh the account or explore without an account.")
 	}

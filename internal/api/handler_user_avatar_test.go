@@ -13,9 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"vergex/internal/store"
 	"vergex/internal/store/storetest"
+
+	"github.com/gin-gonic/gin"
 )
 
 func encodePNG(t *testing.T, img image.Image) []byte {
@@ -30,14 +31,14 @@ func encodePNG(t *testing.T, img image.Image) []byte {
 func TestAvatarUploadsAreRedrawnAndRejectNonImages(t *testing.T) {
 	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
-	if err := st.User().Create(&store.User{ID: "owner", Email: "owner@example.test", PasswordHash: "x"}); err != nil {
+	if err := st.User().Create(&store.User{ID: storetest.UserID, Email: "owner@example.test", PasswordHash: "x"}); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 
 	s := &Server{store: st}
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(func(c *gin.Context) { c.Set("user_id", "owner") })
+	r.Use(func(c *gin.Context) { c.Set("user_id", storetest.UserID) })
 	r.GET("/user/profile", s.handleGetProfile)
 	r.PUT("/user/avatar", s.handleUpdateAvatar)
 	r.DELETE("/user/avatar", s.handleRemoveAvatar)

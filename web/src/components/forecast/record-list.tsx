@@ -1,7 +1,7 @@
 import type { ForecastRecord } from '@/api/forecast'
 import { Panel, PanelState } from '@/components/common/panel'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { DirectionLabel, fmtPct, fmtTime, scoreText } from './forecast-format'
 

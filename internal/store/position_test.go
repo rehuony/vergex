@@ -3,113 +3,60 @@ package store
 import (
 	"testing"
 	"time"
-
-	"vergex/internal/testdb"
 )
 
+// position books one through the ledger, closed unless closedAt is zero.
+func (f *ledgerFixture) position(traderID string, instrumentID int64, openedAt, closedAt time.Time) {
+	f.t.Helper()
+	owner := Owner{Source: SourceTrader, SourceID: traderID}
+	open := f.trade(SideBuy, SideLong, "1", "100")
+	open.InstrumentID, open.ExecutedAt = instrumentID, openedAt
+	f.record(open, owner)
+	if closedAt.IsZero() {
+		return
+	}
+	closing := f.trade(SideSell, SideLong, "1", "101")
+	closing.InstrumentID, closing.ExecutedAt = instrumentID, closedAt
+	f.record(closing, owner)
+}
+
 func TestGetOpenPositionBySymbolMatchesSideCaseInsensitively(t *testing.T) {
-	db := testdb.Open(t)
+	f := newLedgerFixture(t)
+	openedAt := time.Now().Add(-5 * time.Minute).Truncate(time.Millisecond)
+	f.position("trader-1", f.btc, openedAt, time.Time{})
 
-	positions := NewPositionStore(db)
-	if err := positions.InitTables(); err != nil {
-		t.Fatalf("init position table: %v", err)
-	}
-
-	entryTime := time.Now().Add(-5 * time.Minute).UnixMilli()
-	if err := positions.Create(&TraderPosition{
-		TraderID:   "trader-1",
-		Symbol:     "AAVEUSDT",
-		Side:       "LONG",
-		Quantity:   0.27,
-		EntryPrice: 88.519,
-		EntryTime:  entryTime,
-	}); err != nil {
-		t.Fatalf("create position: %v", err)
-	}
-
-	got, err := positions.GetOpenPositionBySymbol("trader-1", "AAVEUSDT", "long")
+	got, err := NewPositionStore(f.db).GetOpenPositionBySymbol("trader-1", "BTCUSDT", "LONG")
 	if err != nil {
 		t.Fatalf("get open position: %v", err)
 	}
 	if got == nil {
 		t.Fatal("expected open position")
 	}
-	if got.EntryTime != entryTime {
-		t.Fatalf("entry time mismatch: got %d want %d", got.EntryTime, entryTime)
+	if got.EntryTime != openedAt.UnixMilli() || got.Status != "OPEN" || got.Side != "LONG" {
+		t.Fatalf("position = %+v", got)
+	}
+	if none, err := NewPositionStore(f.db).GetOpenPositionBySymbol("trader-1", "BTCUSDT", "short"); err != nil || none != nil {
+		t.Fatalf("short = %+v, err %v", none, err)
 	}
 }
 
 func TestClosedPositionQueriesScopeToOneTrader(t *testing.T) {
-	db := testdb.Open(t)
+	f := newLedgerFixture(t)
+	now := time.Now()
+	f.position("current-trader", f.btc, now.Add(-3*time.Minute), now.Add(-2*time.Minute))
+	f.position("other-trader", f.eth, now.Add(-5*time.Minute), now.Add(-4*time.Minute))
 
-	positions := NewPositionStore(db)
-	if err := positions.InitTables(); err != nil {
-		t.Fatalf("init position table: %v", err)
-	}
-
-	now := time.Now().UnixMilli()
-	rows := []*TraderPosition{
-		{
-			TraderID:     "current-trader",
-			Symbol:       "SOLUSDT",
-			Side:         "LONG",
-			Quantity:     1,
-			EntryPrice:   100,
-			EntryTime:    now - 3000,
-			ExitPrice:    101,
-			ExitTime:     now - 2000,
-			RealizedPnL:  1,
-			Status:       "CLOSED",
-			CreatedAt:    now - 3000,
-			UpdatedAt:    now - 2000,
-			CloseReason:  "sync",
-			ExchangeType: "binance",
-		},
-		{
-			TraderID:     "other-trader",
-			Symbol:       "AAVEUSDT",
-			Side:         "LONG",
-			Quantity:     2,
-			EntryPrice:   50,
-			EntryTime:    now - 5000,
-			ExitPrice:    49,
-			ExitTime:     now - 4000,
-			RealizedPnL:  -2,
-			Status:       "CLOSED",
-			CreatedAt:    now - 5000,
-			UpdatedAt:    now - 4000,
-			CloseReason:  "sync",
-			ExchangeType: "binance",
-		},
-		{
-			TraderID:     "third-trader",
-			Symbol:       "LITUSDT",
-			Side:         "LONG",
-			Quantity:     3,
-			EntryPrice:   10,
-			EntryTime:    now - 7000,
-			ExitPrice:    12,
-			ExitTime:     now - 6000,
-			RealizedPnL:  6,
-			Status:       "CLOSED",
-			CreatedAt:    now - 7000,
-			UpdatedAt:    now - 6000,
-			CloseReason:  "sync",
-			ExchangeType: "binance",
-		},
-	}
-	for _, row := range rows {
-		if err := db.Create(row).Error; err != nil {
-			t.Fatalf("create position: %v", err)
-		}
-	}
-
+	positions := NewPositionStore(f.db)
 	got, err := positions.GetClosedPositions("current-trader", 100)
 	if err != nil {
 		t.Fatalf("get closed positions: %v", err)
 	}
 	if len(got) != 1 || got[0].TraderID != "current-trader" {
 		t.Fatalf("expected only the current trader's position, got %d", len(got))
+	}
+	// A closed position still says how much it held.
+	if got[0].Quantity != 1 || got[0].EntryQuantity != 1 || got[0].Status != "CLOSED" || got[0].ExitPrice != 101 {
+		t.Fatalf("position = %+v", got[0])
 	}
 
 	stats, err := positions.GetFullStats("current-trader", 0)
@@ -118,6 +65,40 @@ func TestClosedPositionQueriesScopeToOneTrader(t *testing.T) {
 	}
 	if stats.TotalTrades != 1 || stats.TotalPnL != 1 {
 		t.Fatalf("unexpected stats: trades=%d pnl=%.2f", stats.TotalTrades, stats.TotalPnL)
+	}
+	recent, err := positions.GetRecentTrades("current-trader", 10)
+	if err != nil || len(recent) != 1 || recent[0].Side != "long" || recent[0].PnLPct != 1 {
+		t.Fatalf("recent = %+v, err %v", recent, err)
+	}
+}
+
+func TestAnOrderReadsAsItWasPlaced(t *testing.T) {
+	f := newLedgerFixture(t)
+	f.record(f.trade(SideBuy, SideLong, "1", "100"), traderOwner)
+	f.record(f.trade(SideSell, "", "1", "110"), traderOwner)
+
+	orders, err := NewOrderStore(f.db).GetTraderOrders("t1", 10)
+	if err != nil || len(orders) != 2 {
+		t.Fatalf("orders = %d, err %v", len(orders), err)
+	}
+	closing, opening := orders[0], orders[1]
+	if opening.OrderAction != "open_long" || opening.Side != "BUY" || opening.PositionSide != "LONG" || opening.Status != OrderFilled {
+		t.Errorf("opening = %+v", opening)
+	}
+	// One-way mode has no position side to go by.
+	if closing.OrderAction != "close_long" || closing.PositionSide != "" {
+		t.Errorf("closing = %+v", closing)
+	}
+	if opening.Commission != 0.5 || opening.CommissionAsset != "USDT" || opening.AvgFillPrice != 100 || opening.Symbol != "BTCUSDT" {
+		t.Errorf("opening = %+v", opening)
+	}
+
+	fills, err := NewOrderStore(f.db).GetOrderFills("t1", opening.ID)
+	if err != nil || len(fills) != 1 || fills[0].Price != 100 || fills[0].Side != "BUY" {
+		t.Fatalf("fills = %+v, err %v", fills, err)
+	}
+	if fills, err := NewOrderStore(f.db).GetOrderFills("t2", opening.ID); err != nil || len(fills) != 0 {
+		t.Fatalf("another trader read fills: %+v, err %v", fills, err)
 	}
 }
 
@@ -142,21 +123,16 @@ func TestCalculateMaxDrawdownUsesRealBaseline(t *testing.T) {
 }
 
 func TestClosedPositionPagesCoverEverythingOnceEvenWithEqualTimes(t *testing.T) {
-	db := testdb.Open(t)
-	positions := NewPositionStore(db)
-	if err := positions.InitTables(); err != nil {
-		t.Fatalf("init position table: %v", err)
+	f := newLedgerFixture(t)
+	closedAt := time.UnixMilli(1_700_000_000_000).UTC()
+	for _, exit := range []time.Time{closedAt, closedAt, closedAt, closedAt.Add(time.Millisecond), closedAt.Add(-time.Millisecond)} {
+		f.position("t1", f.btc, closedAt.Add(-time.Hour), exit)
 	}
-	const closedAt = int64(1_700_000_000_000)
-	for i, exit := range []int64{closedAt, closedAt, closedAt, closedAt + 1, closedAt - 1} {
-		position := &TraderPosition{TraderID: "t1", Symbol: "BTCUSDT", Side: "LONG", Status: "CLOSED", Quantity: 1, EntryPrice: 1, EntryTime: closedAt - 1000, ExitTime: exit, CreatedAt: int64(i)}
-		if err := db.Create(position).Error; err != nil {
-			t.Fatal(err)
-		}
-	}
-	other := &TraderPosition{TraderID: "t2", Symbol: "BTCUSDT", Side: "LONG", Status: "CLOSED", Quantity: 1, EntryPrice: 1, EntryTime: closedAt - 1000, ExitTime: closedAt}
-	if err := db.Create(other).Error; err != nil {
-		t.Fatal(err)
+	f.position("t2", f.btc, closedAt.Add(-time.Hour), closedAt)
+	positions := NewPositionStore(f.db)
+	others, err := positions.GetClosedPositions("t2", 1)
+	if err != nil || len(others) != 1 {
+		t.Fatalf("other trader = %+v, err %v", others, err)
 	}
 
 	page, err := positions.GetClosedPositions("t1", 2)
@@ -185,7 +161,7 @@ func TestClosedPositionPagesCoverEverythingOnceEvenWithEqualTimes(t *testing.T) 
 		t.Fatalf("pages covered %d positions, want 5", len(seen))
 	}
 
-	if _, err := positions.GetClosedPositionsBefore("t1", other.ID, 2); err == nil {
+	if _, err := positions.GetClosedPositionsBefore("t1", others[0].ID, 2); err == nil {
 		t.Fatal("another trader's position was accepted as a place to continue from")
 	}
 }

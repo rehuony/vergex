@@ -1,13 +1,13 @@
 import { useState, useEffect } from 'react'
 import type {
-  AIModel,
+  AgentModel,
   Exchange,
   CreateTraderRequest,
   Strategy,
   TraderConfigData,
 } from '@/types'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { coinSourceLabel } from '@/utils/coin-sources'
 import { Sparkles } from 'lucide-react'
 import { Dialog } from '@/components/common/dialog'
@@ -21,9 +21,9 @@ function getShortName(fullName: string): string {
   return parts.length > 1 ? parts[parts.length - 1] : fullName
 }
 
-function getStrategyAIConfig(strategy: Strategy) {
+function getStrategyAgentConfig(strategy: Strategy) {
   return (
-    strategy.config.ai_config ||
+    strategy.config.agent_config ||
     (strategy.config.coin_source && strategy.config.risk_control
       ? {
           coin_source: strategy.config.coin_source,
@@ -37,7 +37,7 @@ function getStrategyAIConfig(strategy: Strategy) {
 interface FormState {
   trader_id?: string
   trader_name: string
-  ai_model: string
+  agent_model: string
   exchange_id: string
   strategy_id: string
   is_cross_margin: boolean
@@ -49,7 +49,7 @@ interface TraderConfigModalProps {
   onClose: () => void
   traderData?: TraderConfigData | null
   isEditMode?: boolean
-  availableModels?: AIModel[]
+  availableModels?: AgentModel[]
   availableExchanges?: Exchange[]
   onSave?: (data: CreateTraderRequest) => Promise<void>
 }
@@ -66,7 +66,7 @@ export function TraderConfigModal({
   const { language } = useLanguage()
   const [formData, setFormData] = useState<FormState>({
     trader_name: '',
-    ai_model: '',
+    agent_model: '',
     exchange_id: '',
     strategy_id: '',
     is_cross_margin: true,
@@ -119,7 +119,7 @@ export function TraderConfigModal({
     } else if (!isEditMode) {
       setFormData({
         trader_name: '',
-        ai_model: availableModels[0]?.id || '',
+        agent_model: availableModels[0]?.id || '',
         exchange_id: availableExchanges[0]?.id || '',
         strategy_id: '',
         is_cross_margin: true,
@@ -145,7 +145,7 @@ export function TraderConfigModal({
     try {
       const saveData: CreateTraderRequest = {
         name: formData.trader_name,
-        ai_model_id: formData.ai_model,
+        agent_model_id: formData.agent_model,
         exchange_id: formData.exchange_id,
         strategy_id: formData.strategy_id,
         is_cross_margin: formData.is_cross_margin,
@@ -185,7 +185,7 @@ export function TraderConfigModal({
               disabled={
                 isSaving ||
                 !formData.trader_name ||
-                !formData.ai_model ||
+                !formData.agent_model ||
                 !formData.exchange_id
               }
             >
@@ -224,11 +224,11 @@ export function TraderConfigModal({
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-sm text-vergex-text block mb-2">
-                  {t('aiModelRequired', language)}
+                  {t('agentModelRequired', language)}
                 </label>
                 <AppSelect
-                  value={formData.ai_model}
-                  onChange={(val) => handleInputChange('ai_model', val)}
+                  value={formData.agent_model}
+                  onChange={(val) => handleInputChange('agent_model', val)}
                   className="w-full px-3 py-2 bg-vergex-bg-lighter border border-[var(--line)] rounded-sm text-vergex-text"
                   options={availableModels.map((model) => ({
                     value: model.id,
@@ -282,12 +282,7 @@ export function TraderConfigModal({
                     value: strategy.id,
                     label:
                       strategy.name +
-                      (strategy.is_active
-                        ? t('strategyActive', language)
-                        : '') +
-                      (strategy.is_default
-                        ? t('strategyDefault', language)
-                        : ''),
+                      (strategy.is_active ? t('strategyActive', language) : ''),
                   })),
                 ]}
               />
@@ -312,39 +307,38 @@ export function TraderConfigModal({
                   )}
                 </div>
                 <p className="text-sm text-vergex-text-muted mb-2">
-                  {selectedStrategy.description ||
-                    (language === 'zh' ? 'No description' : 'No description')}
+                  {selectedStrategy.description || t('noDescription', language)}
                 </p>
                 {selectedStrategy.config.strategy_type === 'grid_trading' &&
                 selectedStrategy.config.grid_config ? (
                   <div className="grid grid-cols-2 gap-2 text-xs text-vergex-text-muted">
                     <div>
-                      {language === 'zh' ? 'Symbol' : 'Symbol'}:{' '}
+                      {t('symbol', language)}:{' '}
                       {selectedStrategy.config.grid_config.symbol || '-'}
                     </div>
                     <div>
-                      {language === 'zh' ? 'Grids' : 'Grids'}:{' '}
+                      {t('gridCount', language)}:{' '}
                       {selectedStrategy.config.grid_config.grid_count}
                     </div>
                   </div>
                 ) : (
                   (() => {
-                    const aiConfig = getStrategyAIConfig(selectedStrategy)
-                    if (!aiConfig) return null
+                    const agentConfig = getStrategyAgentConfig(selectedStrategy)
+                    if (!agentConfig) return null
                     return (
                       <div className="grid grid-cols-2 gap-2 text-xs text-vergex-text-muted">
                         <div>
                           {t('coinSource', language)}:{' '}
                           {coinSourceLabel(
-                            aiConfig.coin_source.source_type,
+                            agentConfig.coin_source.source_type,
                             language
                           )}
                         </div>
                         <div>
                           {t('marginLimit', language)}:{' '}
                           {(
-                            (aiConfig.risk_control?.max_margin_usage || 0.9) *
-                            100
+                            (agentConfig.risk_control?.max_margin_usage ||
+                              0.9) * 100
                           ).toFixed(0)}
                           %
                         </div>
@@ -392,7 +386,7 @@ export function TraderConfigModal({
               </div>
               <div>
                 <label className="text-sm text-vergex-text block mb-2">
-                  {t('aiScanInterval', language)}
+                  {t('agentScanInterval', language)}
                 </label>
                 <input
                   type="number"

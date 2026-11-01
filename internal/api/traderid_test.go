@@ -9,10 +9,10 @@ import (
 )
 
 // TestTraderIDUniqueness Test traderID uniqueness (fixes Issue #893)
-// Verify that unique traderIDs can be generated even with the same exchange and AI model
+// Verify that unique traderIDs can be generated even with the same exchange and model
 func TestTraderIDUniqueness(t *testing.T) {
 	exchangeID := "binance"
-	aiModelID := "gpt-4"
+	agentModelID := "gpt-4"
 
 	// Simulate creating 100 traders simultaneously (with same parameters)
 	traderIDs := make(map[string]bool)
@@ -20,7 +20,7 @@ func TestTraderIDUniqueness(t *testing.T) {
 
 	for i := 0; i < numTraders; i++ {
 		// Simulate traderID generation logic from api/server.go:497
-		traderID := generateTraderID(exchangeID, aiModelID)
+		traderID := generateTraderID(exchangeID, agentModelID)
 
 		// Check for duplicates
 		if traderIDs[traderID] {
@@ -29,7 +29,7 @@ func TestTraderIDUniqueness(t *testing.T) {
 		traderIDs[traderID] = true
 
 		// Verify format: should be "exchange_model_uuid"
-		if !isValidTraderIDFormat(traderID, exchangeID, aiModelID) {
+		if !isValidTraderIDFormat(traderID, exchangeID, agentModelID) {
 			t.Errorf("Invalid traderID format: %s", traderID)
 		}
 	}
@@ -41,8 +41,8 @@ func TestTraderIDUniqueness(t *testing.T) {
 }
 
 // generateTraderID Helper function that simulates traderID generation logic from api/server.go
-func generateTraderID(exchangeID, aiModelID string) string {
-	return fmt.Sprintf("%s_%s_%s", exchangeID, aiModelID, uuid.New().String())
+func generateTraderID(exchangeID, agentModelID string) string {
+	return fmt.Sprintf("%s_%s_%s", exchangeID, agentModelID, uuid.New().String())
 }
 
 // isValidTraderIDFormat Verify traderID format matches expected format
@@ -59,7 +59,7 @@ func isValidTraderIDFormat(traderID, expectedExchange, expectedModel string) boo
 		return false
 	}
 
-	// AI model may contain hyphens (e.g. gpt-4), so need to reconstruct
+	// model may contain hyphens (e.g. gpt-4), so need to reconstruct
 	// Last part should be UUID
 	uuidPart := parts[len(parts)-1]
 
@@ -71,9 +71,9 @@ func isValidTraderIDFormat(traderID, expectedExchange, expectedModel string) boo
 // TestTraderIDFormat Test traderID format correctness
 func TestTraderIDFormat(t *testing.T) {
 	tests := []struct {
-		name       string
-		exchangeID string
-		aiModelID  string
+		name         string
+		exchangeID   string
+		agentModelID string
 	}{
 		{"Binance + GPT-4", "binance", "gpt-4"},
 		{"OKX + Qwen", "okx", "qwen-2.5"},
@@ -81,20 +81,20 @@ func TestTraderIDFormat(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			traderID := generateTraderID(tt.exchangeID, tt.aiModelID)
+			traderID := generateTraderID(tt.exchangeID, tt.agentModelID)
 
 			// Verify correct prefix
-			if !strings.HasPrefix(traderID, tt.exchangeID+"_"+tt.aiModelID+"_") {
+			if !strings.HasPrefix(traderID, tt.exchangeID+"_"+tt.agentModelID+"_") {
 				t.Errorf("traderID does not have correct prefix. Got: %s", traderID)
 			}
 
 			// Verify format is valid
-			if !isValidTraderIDFormat(traderID, tt.exchangeID, tt.aiModelID) {
+			if !isValidTraderIDFormat(traderID, tt.exchangeID, tt.agentModelID) {
 				t.Errorf("Invalid traderID format: %s", traderID)
 			}
 
 			// Verify reasonable length (should be at least exchange + model + "_" + UUID(36))
-			minLength := len(tt.exchangeID) + len(tt.aiModelID) + 2 + 36 // 2 underscores + 36 character UUID
+			minLength := len(tt.exchangeID) + len(tt.agentModelID) + 2 + 36 // 2 underscores + 36 character UUID
 			if len(traderID) < minLength {
 				t.Errorf("traderID too short: expected at least %d chars, got %d", minLength, len(traderID))
 			}

@@ -15,19 +15,20 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"vergex/internal/llm"
+	"vergex/internal/agent"
+	"vergex/internal/exchange/binance"
+	"vergex/internal/exchange/okx"
+	"vergex/internal/logger"
 	"vergex/internal/planning"
+	planningagent "vergex/internal/planning/agent"
+	"vergex/internal/planning/agent/model"
 	"vergex/internal/planning/core"
 	"vergex/internal/planning/forge"
-	"vergex/internal/planning/harness"
 	"vergex/internal/planning/instrument"
 	"vergex/internal/planning/live"
 	"vergex/internal/planning/market"
-	"vergex/internal/planning/model"
 	"vergex/internal/planning/plugins"
 	"vergex/internal/store"
-	"vergex/internal/trader/binance"
-	"vergex/internal/trader/okx"
 )
 
 type planningBrokerCache struct {
@@ -62,22 +63,15 @@ func (s *Server) planningService() (*planningServices, error) {
 		}
 		source := market.New()
 		p := &planningServices{source: source, feedSlots: make(chan struct{}, 16)}
-		controller, e := live.New(s.store.GormDB(), s.planningBroker, source)
+		controller, e := live.New(s.store, s.planningBroker, source)
 		if e != nil {
 			s.planningError = e
 			return
 		}
 		p.live = controller
-		if e = s.store.GormDB().AutoMigrate(&planning.Conversation{}, &planning.Preferences{}, &accountCloseIntent{}); e != nil {
-			s.planningError = e
-			return
-		}
 		s.planning = p
 	})
 	return s.planning, s.planningError
-}
-func accountKey(e *store.Exchange) string {
-	return planning.AccountIdentity(e.ExchangeType, string(e.APIKey))
 }
 
 func (s *Server) planningBroker(ctx context.Context, user, id string) (live.Broker, string, error) {
@@ -109,7 +103,7 @@ func (s *Server) planningBroker(ctx context.Context, user, id string) (live.Brok
 		if cached, ok := s.planning.brokers.Load(user + "/" + id); ok {
 			v := cached.(planningBrokerCache)
 			if v.stamp == stamp && time.Since(v.created) < 5*time.Minute {
-				return v.broker, accountKey(ex), nil
+				return v.broker, ex.Identity, nil
 			}
 		}
 	}
@@ -119,7 +113,7 @@ func (s *Server) planningBroker(ctx context.Context, user, id string) (live.Brok
 		}
 		return b, key, nil
 	}
-	key := accountKey(ex)
+	key := ex.Identity
 	switch ex.ExchangeType {
 	case "binance":
 		if ex.APIKey == "" || ex.SecretKey == "" {
@@ -129,20 +123,20 @@ func (s *Server) planningBroker(ctx context.Context, user, id string) (live.Brok
 		if err != nil {
 			return nil, "", err
 		}
-		return cache(live.TraderBroker{Trader: t}, key)
+		return cache(live.TraderBroker{Executor: t}, key)
 	case "okx":
 		if ex.APIKey == "" || ex.SecretKey == "" || ex.Passphrase == "" {
 			return nil, "", errors.New("Connect the exchange API key, secret and passphrase in Vergex first")
 		}
-		return cache(live.TraderBroker{Trader: okx.NewAccountTrader(string(ex.APIKey), string(ex.SecretKey), string(ex.Passphrase))}, key)
+		return cache(live.TraderBroker{Executor: okx.NewAccountTrader(string(ex.APIKey), string(ex.SecretKey), string(ex.Passphrase))}, key)
 	default:
 		return nil, "", errors.New("This exchange is not supported by Frontier; no exchange fallback is allowed")
 	}
 }
 func (s *Server) planningAccount(user, id string) (*store.Exchange, error) {
 	ex, e := s.store.Exchange().GetByID(user, id)
-	if e != nil || !ex.Enabled {
-		return nil, errors.New("Select an enabled Vergex trading account owned by the current user")
+	if e != nil {
+		return nil, errors.New("Select a Vergex trading account owned by the current user")
 	}
 	if !frontierVenue(ex.ExchangeType) {
 		return nil, errors.New("Frontier supports Binance and OKX perpetual accounts")
@@ -187,6 +181,7 @@ func (s *Server) registerPlanning(api, protected *gin.RouterGroup) {
 	protected.POST("/planning/reconcile", s.handlePlanningReconcile)
 	protected.POST("/planning/check-status", s.handlePlanningCheckStatus)
 	protected.GET("/planning/conversations", s.handlePlanningConversations)
+	protected.GET("/planning/conversations/:id", s.handlePlanningConversation)
 	protected.GET("/planning/preferences", s.handlePlanningPreferences)
 	protected.PUT("/planning/preferences", s.handlePlanningPreferences)
 	protected.GET("/planning/entry-plugins", s.handlePlanningEntryPlugins)
@@ -268,19 +263,13 @@ func (s *Server) handlePlanningState(c *gin.Context) {
 		return
 	}
 	user := c.GetString("user_id")
-	var bindings []planning.Draft
-	s.store.GormDB().Select("id", "exchange_id").Where("user_id = ?", user).Find(&bindings)
-	accounts := map[string]string{}
-	for _, d := range bindings {
-		accounts[d.ID] = d.ExchangeID
-	}
+	drafts := planning.NewDraftStore(s.store, user, "", "")
 	runs, e := p.live.ListContext(c.Request.Context(), user)
 	if e != nil {
 		planningError(c, e)
 		return
 	}
-	records := (&planning.DraftStore{DB: s.store.GormDB(), UserID: user}).Records()
-	c.JSON(200, gin.H{"records": records, "accounts": accounts, "runs": runs, "mode": "live", "now": time.Now().UTC()})
+	c.JSON(200, gin.H{"records": drafts.Records(), "accounts": drafts.Accounts(), "runs": runs, "mode": "live", "now": time.Now().UTC()})
 }
 func (s *Server) handlePlanningCompile(c *gin.Context) {
 	var in struct {
@@ -326,7 +315,8 @@ func (s *Server) handlePlanningCompile(c *gin.Context) {
 		planningError(c, e)
 		return
 	}
-	ds := planning.DraftStore{DB: s.store.GormDB(), UserID: c.GetString("user_id"), ExchangeID: ex.ID, Venue: ex.ExchangeType}
+	ds := planning.NewDraftStore(s.store, c.GetString("user_id"), ex.ID, ex.ExchangeType)
+	ds.Origin = planning.OriginManual
 	if e = ds.Add([]core.Plan{draft}); e != nil {
 		planningError(c, e)
 		return
@@ -336,11 +326,11 @@ func (s *Server) handlePlanningCompile(c *gin.Context) {
 func (s *Server) handlePlanningChat(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 	var in struct {
-		harness.Input
-		ExchangeID  string           `json:"exchange_id"`
-		ModelID     string           `json:"model_id"`
-		Constraints core.Constraints `json:"constraints"`
-		AutoSize    bool             `json:"auto_size"`
+		planningagent.Input
+		ExchangeID   string           `json:"exchange_id"`
+		AgentModelID string           `json:"agent_model_id"`
+		Constraints  core.Constraints `json:"constraints"`
+		AutoSize     bool             `json:"auto_size"`
 	}
 	if e := c.ShouldBindJSON(&in); e != nil {
 		planningError(c, errors.New("invalid planning input"))
@@ -368,19 +358,19 @@ func (s *Server) handlePlanningChat(c *gin.Context) {
 		planningError(c, e)
 		return
 	}
-	ai, e := s.store.AIModel().Get(user, in.ModelID)
-	if e != nil || !ai.Enabled || ai.APIKey == "" {
-		planningError(c, errors.New("Select a configured and enabled Vergex AI model owned by the current user"))
+	agentModel, e := s.store.AgentModel().Get(user, in.AgentModelID)
+	if e != nil || !agentModel.Enabled || agentModel.APIKey == "" {
+		planningError(c, errors.New("Select a configured and enabled model owned by the current user"))
 		return
 	}
-	client := llm.NewAIClientByProvider(ai.Provider)
+	client := agent.NewClientByProvider(agentModel.Provider)
 	if client == nil {
-		planningError(c, errors.New("This AI provider is not registered in Vergex"))
+		planningError(c, errors.New("This model provider is not registered in Vergex"))
 		return
 	}
-	client.SetAPIKey(string(ai.APIKey), ai.CustomAPIURL, ai.CustomModelName)
+	client.SetAPIKey(string(agentModel.APIKey), agentModel.CustomAPIURL, agentModel.CustomModelName)
 	client.SetTimeout(90 * time.Second)
-	llm.TagUsage(client, llm.OwnerFrontier)
+	agent.TagUsage(client, agent.FeatureFrontier, "")
 	p, e := s.planningService()
 	if e != nil {
 		planningError(c, e)
@@ -391,13 +381,11 @@ func (s *Server) handlePlanningChat(c *gin.Context) {
 		return
 	}
 	defer p.turns.Delete(user)
-	ds := &planning.DraftStore{DB: s.store.GormDB(), UserID: user, ExchangeID: ex.ID, Venue: ex.ExchangeType}
-	if in.PlanID != "" {
-		var selected planning.Draft
-		if e = s.store.GormDB().Where("user_id = ? AND id = ? AND exchange_id = ? AND status = ?", user, in.PlanID, ex.ID, "draft").First(&selected).Error; e != nil {
-			planningError(c, errors.New("Only unapproved drafts on this account can be revised; revoke locked approval first"))
-			return
-		}
+	ds := planning.NewDraftStore(s.store, user, ex.ID, ex.ExchangeType)
+	ds.Origin = planning.OriginAssistant
+	if in.PlanID != "" && !ds.HasDraft(in.PlanID) {
+		planningError(c, errors.New("Only unapproved drafts on this account can be revised; revoke locked approval first"))
+		return
 	}
 	hash := sha256.Sum256([]byte(user))
 	root := filepath.Join("data", "planning", hex.EncodeToString(hash[:16]))
@@ -415,24 +403,33 @@ func (s *Server) handlePlanningChat(c *gin.Context) {
 		planningError(c, e)
 		return
 	}
-	engine := harness.Engine{Store: ds, Market: p.source, Charts: p.source, Model: &model.ClientAdapter{Client: client}, Limits: in.Constraints, Forge: forgeRegistry, Plugins: registry}
+	engine := planningagent.Engine{Store: ds, Market: p.source, Charts: p.source, Model: &model.ClientAdapter{Client: client}, Limits: in.Constraints, Forge: forgeRegistry, Plugins: registry}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 180*time.Second)
+	defer cancel()
+	if in.SessionID != "" {
+		conversation := store.AgentConversation{
+			ID:           in.SessionID,
+			UserID:       user,
+			Feature:      store.FeatureFrontier,
+			AgentModelID: agentModel.ID,
+			Title:        conversationTitle(in.Message),
+			Context:      map[string]string{"exchange_id": ex.ID, "symbol": in.Symbol},
+		}
+		if e = s.store.AgentConversation().Open(&conversation); e != nil {
+			planningError(c, errors.New("invalid planning input"))
+			return
+		}
+		engine.Record = s.recordPlanningMessage(in.SessionID)
+		ctx = agent.WithConversation(ctx, in.SessionID)
+		ds.ConversationID = in.SessionID
+	}
 	var preferences planning.Preferences
-	if s.store.GormDB().Where("user_id = ?", user).First(&preferences).Error == nil && preferences.Text != "" {
+	if _, e := s.store.LoadSetting(planning.SettingsModule, &preferences); e == nil && preferences.Text != "" {
 		engine.Memory = []string{preferences.Text}
 	}
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("X-Accel-Buffering", "no")
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 180*time.Second)
-	defer cancel()
-	messages := append([]harness.History(nil), in.History...)
-	messages = append(messages, harness.History{Role: "user", Content: in.Message})
-	emit := func(event harness.Event) error {
-		if event.Type == "assistant" {
-			raw, _ := json.Marshal(event.Data)
-			var text map[string]string
-			json.Unmarshal(raw, &text)
-			messages = append(messages, harness.History{Role: "assistant", Content: text["message"]})
-		}
+	emit := func(event planningagent.Event) error {
 		raw, e := json.Marshal(event)
 		if e != nil {
 			return e
@@ -443,23 +440,46 @@ func (s *Server) handlePlanningChat(c *gin.Context) {
 		}
 		return e
 	}
-	_ = emit(harness.Event{Type: "status", Data: gin.H{"message": "Loading market context; preparing the planning model"}})
-	_ = emit(harness.Event{Type: "model_transport", Data: gin.H{"transport": "native_tools"}})
+	_ = emit(planningagent.Event{Type: "status", Data: gin.H{"message": "Loading market context; preparing the planning model"}})
+	_ = emit(planningagent.Event{Type: "model_transport", Data: gin.H{"transport": "native_tools"}})
 	e = engine.Run(ctx, in.Input, emit)
 	if e != nil && c.Request.Context().Err() == nil {
 		message := e.Error()
 		if ctx.Err() != nil || errors.Is(e, context.DeadlineExceeded) {
 			message = "Planning reached its time limit. No orders were submitted. Review saved drafts before starting another request."
 		}
-		_ = emit(harness.Event{Type: "error", Data: gin.H{"message": message}})
+		_ = emit(planningagent.Event{Type: "error", Data: gin.H{"message": message}})
 	}
 	if c.Request.Context().Err() == nil {
-		_ = emit(harness.Event{Type: "done", Data: gin.H{"ok": e == nil}})
+		_ = emit(planningagent.Event{Type: "done", Data: gin.H{"ok": e == nil}})
 	}
-	if in.SessionID != "" {
-		raw, _ := json.Marshal(messages[max(0, len(messages)-20):])
-		row := planning.Conversation{UserID: user, ID: in.SessionID, ExchangeID: ex.ID, ModelID: ai.ID, Symbol: in.Symbol, Messages: string(raw), UpdatedAt: time.Now().UTC()}
-		s.store.GormDB().Save(&row)
+}
+
+// conversationTitle is how a conversation is named: the start of its first message.
+func conversationTitle(message string) string {
+	message = strings.Join(strings.Fields(message), " ")
+	if runes := []rune(message); len(runes) > 80 {
+		return string(runes[:80])
+	}
+	return message
+}
+
+// recordPlanningMessage keeps a turn's messages as they happen. A failure to record
+// is logged and never stops the turn.
+func (s *Server) recordPlanningMessage(conversationID string) func(string, model.Message) {
+	return func(role string, message model.Message) {
+		row := store.AgentMessage{Role: role, Content: message.Content, Thinking: message.ReasoningContent, ToolCallID: message.ToolCallID}
+		if len(message.ToolCalls) > 0 {
+			calls, e := json.Marshal(message.ToolCalls)
+			if e != nil {
+				logger.Warnf("Frontier: encode tool calls: %v", e)
+				return
+			}
+			row.ToolCalls = string(calls)
+		}
+		if e := s.store.AgentConversation().Append(conversationID, row); e != nil {
+			logger.Warnf("Frontier: record message: %v", e)
+		}
 	}
 }
 func (s *Server) handlePlanningApprove(c *gin.Context) {
@@ -479,8 +499,8 @@ func (s *Server) handlePlanningApprove(c *gin.Context) {
 		planningError(c, e)
 		return
 	}
-	var d planning.Draft
-	if e = s.store.GormDB().Where("user_id = ? AND id = ?", c.GetString("user_id"), in.PlanID).First(&d).Error; e != nil {
+	d, e := planning.NewDraftStore(s.store, c.GetString("user_id"), "", "").Find(in.PlanID)
+	if e != nil {
 		planningError(c, errors.New("plan not found"))
 		return
 	}
@@ -582,16 +602,52 @@ func (s *Server) handlePlanningReconcile(c *gin.Context) {
 	c.JSON(200, v)
 }
 func (s *Server) handlePlanningConversations(c *gin.Context) {
-	if _, e := s.planningService(); e != nil {
+	rows, e := s.store.AgentConversation().List(c.GetString("user_id"), store.FeatureFrontier, 50)
+	if e != nil {
 		planningError(c, e)
 		return
 	}
-	var rows []planning.Conversation
-	if e := s.store.GormDB().Where("user_id = ?", c.GetString("user_id")).Order("updated_at desc").Limit(50).Find(&rows).Error; e != nil {
+	out := make([]planningConversation, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, newPlanningConversation(row))
+	}
+	c.JSON(200, out)
+}
+
+// handlePlanningConversation returns a conversation with what was said in it.
+func (s *Server) handlePlanningConversation(c *gin.Context) {
+	row, e := s.store.AgentConversation().Get(c.GetString("user_id"), c.Param("id"))
+	if e != nil || row.Feature != store.FeatureFrontier {
+		c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
+		return
+	}
+	messages, e := s.store.AgentConversation().Transcript(row.ID, 0)
+	if e != nil {
 		planningError(c, e)
 		return
 	}
-	c.JSON(200, rows)
+	c.JSON(200, gin.H{"conversation": newPlanningConversation(*row), "messages": messages})
+}
+
+// planningConversation is a conversation as the Frontier page lists it.
+type planningConversation struct {
+	ID           string    `json:"id"`
+	ExchangeID   string    `json:"exchange_id"`
+	AgentModelID string    `json:"agent_model_id"`
+	Symbol       string    `json:"symbol"`
+	Title        string    `json:"title"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
+func newPlanningConversation(row store.AgentConversation) planningConversation {
+	return planningConversation{
+		ID:           row.ID,
+		ExchangeID:   row.Context["exchange_id"],
+		AgentModelID: row.AgentModelID,
+		Symbol:       row.Context["symbol"],
+		Title:        row.Title,
+		UpdatedAt:    row.UpdatedAt,
+	}
 }
 func (s *Server) handlePlanningPreferences(c *gin.Context) {
 	p, e := s.planningService()
@@ -600,16 +656,15 @@ func (s *Server) handlePlanningPreferences(c *gin.Context) {
 		return
 	}
 	_ = p
-	user := c.GetString("user_id")
 	if c.Request.Method == http.MethodPut {
 		var in struct {
 			Text string `json:"text"`
 		}
-		if c.ShouldBindJSON(&in) != nil || len(in.Text) > 1600 || harness.HasCredential(in.Text) {
+		if c.ShouldBindJSON(&in) != nil || len(in.Text) > 1600 || planningagent.HasCredential(in.Text) {
 			planningError(c, errors.New("Preferences must be at most 1600 bytes and cannot contain credentials"))
 			return
 		}
-		if e := s.store.GormDB().Save(&planning.Preferences{UserID: user, Text: in.Text}).Error; e != nil {
+		if e := s.store.PatchSetting(planning.SettingsModule, map[string]any{"text": in.Text}); e != nil {
 			planningError(c, e)
 			return
 		}
@@ -617,7 +672,10 @@ func (s *Server) handlePlanningPreferences(c *gin.Context) {
 		return
 	}
 	var row planning.Preferences
-	s.store.GormDB().Where("user_id = ?", user).First(&row)
+	if _, e := s.store.LoadSetting(planning.SettingsModule, &row); e != nil {
+		planningError(c, e)
+		return
+	}
 	c.JSON(200, gin.H{"text": row.Text})
 }
 func (s *Server) handlePlanningEntryPlugins(c *gin.Context) {
@@ -641,7 +699,7 @@ func (s *Server) lockPlanningAccount(user, id string) (func(), error) {
 		return nil, errors.New("account not found")
 	}
 	_ = p
-	return planning.LockAccount(accountKey(ex)), nil
+	return store.LockAccount(ex.ID), nil
 }
 func (s *Server) handlePlanningReadAccount(c *gin.Context) {
 	if !instrument.ValidSymbol(c.Query("symbol")) {

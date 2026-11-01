@@ -10,7 +10,7 @@ import { layoutFlow, lineOf } from '@/components/dashboard/flow-layout'
 import { blockViews } from '@/components/dashboard/flow-members'
 import { eventWhat, lineSummary } from '@/components/dashboard/flow-text'
 import { PositionsOverview } from '@/components/dashboard/positions-overview'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 
 afterEach(cleanup)
 
@@ -35,8 +35,8 @@ const event = (fields: Partial<ActivityEvent>): ActivityEvent => ({
   seq: 1,
   id: 'event',
   at: Date.now(),
-  kind: 'ai',
-  type: 'ai_call',
+  kind: 'agent',
+  type: 'agent_call',
   from: { block: 'traders', id: 't', name: 'Trend' },
   to: { block: 'models', id: 'api.deepseek.com', name: 'api.deepseek.com' },
   ...fields,
@@ -84,7 +84,7 @@ it('takes no space when nothing needs attention, and links to the fix when it do
               trader_id: 'abcd1234',
               trader_name: 'Alpha',
               is_running: true,
-              ai_model_id: 'm',
+              agent_model_id: 'm',
               exchange_id: 'e',
             },
           ],
@@ -92,7 +92,7 @@ it('takes no space when nothing needs attention, and links to the fix when it do
             {
               kind: 'trader_safe_mode',
               name: 'Alpha',
-              detail: 'AI failed',
+              detail: 'Model failed',
               trader_id: 'abcd1234',
             },
           ],
@@ -106,6 +106,34 @@ it('takes no space when nothing needs attention, and links to the fix when it do
     '/traders/Alpha-abcd'
   )
   expect(screen.getByText('Alpha is in safe mode')).toBeInTheDocument()
+})
+
+it('says which trade the ledger is missing and where to look', () => {
+  render(
+    <MemoryRouter>
+      <AttentionList
+        overview={
+          {
+            attention: [
+              {
+                kind: 'account_fill_skipped',
+                name: 'OLD-USDT-SWAP',
+                detail: 'OLD-USDT-SWAP trade t1: sell 7 contracts at 3: gone',
+              },
+            ],
+            traders: [],
+          } as unknown as Overview
+        }
+        language="en"
+      />
+    </MemoryRouter>
+  )
+  expect(
+    screen.getByText('A trade on OLD-USDT-SWAP is not in the ledger')
+  ).toBeInTheDocument()
+  expect(
+    screen.getByText('OLD-USDT-SWAP trade t1: sell 7 contracts at 3: gone')
+  ).toBeInTheDocument()
 })
 
 it('names a kind of problem once, however many have it', () => {
@@ -211,9 +239,12 @@ it('runs a reply back along the line its request took', () => {
   ).toBeNull()
 })
 
-it('labels AI costs as estimates, and shows money for both directions of a line', () => {
+it('labels agent costs as estimates, and shows money for both directions of a line', () => {
   expect(
-    eventWhat(event({ type: 'ai_cost', kind: 'funds', amount: 0.003 }), label)
+    eventWhat(
+      event({ type: 'agent_cost', kind: 'funds', amount: 0.003 }),
+      label
+    )
   ).toBe('≈ $0.0030')
   expect(
     lineSummary(
@@ -242,7 +273,7 @@ const eventsProps = {
         trader_id: 'abcd1234',
         trader_name: 'Alpha',
         is_running: true,
-        ai_model_id: 'm',
+        agent_model_id: 'm',
         exchange_id: 'e',
       },
     ],
@@ -299,10 +330,11 @@ it('opens the real thing behind an event, and filters by kind and by line', () =
 
   rerender(
     <MemoryRouter>
-      <FlowEvents {...eventsProps} kind="ai" events={[order, plan, call]} />
+      <FlowEvents {...eventsProps} kind="agent" events={[order, plan, call]} />
     </MemoryRouter>
   )
   expect(screen.queryByText('Filled')).not.toBeInTheDocument()
+  expect(screen.getByText('Agent')).toBeInTheDocument()
 
   rerender(
     <MemoryRouter>
@@ -346,7 +378,7 @@ it('leads a new account through setup, picking out the next step', () => {
     </MemoryRouter>
   )
   expect(screen.getByLabelText('Done')).toBeInTheDocument()
-  expect(screen.queryByText('Add AI model')).not.toBeInTheDocument()
+  expect(screen.queryByText('Add model')).not.toBeInTheDocument()
   expect(screen.getByText('Add account')).toHaveAttribute(
     'href',
     '?settings=exchanges'

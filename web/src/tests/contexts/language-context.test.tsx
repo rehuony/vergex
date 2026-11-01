@@ -25,16 +25,26 @@ describe('language preference', () => {
   beforeEach(() => localStorage.clear())
   afterEach(() => vi.restoreAllMocks())
 
-  it('stays in English whatever the browser or an old saved choice says', () => {
-    vi.spyOn(navigator, 'language', 'get').mockReturnValue('zh-CN')
-    localStorage.setItem('vergex-language', 'zh')
+  it('follows the browser until a language has been chosen', () => {
+    vi.spyOn(navigator, 'language', 'get').mockReturnValue('zh-TW')
+    // A language no longer offered counts as no choice.
+    localStorage.setItem('vergex-language', 'id')
 
+    const { unmount } = render(
+      <LanguageProvider>
+        <LanguageProbe />
+      </LanguageProvider>
+    )
+    expect(screen.getByText('zh-CN')).toBeTruthy()
+    expect(document.documentElement.lang).toBe('zh-CN')
+    unmount()
+
+    localStorage.setItem('vergex-language', 'en')
     render(
       <LanguageProvider>
         <LanguageProbe />
       </LanguageProvider>
     )
-
     expect(screen.getByText('en')).toBeTruthy()
     expect(document.documentElement.lang).toBe('en')
   })
@@ -64,6 +74,7 @@ describe('language preference', () => {
     expect(screen.getByRole('button', { name: /^语言/ })).toHaveTextContent(
       '简体中文'
     )
-    expect(localStorage.getItem('vergex-language')).toBe('zh')
+    expect(localStorage.getItem('vergex-language')).toBe('zh-CN')
+    expect(document.documentElement.lang).toBe('zh-CN')
   })
 })

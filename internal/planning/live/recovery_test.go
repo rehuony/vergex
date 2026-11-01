@@ -4,20 +4,21 @@ import (
 	"context"
 	"testing"
 	"time"
+	"vergex/internal/store"
 )
 
 func protectedTrade(t *testing.T, kind string) (*Controller, *testBroker, View) {
 	t.Helper()
 	c, b, _, p := setup(t, kind)
 	v := started(t, c, p)
-	c.step(context.Background(), "alice", v.ID)
-	v, _ = c.Get("alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
+	v, _ = c.Get(testUser, v.ID)
 	entry := b.orders[v.Orders[0].ClientID]
 	entry.Status, entry.Filled = "FILLED", entry.Quantity
 	b.orders[entry.ClientID] = entry
 	b.account.Position = entry.Quantity
-	c.step(context.Background(), "alice", v.ID)
-	v, _ = c.Get("alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
+	v, _ = c.Get(testUser, v.ID)
 	v.State, v.Error = "needs_attention", "Previous position snapshot was not yet available"
 	if err := c.save(&v); err != nil {
 		t.Fatal(err)
@@ -44,7 +45,7 @@ func TestStatusCheckRecoversOnlyVerifiedProtectedPosition(t *testing.T) {
 			}
 			b.orders[stop.ClientID] = stop
 			placed, cancelled := len(b.placed), len(b.cancelled)
-			out, err := c.CheckStatus(context.Background(), "alice", v.ID)
+			out, err := c.CheckStatus(context.Background(), testUser, v.ID)
 			if scenario == "protected" {
 				if err != nil || out.State != "position_open" || out.Error != "" {
 					t.Fatalf("verified position stayed interrupted: %s %s %v", out.State, out.Error, err)
@@ -53,7 +54,7 @@ func TestStatusCheckRecoversOnlyVerifiedProtectedPosition(t *testing.T) {
 				t.Fatalf("unverified trade marked healthy: %s %v", out.State, err)
 			}
 			var leases int64
-			c.DB.Model(&Lease{}).Count(&leases)
+			c.DB.Model(&store.AccountLease{}).Count(&leases)
 			if leases != 1 || len(b.placed) != placed || len(b.cancelled) != cancelled || len(c.workers) != 0 {
 				t.Fatal("read-only reconciliation released account, changed exchange orders or restarted entries")
 			}
@@ -68,7 +69,7 @@ func TestStatusRecoveryDoesNotResumeRemainingTWAPSlices(t *testing.T) {
 	}
 	placed, cancelled := len(b.placed), len(b.cancelled)
 	for range 2 {
-		out, err := c.CheckStatus(context.Background(), "alice", v.ID)
+		out, err := c.CheckStatus(context.Background(), testUser, v.ID)
 		if err != nil || out.State != "position_open" || out.Orders[1].Status != "CANCELED" || out.Orders[1].OrderID != "" {
 			t.Fatalf("paused TWAP was not reconciled without replay: %+v %v", out, err)
 		}
@@ -81,10 +82,10 @@ func TestStatusRecoveryDoesNotResumeRemainingTWAPSlices(t *testing.T) {
 func TestWorkerClearsTransientSnapshotFailureWithoutNewEntries(t *testing.T) {
 	c, b, v := protectedTrade(t, "limit")
 	placed := len(b.placed)
-	if done := c.step(context.Background(), "alice", v.ID); done {
+	if done := c.step(context.Background(), testUser, v.ID); done {
 		t.Fatal("protected open position should remain monitored")
 	}
-	out, err := c.Get("alice", v.ID)
+	out, err := c.Get(testUser, v.ID)
 	if err != nil || out.State != "position_open" || out.Error != "" || len(b.placed) != placed || len(b.cancelled) != 0 {
 		t.Fatalf("transient error remained after fresh confirmation: %s %s %v", out.State, out.Error, err)
 	}
@@ -93,8 +94,8 @@ func TestWorkerClearsTransientSnapshotFailureWithoutNewEntries(t *testing.T) {
 func TestWorkerNeverClearsUnconfirmedReceiptUsingPreviousSnapshot(t *testing.T) {
 	c, b, v := protectedTrade(t, "limit")
 	b.lookupErr = true
-	c.step(context.Background(), "alice", v.ID)
-	out, err := c.Get("alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
+	out, err := c.Get(testUser, v.ID)
 	if err != nil || out.State != "needs_attention" || out.Error == "" {
 		t.Fatalf("stale NEW receipt was treated as fresh protection: %s %s %v", out.State, out.Error, err)
 	}
@@ -124,10 +125,10 @@ func TestWorkerReleasesExternallyClosedTradeOnlyAfterTerminalExitProof(t *testin
 			}
 			b.orders[stop.ClientID] = stop
 			placed, cancelled := len(b.placed), len(b.cancelled)
-			done := c.step(context.Background(), "alice", v.ID)
-			out, _ := c.Get("alice", v.ID)
+			done := c.step(context.Background(), testUser, v.ID)
+			out, _ := c.Get(testUser, v.ID)
 			var leases int64
-			c.DB.Model(&Lease{}).Count(&leases)
+			c.DB.Model(&store.AccountLease{}).Count(&leases)
 			if scenario == "closed" {
 				if !done || out.State != "completed" || leases != 0 || out.Error != "" {
 					t.Fatalf("verified external close stayed reserved: %s %d %s", out.State, leases, out.Error)
@@ -157,15 +158,15 @@ func TestAccountActionsDoNotWaitPastContextForBusyRun(t *testing.T) {
 				var err error
 				switch action {
 				case "check":
-					_, err = c.CheckStatus(ctx, "alice", v.ID)
+					_, err = c.CheckStatus(ctx, testUser, v.ID)
 				case "stop":
-					_, err = c.StopContext(ctx, "alice", v.ID, v.ApprovalHash)
+					_, err = c.StopContext(ctx, testUser, v.ID, v.ApprovalHash)
 				case "reconcile":
-					_, err = c.ReconcileContext(ctx, "alice", v.ID)
+					_, err = c.ReconcileContext(ctx, testUser, v.ID)
 				case "execute":
-					_, err = c.Execute(ctx, "alice", v.ID, v.ApprovalHash)
+					_, err = c.Execute(ctx, testUser, v.ID, v.ApprovalHash)
 				case "finish_close":
-					_, err = c.FinishManualClose(ctx, "alice", v.ID)
+					_, err = c.FinishManualClose(ctx, testUser, v.ID)
 				}
 				done <- err
 			}()

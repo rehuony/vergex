@@ -34,7 +34,7 @@ export const strategyApi = {
   },
 
   async getDefaultStrategyConfig(
-    type: StrategyType = 'ai_trading'
+    type: StrategyType = 'agent_trading'
   ): Promise<StrategyConfig> {
     const result = await httpClient.get<StrategyConfig>(
       `${API_BASE}/strategies/default-config?type=${type}`
@@ -116,7 +116,7 @@ export const strategyApi = {
 
   async testRunStrategy(body: {
     config: StrategyConfig
-    ai_model_id: string
+    agent_model_id: string
     run_real_ai: boolean
   }): Promise<StrategyTestRun> {
     const result = await httpClient.post<StrategyTestRun>(

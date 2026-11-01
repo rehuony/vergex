@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PlanningEvent } from '@/api/planning'
 import { useLanguage } from '@/contexts/language-context'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { validationSummary } from '@/utils/planning/planning-presentation'
 import { Button } from '@/components/ui/button'
 

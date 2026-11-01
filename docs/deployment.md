@@ -6,7 +6,7 @@ For remote access, add nginx on the host. It has three jobs:
 
 1. Terminate TLS and forward public port 443 to `127.0.0.1:8000`.
 2. Add access control on top of the application login: basic auth, an IP allowlist, or both.
-3. Avoid buffering streams: Frontier's AI chat and market feed use SSE.
+3. Avoid buffering streams: Frontier's agent chat and market feed use SSE.
 
 Vergex has no setup script for this. Adapt the config below and place it at `/etc/nginx/conf.d/vergex.conf`.
 
@@ -64,7 +64,7 @@ server {
         proxy_buffering off;
         proxy_cache     off;
 
-        # An AI planning turn can run for minutes.
+        # An agent planning turn can run for minutes.
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
     }
@@ -80,7 +80,7 @@ curl -I https://trade.example.com/                 # 401 without credentials
 curl -u <user> https://trade.example.com/api/health
 ```
 
-In the browser, pass basic auth, sign in, then open Frontier and confirm that candles update live and the AI reply streams.
+In the browser, pass basic auth, sign in, then open Frontier and confirm that candles update live and the agent's reply streams.
 
 ## Notes
 

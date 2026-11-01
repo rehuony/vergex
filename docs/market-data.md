@@ -36,11 +36,13 @@ The market tables are in the main PostgreSQL database, on a connection pool of t
 
 | Table | Holds |
 | :---- | :---- |
-| `market_series` | One row per symbol and interval: its tier, status, water mark, next turn and last error |
-| `market_candles` | Closed candles |
-| `market_gaps` | Ranges the exchange confirmed it has no candles for |
-| `market_derivatives` | Timed funding, open interest value and long/short ratio readings |
-| `market_settings` | The watchlist, the number of high-volume coins and the current ranking |
+| `market.instruments` | One row per venue, market kind and symbol, so spot and perpetual BTCUSDT would be different instruments |
+| `market.series` | One row per instrument and timeframe: its tier, status, water mark, next turn and last error |
+| `market.candles` | Closed candles |
+| `market.candle_gaps` | Ranges the exchange confirmed it has no candles for |
+| `market.derivative_metrics` | Timed funding, open interest value and long/short ratio readings |
+
+The watchlist, the number of high-volume coins and the current ranking are the `market` row of `core.settings`.
 
 ## What is collected
 
@@ -68,7 +70,7 @@ The **hydrator** does the rest over REST:
 2. **Start.** A new series fetches its latest 300 closed candles (weight 2).
 3. **Follow.** After each close plus 3 seconds, fetch from the water mark with `limit` up to 99 (weight 1). A series on the stream has normally moved on by then, so this costs nothing. Candles still open or closed for under 3 seconds are dropped, since one read right at its close can still be missing its last trades, and the rest are validated and written in one transaction with the water mark, which only moves past candles that join up.
 4. **Catch up.** More than 99 candles behind, it pages 499 at a time (weight 2), the most candles per unit of weight. A restart carries on from the water mark.
-5. **Confirm gaps.** If the next candle is not the expected one, it asks once more, then records the range in `market_gaps` and moves on. A window with a hole that is not recorded is refused rather than calculated on.
+5. **Confirm gaps.** If the next candle is not the expected one, it asks once more, then records the range in `market.candle_gaps` and moves on. A window with a hole that is not recorded is refused rather than calculated on.
 
 Work goes in this order: what you are waiting for, the watchlist's latest candles (shorter intervals first), the top coins' latest candles, new series, long catch-ups.
 

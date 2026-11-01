@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"time"
-	"vergex/internal/kernel"
-	"vergex/internal/llm"
-	_ "vergex/internal/llm/provider"
+	"vergex/internal/agent"
+	_ "vergex/internal/agent/provider"
 	"vergex/internal/logger"
 	"vergex/internal/market"
 	"vergex/internal/store"
+	traderagent "vergex/internal/trader/agent"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -67,7 +67,6 @@ func (s *Server) handleGetStrategies(c *gin.Context) {
 			"name":        st.Name,
 			"description": st.Description,
 			"is_active":   st.IsActive,
-			"is_default":  st.IsDefault,
 			"config":      config,
 			"created_at":  st.CreatedAt,
 			"updated_at":  st.UpdatedAt,
@@ -102,7 +101,6 @@ func (s *Server) handleGetStrategy(c *gin.Context) {
 		"name":        strategy.Name,
 		"description": strategy.Description,
 		"is_active":   strategy.IsActive,
-		"is_default":  strategy.IsDefault,
 		"config":      config,
 		"created_at":  strategy.CreatedAt,
 		"updated_at":  strategy.UpdatedAt,
@@ -155,7 +153,6 @@ func (s *Server) handleCreateStrategy(c *gin.Context) {
 		Name:        req.Name,
 		Description: req.Description,
 		IsActive:    false,
-		IsDefault:   false,
 		Config:      string(configJSON),
 	}
 
@@ -198,11 +195,6 @@ func (s *Server) handleUpdateStrategy(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Strategy not found"})
 		return
 	}
-	if existing.IsDefault {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot modify system default strategy"})
-		return
-	}
-
 	var req struct {
 		Name        string          `json:"name"`
 		Description *string         `json:"description"` // nil keeps the existing one; "" clears it
@@ -267,7 +259,7 @@ func (s *Server) handleUpdateStrategy(c *gin.Context) {
 	}
 
 	// Token overflow check — block save if all models exceed context limits
-	if mergedConfig.StrategyType == "" || mergedConfig.StrategyType == "ai_trading" {
+	if mergedConfig.StrategyType == "" || mergedConfig.StrategyType == "agent_trading" {
 		estimate := mergedConfig.EstimateTokens()
 		allExceed := true
 		for _, ml := range estimate.ModelLimits {
@@ -386,7 +378,6 @@ func (s *Server) handleGetActiveStrategy(c *gin.Context) {
 		"name":        strategy.Name,
 		"description": strategy.Description,
 		"is_active":   strategy.IsActive,
-		"is_default":  strategy.IsDefault,
 		"config":      config,
 		"created_at":  strategy.CreatedAt,
 		"updated_at":  strategy.UpdatedAt,
@@ -440,7 +431,7 @@ func (s *Server) handlePreviewPrompt(c *gin.Context) {
 	}
 
 	// Create strategy engine to build prompt
-	engine := kernel.NewStrategyEngine(&req.Config)
+	engine := traderagent.NewStrategyEngine(&req.Config)
 
 	// Build system prompt (using built-in method from strategy engine)
 	systemPrompt := engine.BuildSystemPrompt(
@@ -461,7 +452,7 @@ func (s *Server) handlePreviewPrompt(c *gin.Context) {
 	})
 }
 
-// handleStrategyTestRun AI test run (does not execute trades, only returns AI analysis results)
+// handleStrategyTestRun agent test run (does not execute trades, only returns agent analysis results)
 func (s *Server) handleStrategyTestRun(c *gin.Context) {
 	userID := c.GetString("user_id")
 	if userID == "" {
@@ -472,8 +463,8 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 	var req struct {
 		Config        store.StrategyConfig `json:"config" binding:"required"`
 		PromptVariant string               `json:"prompt_variant"`
-		AIModelID     string               `json:"ai_model_id"`
-		RunRealAI     bool                 `json:"run_real_ai"`
+		AgentModelID  string               `json:"agent_model_id"`
+		RunRealAgent  bool                 `json:"run_real_ai"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -486,15 +477,15 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 	}
 
 	// Create strategy engine to build prompt
-	engine := kernel.NewStrategyEngine(&req.Config)
+	engine := traderagent.NewStrategyEngine(&req.Config)
 
 	// Get candidate coins
 	candidates, err := engine.GetCandidateCoins()
 	if err != nil {
 		logger.Errorf("[API Error] Failed to get candidate coins: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":       "Failed to get candidate coins",
-			"ai_response": "",
+			"error":          "Failed to get candidate coins",
+			"agent_response": "",
 		})
 		return
 	}
@@ -538,11 +529,11 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 	}
 
 	// Build real context (for generating User Prompt)
-	testContext := &kernel.Context{
+	testContext := &traderagent.Context{
 		CurrentTime:    time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
 		RuntimeMinutes: 0,
 		CallCount:      1,
-		Account: kernel.AccountInfo{
+		Account: traderagent.AccountInfo{
 			TotalEquity:      1000.0,
 			AvailableBalance: 1000.0,
 			UnrealizedPnL:    0,
@@ -552,7 +543,7 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 			MarginUsedPct:    0,
 			PositionCount:    0,
 		},
-		Positions:      []kernel.PositionInfo{},
+		Positions:      []traderagent.PositionInfo{},
 		CandidateCoins: candidates,
 		PromptVariant:  req.PromptVariant,
 		MarketDataMap:  marketDataMap,
@@ -565,19 +556,19 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 	// Build User Prompt (using real market data)
 	userPrompt := engine.BuildUserPrompt(testContext)
 
-	// If requesting real AI call
-	if req.RunRealAI && req.AIModelID != "" {
-		aiResponse, aiErr := s.runRealAITest(userID, req.AIModelID, systemPrompt, userPrompt)
-		if aiErr != nil {
+	// If requesting real model call
+	if req.RunRealAgent && req.AgentModelID != "" {
+		agentResponse, agentErr := s.runRealAgentTest(userID, req.AgentModelID, systemPrompt, userPrompt)
+		if agentErr != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"system_prompt":   systemPrompt,
 				"user_prompt":     userPrompt,
 				"candidate_count": len(candidates),
 				"candidates":      candidates,
 				"prompt_variant":  req.PromptVariant,
-				"ai_response":     fmt.Sprintf("❌ AI call failed: %s", aiErr.Error()),
-				"ai_error":        aiErr.Error(),
-				"note":            "AI call error",
+				"agent_response":  fmt.Sprintf("❌ Model call failed: %s", agentErr.Error()),
+				"agent_error":     agentErr.Error(),
+				"note":            "Model call error",
 			})
 			return
 		}
@@ -588,56 +579,56 @@ func (s *Server) handleStrategyTestRun(c *gin.Context) {
 			"candidate_count": len(candidates),
 			"candidates":      candidates,
 			"prompt_variant":  req.PromptVariant,
-			"ai_response":     aiResponse,
-			"note":            "✅ Real AI test run successful",
+			"agent_response":  agentResponse,
+			"note":            "✅ Real model test run successful",
 		})
 		return
 	}
 
-	// Return result (without actually calling AI, only return built prompt)
+	// Return result (without actually calling agent, only return built prompt)
 	c.JSON(http.StatusOK, gin.H{
 		"system_prompt":   systemPrompt,
 		"user_prompt":     userPrompt,
 		"candidate_count": len(candidates),
 		"candidates":      candidates,
 		"prompt_variant":  req.PromptVariant,
-		"ai_response":     "Please select an AI model and click 'Run Test' to perform real AI analysis.",
-		"note":            "AI model not selected or real AI call not enabled",
+		"agent_response":  "Please select a model and click 'Run Test' to perform a real model call.",
+		"note":            "Model not selected or real model call not enabled",
 	})
 }
 
-// runRealAITest Execute real AI test call
-func (s *Server) runRealAITest(userID, modelID, systemPrompt, userPrompt string) (string, error) {
-	// Get AI model configuration
-	model, err := s.store.AIModel().Get(userID, modelID)
+// runRealAgentTest Execute real agent test call
+func (s *Server) runRealAgentTest(userID, modelID, systemPrompt, userPrompt string) (string, error) {
+	// Get model configuration
+	model, err := s.store.AgentModel().Get(userID, modelID)
 	if err != nil {
-		return "", fmt.Errorf("failed to get AI model: %w", err)
+		return "", fmt.Errorf("failed to get model: %w", err)
 	}
 
 	if !model.Enabled {
-		return "", fmt.Errorf("AI model %s is not enabled", model.Name)
+		return "", fmt.Errorf("model %s is not enabled", model.Name)
 	}
 
 	if model.APIKey == "" {
-		return "", fmt.Errorf("AI model %s is missing API Key", model.Name)
+		return "", fmt.Errorf("model %s is missing API Key", model.Name)
 	}
 
-	// Create AI client via registry
+	// Create model client via registry
 	provider := model.Provider
 	apiKey := string(model.APIKey)
 
-	aiClient := llm.NewAIClientByProvider(provider)
-	if aiClient == nil {
-		aiClient = llm.NewClient()
+	client := agent.NewClientByProvider(provider)
+	if client == nil {
+		client = agent.NewClient()
 	}
 
-	aiClient.SetAPIKey(apiKey, model.CustomAPIURL, model.CustomModelName)
-	llm.TagUsage(aiClient, llm.OwnerTest)
+	client.SetAPIKey(apiKey, model.CustomAPIURL, model.CustomModelName)
+	agent.TagUsage(client, agent.FeatureTest, "")
 
-	// Call AI API
-	response, err := aiClient.CallWithMessages(systemPrompt, userPrompt)
+	// Call model API
+	response, err := client.CallWithMessages(systemPrompt, userPrompt)
 	if err != nil {
-		return "", fmt.Errorf("AI API call failed: %w", err)
+		return "", fmt.Errorf("model API call failed: %w", err)
 	}
 
 	return response, nil

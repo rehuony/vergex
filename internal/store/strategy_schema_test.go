@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestStrategyConfigMarshalSeparatesGridAndAIConfig(t *testing.T) {
+func TestStrategyConfigMarshalSeparatesGridAndAgentConfig(t *testing.T) {
 	cfg := GetDefaultStrategyConfig("zh")
 	cfg.StrategyType = "grid_trading"
 	cfg.GridConfig = &GridStrategyConfig{
@@ -33,16 +33,16 @@ func TestStrategyConfigMarshalSeparatesGridAndAIConfig(t *testing.T) {
 	if _, ok := asMap["grid_config"]; !ok {
 		t.Fatalf("expected grid_config in grid strategy JSON: %s", string(raw))
 	}
-	for _, key := range []string{"ai_config", "coin_source", "indicators", "risk_control", "prompt_sections", "custom_prompt"} {
+	for _, key := range []string{"agent_config", "coin_source", "indicators", "risk_control", "prompt_sections", "custom_prompt"} {
 		if _, ok := asMap[key]; ok {
 			t.Fatalf("did not expect %s in grid strategy JSON: %s", key, string(raw))
 		}
 	}
 }
 
-func TestStrategyConfigUnmarshalLegacyFlatAIConfig(t *testing.T) {
+func TestStrategyConfigUnmarshalLegacyFlatAgentConfig(t *testing.T) {
 	raw := []byte(`{
-		"strategy_type":"ai_trading",
+		"strategy_type":"agent_trading",
 		"coin_source":{"source_type":"static","static_coins":["ETHUSDT"]},
 		"indicators":{"klines":{"primary_timeframe":"15m"}},
 		"risk_control":{"max_positions":2,"min_confidence":80},
@@ -69,19 +69,19 @@ func TestStrategyConfigUnmarshalLegacyFlatAIConfig(t *testing.T) {
 	if err := json.Unmarshal(normalized, &asMap); err != nil {
 		t.Fatalf("unmarshal normalized map: %v", err)
 	}
-	if _, ok := asMap["ai_config"]; !ok {
-		t.Fatalf("expected ai_config after normalizing legacy config: %s", string(normalized))
+	if _, ok := asMap["agent_config"]; !ok {
+		t.Fatalf("expected agent_config after normalizing legacy config: %s", string(normalized))
 	}
 	if _, ok := asMap["coin_source"]; ok {
 		t.Fatalf("did not expect legacy coin_source at top level: %s", string(normalized))
 	}
 }
 
-func TestStrategyConfigNormalizeProductSchemaForLLMLabels(t *testing.T) {
+func TestStrategyConfigNormalizeProductSchemaForAgentLabels(t *testing.T) {
 	cfg := GetDefaultStrategyConfig("zh")
 	patch := map[string]any{
-		"strategy_type": "AI strategy",
-		"ai_config": map[string]any{
+		"strategy_type": "agent strategy",
+		"agent_config": map[string]any{
 			"coin_source": map[string]any{
 				"source_type": "OI Top",
 			},
@@ -100,8 +100,8 @@ func TestStrategyConfigNormalizeProductSchemaForLLMLabels(t *testing.T) {
 	}
 	merged.ClampLimits()
 
-	if merged.StrategyType != "ai_trading" {
-		t.Fatalf("strategy_type = %q, want ai_trading", merged.StrategyType)
+	if merged.StrategyType != "agent_trading" {
+		t.Fatalf("strategy_type = %q, want agent_trading", merged.StrategyType)
 	}
 	if merged.CoinSource.SourceType != "oi_top" {
 		t.Fatalf("source_type = %q, want oi_top", merged.CoinSource.SourceType)

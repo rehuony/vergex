@@ -45,7 +45,7 @@ func missingNamedFields(fields ...namedField) []string {
 	return missing
 }
 
-func IsVisibleAIModel(model *AIModel) bool {
+func IsVisibleAgentModel(model *AgentModel) bool {
 	if model == nil {
 		return false
 	}
@@ -59,8 +59,7 @@ func IsVisibleExchange(exchange *Exchange) bool {
 	if exchange == nil {
 		return false
 	}
-	return exchange.Enabled ||
-		strings.TrimSpace(string(exchange.APIKey)) != "" ||
+	return strings.TrimSpace(string(exchange.APIKey)) != "" ||
 		strings.TrimSpace(string(exchange.SecretKey)) != "" ||
 		strings.TrimSpace(string(exchange.Passphrase)) != ""
 }

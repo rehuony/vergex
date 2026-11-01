@@ -1,24 +1,67 @@
 package live
 
 import (
+	"errors"
 	"time"
 
-	"gorm.io/gorm"
+	"vergex/internal/store"
 )
 
-// ChangedSince returns the runs updated at or after a time, oldest change first. It
-// only reads the database, so unlike List it never checks a run with the exchange.
-// A run that fails verification is left out.
-func ChangedSince(db *gorm.DB, since time.Time, limit int) ([]View, error) {
-	var rows []Run
-	if err := db.Where("updated_at >= ?", since).Order("updated_at ASC").Limit(limit).Find(&rows).Error; err != nil {
-		return nil, err
+// RefusedOrder is an order refused before it reached the exchange, so the ledger never
+// hears of it. UpdatedAt is when its row last changed, which a run's own time is not:
+// a restart moves every unfinished run to needs_attention.
+type RefusedOrder struct {
+	RunID     string    `gorm:"column:run_id"`
+	PlanID    string    `gorm:"column:plan_id"`
+	AccountID string    `gorm:"column:account_id"`
+	ClientID  string    `gorm:"column:client_id"`
+	Role      string    `gorm:"column:role"`
+	Symbol    string    `gorm:"column:symbol"`
+	Quantity  string    `gorm:"column:quantity"`
+	Error     string    `gorm:"column:error"`
+	UpdatedAt time.Time `gorm:"column:updated_at"`
+}
+
+// RefusedSince returns the refused orders changed at or after a time, oldest first. It
+// only reads the database, so it never checks a run with the exchange.
+func RefusedSince(st *store.Store, since time.Time, limit int) ([]RefusedOrder, error) {
+	var orders []RefusedOrder
+	err := st.GormDB().Raw(`SELECT o.run_id, r.plan_id, r.account_id, o.client_id, o.role, o.symbol, o.quantity, o.error, o.updated_at
+		FROM frontier.run_orders o JOIN frontier.runs r ON r.id = o.run_id
+		WHERE o.exchange_order_id = '' AND o.error <> '' AND o.updated_at >= ?
+		ORDER BY o.updated_at LIMIT ?`, since, limit).Scan(&orders).Error
+	return orders, err
+}
+
+// OrderEnded reports whether an order's status is one it cannot leave.
+func OrderEnded(status string) bool {
+	return status == "FILLED" || status == "CANCELED" || status == "REJECTED" || status == "EXPIRED"
+}
+
+// CheckCloseEntries refuses a manual close while a run on the same account and symbol
+// could still open more of the position.
+func CheckCloseEntries(st *store.Store, accountKey, symbol string) error {
+	var runs []Run
+	err := st.GormDB().Raw(`SELECT r.* FROM frontier.runs r
+		JOIN frontier.plans p ON p.user_id = r.user_id AND p.id = r.plan_id
+		WHERE r.account_identity = ? AND p.symbol = ? AND r.state NOT IN ?`,
+		accountKey, symbol, []string{"completed", "cancelled", "expired"}).Scan(&runs).Error
+	if err != nil {
+		return errors.New("Could not verify remaining Frontier entries")
 	}
-	views := make([]View, 0, len(rows))
-	for _, row := range rows {
-		if view, err := decode(row); err == nil {
-			views = append(views, view)
+	for _, run := range runs {
+		if run.State == "approved" || run.State == "starting" || run.State == "running" {
+			return errors.New("Stop remaining Frontier entries before closing this position")
+		}
+		var statuses []string
+		if err := st.GormDB().Model(&runOrder{}).Where("run_id = ? AND role = ?", run.ID, "entry").Pluck("status", &statuses).Error; err != nil {
+			return errors.New("Could not verify remaining Frontier entries")
+		}
+		for _, status := range statuses {
+			if !OrderEnded(status) {
+				return errors.New("An entry is still open or unconfirmed. Stop and reconcile it before closing")
+			}
 		}
 	}
-	return views, nil
+	return nil
 }

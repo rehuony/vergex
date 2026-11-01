@@ -4,7 +4,7 @@ import { Camera, ImageUp, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAuth } from '@/contexts/auth-context'
 import { useProfile } from '@/hooks/use-profile'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { api } from '@/api'
 import { AVATAR_TYPES, checkAvatarFile, prepareAvatarSource } from './avatar'
 import { UserAvatar } from '@/components/common/user-avatar'
@@ -85,17 +85,17 @@ export function AvatarEditor({ language }: { language: Language }) {
       size="icon"
       disabled={busy}
       aria-label={t('editAvatar', language)}
-      className="group relative size-14 rounded-full p-0 hover:bg-transparent"
+      className="group relative size-9 rounded-full p-0 hover:bg-transparent"
       onClick={profile?.avatar ? undefined : choose}
     >
       <UserAvatar
         email={user?.email ?? ''}
         avatar={profile?.avatar}
-        className="size-14 text-lg"
+        className="size-9 text-sm"
       />
       {/* Hidden until hover or focus; always shown where there is no hover. */}
       <span className="absolute inset-0 grid place-items-center rounded-full bg-black/45 text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 group-data-[state=open]:opacity-100 [@media(hover:none)]:opacity-100">
-        <Camera className="size-5" aria-hidden="true" />
+        <Camera className="size-4" aria-hidden="true" />
       </span>
     </Button>
   )

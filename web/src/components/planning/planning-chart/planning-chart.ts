@@ -51,7 +51,7 @@ import {
 
 // Frontier market chart on lightweight-charts. Candles come from
 // /api/planning/candles (history) and /api/planning/feed (SSE).
-// Plan levels, plan comparisons and AI drawings are painted on top.
+// Plan levels, plan comparisons and agent drawings are painted on top.
 
 const initialBars = 500
 const maxBars = 4800
@@ -106,9 +106,9 @@ export class WorkspaceChart implements PlanningChart {
   private focusOnLoad = false
   private planLines: IPriceLine[] = []
   private planShapes: Shape[] = []
-  private aiLines: IPriceLine[] = []
-  private aiShapes: Shape[] = []
-  private aiCandidates: Drawing[] = []
+  private agentLines: IPriceLine[] = []
+  private agentShapes: Shape[] = []
+  private agentCandidates: Drawing[] = []
   private manualShapes: Shape[] = []
   private manualLines: IPriceLine[] = []
 
@@ -443,7 +443,7 @@ export class WorkspaceChart implements PlanningChart {
     this.comparisonPlans = []
     this.focused = false
     this.focusOnLoad = false
-    this.aiCandidates = []
+    this.agentCandidates = []
     this.clearManual()
     this.markResolution()
     this.onContext(this.context())
@@ -455,7 +455,7 @@ export class WorkspaceChart implements PlanningChart {
     await this.whenReady()
     const scene = ++this.scene
     this.resolution = resolution
-    this.aiCandidates = []
+    this.agentCandidates = []
     this.markResolution()
     this.onContext(this.context())
     await this.loadScene(scene)
@@ -517,10 +517,10 @@ export class WorkspaceChart implements PlanningChart {
 
   private render() {
     this.renderPlan()
-    this.renderAI()
+    this.renderAgent()
     this.overlay.setShapes([
       ...this.planShapes,
-      ...this.aiShapes,
+      ...this.agentShapes,
       ...this.manualShapes,
     ])
   }
@@ -606,20 +606,20 @@ export class WorkspaceChart implements PlanningChart {
     this.candles?.priceScale().applyOptions({ autoScale: true })
   }
 
-  private renderAI() {
-    this.removeLines(this.aiLines)
-    this.aiLines = []
-    this.aiShapes = []
+  private renderAgent() {
+    this.removeLines(this.agentLines)
+    this.agentLines = []
+    this.agentShapes = []
     const candles = this.candles
     if (!candles || this.comparisonPlans.length >= 2) return
     const levels = this.planVisible() ? this.planLevels() : []
-    for (const d of selectAnnotations(this.aiCandidates, levels)) {
+    for (const d of selectAnnotations(this.agentCandidates, levels)) {
       const color = {
         support: colors.up,
         resistance: colors.down,
         other: colors.info,
       }[annotationKind(d)]
-      this.paintDrawing(d, color, true, this.aiLines, this.aiShapes)
+      this.paintDrawing(d, color, true, this.agentLines, this.agentShapes)
     }
   }
 
@@ -659,10 +659,10 @@ export class WorkspaceChart implements PlanningChart {
 
   async draw(drawings: Drawing[], source = 'manual', interval?: string) {
     await this.whenReady()
-    if (source === 'ai') {
+    if (source === 'agent') {
       // Drawings are only meaningful on the timeframe they were made for.
       if (interval && interval !== this.context().interval) return
-      this.aiCandidates = drawings.slice(0, 10)
+      this.agentCandidates = drawings.slice(0, 10)
     } else {
       for (const d of drawings.slice(0, 20))
         this.paintDrawing(

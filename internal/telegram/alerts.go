@@ -190,7 +190,7 @@ func (w *alertWatcher) checkActions(ids []string, names map[string]string, now i
 	if !ok {
 		return
 	}
-	actions, err := w.st.Decision().FailedActionsSince(ids, time.UnixMilli(since), alertBatch)
+	actions, err := w.st.Decision().FailedActionsSince(ids, since, alertBatch)
 	if err != nil {
 		logger.Warnf("Telegram alerts: %v", err)
 		return

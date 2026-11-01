@@ -11,13 +11,13 @@ import {
   SettingBadge,
   SettingRow,
 } from '@/components/common/setting-row'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { useTraders } from '@/hooks/use-connections'
 import { api } from '@/api'
 import { confirmToast, notify } from '@/components/common/notify'
-import { getAIConfig } from '@/utils/strategy-profiles'
+import { getAgentConfig } from '@/utils/strategy-profiles'
 import type {
-  AIStrategyConfig,
+  AgentStrategyConfig,
   CoinSourceConfig,
   GridStrategyConfig,
   Strategy,
@@ -66,7 +66,7 @@ export function StrategiesPage() {
   const [linkedId] = useState(() => params.get('strategy') ?? undefined)
   const { data: traders = [] } = useTraders()
 
-  const ai = config ? getAIConfig(config) : null
+  const agent = config ? getAgentConfig(config) : null
   const isGrid = config?.strategy_type === 'grid_trading'
   const grid = isGrid ? config?.grid_config : null
   const estimate = useTokenEstimate(isGrid ? null : config)
@@ -107,23 +107,25 @@ export function StrategiesPage() {
 
   const edited = () => setHasChanges(true)
 
-  // Edits always write into ai_config; legacy flat fields are migrated there.
-  const patchAI = (patch: (ai: AIStrategyConfig) => AIStrategyConfig) => {
+  // Edits always write into agent_config; legacy flat fields are migrated there.
+  const patchAgent = (
+    patch: (agent: AgentStrategyConfig) => AgentStrategyConfig
+  ) => {
     setConfig((prev) => {
       if (!prev) return prev
-      const current = getAIConfig(prev)
+      const current = getAgentConfig(prev)
       if (!current) return prev
       return {
         ...prev,
-        strategy_type: prev.strategy_type || 'ai_trading',
-        ai_config: patch(structuredClone(current)),
+        strategy_type: prev.strategy_type || 'agent_trading',
+        agent_config: patch(structuredClone(current)),
       }
     })
     edited()
   }
 
   const patchCoinSource = (patch: Partial<CoinSourceConfig>) =>
-    patchAI((current) => ({
+    patchAgent((current) => ({
       ...current,
       coin_source: { ...current.coin_source, ...patch },
     }))
@@ -458,7 +460,7 @@ export function StrategiesPage() {
                       </PanelState>
                     )}
                   </div>
-                ) : ai ? (
+                ) : agent ? (
                   <>
                     <SectionTabs
                       tabs={editorTabs}
@@ -471,30 +473,30 @@ export function StrategiesPage() {
                       {tab === 'coins' && (
                         <CoinSourceSection
                           key={selected.id}
-                          ai={ai}
+                          agent={agent}
                           language={language}
                           onPatch={patchCoinSource}
                         />
                       )}
                       {tab === 'risk' && (
                         <RiskProfileSection
-                          ai={ai}
+                          agent={agent}
                           language={language}
-                          onPatchAI={patchAI}
+                          onPatchAgent={patchAgent}
                         />
                       )}
                       {tab === 'market' && (
                         <MarketDataSection
-                          ai={ai}
+                          agent={agent}
                           language={language}
-                          onPatchAI={patchAI}
+                          onPatchAgent={patchAgent}
                         />
                       )}
                       {tab === 'prompt' && (
                         <PromptSection
-                          ai={ai}
+                          agent={agent}
                           language={language}
-                          onPatchAI={patchAI}
+                          onPatchAgent={patchAgent}
                         />
                       )}
                     </div>

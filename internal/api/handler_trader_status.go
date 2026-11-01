@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"vergex/internal/exchange/binance"
+	"vergex/internal/exchange/okx"
 	"vergex/internal/logger"
 	"vergex/internal/trader"
-	"vergex/internal/trader/binance"
-	"vergex/internal/trader/okx"
 
 	"github.com/gin-gonic/gin"
 )
@@ -57,8 +57,8 @@ func (s *Server) handleSyncBalance(c *gin.Context) {
 	traderConfig := fullConfig.Trader
 	exchangeCfg := fullConfig.Exchange
 
-	if exchangeCfg == nil || !exchangeCfg.Enabled {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Exchange not configured or not enabled"})
+	if exchangeCfg == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Exchange not configured"})
 		return
 	}
 
@@ -149,8 +149,8 @@ func (s *Server) handleClosePosition(c *gin.Context) {
 
 	exchangeCfg := fullConfig.Exchange
 
-	if exchangeCfg == nil || !exchangeCfg.Enabled {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Exchange not configured or not enabled"})
+	if exchangeCfg == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Exchange not configured"})
 		return
 	}
 
@@ -222,7 +222,7 @@ func (s *Server) handleClosePosition(c *gin.Context) {
 
 	// Backfill the just-closed fill immediately. Manual closes may happen while
 	// the bot runtime is stopped, so the background OrderSync loop is not enough.
-	if syncErr := s.syncOrdersAfterManualClose(tempTrader, traderID, exchangeCfg.ID, exchangeCfg.ExchangeType); syncErr != nil {
+	if syncErr := s.syncOrdersAfterManualClose(exchangeCfg.ID); syncErr != nil {
 		logger.Infof("  ⚠️ Manual close sync failed, the next order sync will record it: %v", syncErr)
 	}
 
@@ -234,24 +234,21 @@ func (s *Server) handleClosePosition(c *gin.Context) {
 	})
 }
 
-func (s *Server) syncOrdersFromExchange(exchangeTrader trader.Trader, traderID, exchangeID, exchangeType string) error {
-	switch t := exchangeTrader.(type) {
-	case *binance.FuturesTrader:
-		return t.SyncOrdersFromBinance(traderID, exchangeID, exchangeType, s.store)
-	case *okx.OKXTrader:
-		return t.SyncOrdersFromOKX(traderID, exchangeID, exchangeType, s.store)
-	default:
-		return fmt.Errorf("order sync is not available for exchange type %s", exchangeType)
+// syncAccount reads an account's new trades into the ledger now.
+func (s *Server) syncAccount(exchangeID string) error {
+	if s.accountSync == nil {
+		return fmt.Errorf("account sync is not running")
 	}
+	return s.accountSync.Sync(exchangeID)
 }
 
-func (s *Server) syncOrdersAfterManualClose(exchangeTrader trader.Trader, traderID, exchangeID, exchangeType string) error {
+func (s *Server) syncOrdersAfterManualClose(exchangeID string) error {
 	var lastErr error
 	for attempt := 1; attempt <= 4; attempt++ {
 		if attempt > 1 {
 			time.Sleep(time.Duration(attempt-1) * 500 * time.Millisecond)
 		}
-		if err := s.syncOrdersFromExchange(exchangeTrader, traderID, exchangeID, exchangeType); err != nil {
+		if err := s.syncAccount(exchangeID); err != nil {
 			lastErr = err
 			continue
 		}

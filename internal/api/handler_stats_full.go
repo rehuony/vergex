@@ -10,7 +10,7 @@ import (
 // a single trader: win rate, profit factor, Sharpe ratio, max drawdown, and the
 // average win/loss amounts. These are derived from the trader's CLOSED positions
 // via store.Position().GetFullStatsByTraderFilters — the same computation the
-// strategy engine feeds to the AI, so the dashboard and the model see identical
+// strategy engine feeds to the agent, so the dashboard and the model see identical
 // numbers.
 //
 // The existing GET /statistics endpoint only returns cycle/position counts; this

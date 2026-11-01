@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { Panel, PanelState } from '@/components/common/panel'
 import { SearchField } from '@/components/common/search-field'
 import { SettingBadge } from '@/components/common/setting-row'
@@ -14,7 +14,7 @@ export const strategyTypeLabel = (strategy: Strategy, language: Language) =>
   t(
     strategy.config.strategy_type === 'grid_trading'
       ? 'strategy.typeGrid'
-      : 'strategy.typeAi',
+      : 'strategy.typeAgent',
     language
   )
 

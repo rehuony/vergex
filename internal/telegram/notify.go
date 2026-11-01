@@ -30,7 +30,7 @@ func Notify(ctx context.Context, st *store.Store, text string) error {
 		return ErrNotBound
 	}
 	for _, part := range splitMessage(text) {
-		if err := sendMessage(ctx, cfg.BotToken, cfg.ChatID, part); err != nil {
+		if err := sendMessage(ctx, string(cfg.BotToken), cfg.ChatID, part); err != nil {
 			return err
 		}
 	}

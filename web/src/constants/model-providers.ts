@@ -1,33 +1,13 @@
-// Constants for AI model and provider configuration
+// Constants for model and provider configuration
 
-export interface AIProviderConfig {
+export interface AgentProviderConfig {
   defaultModel: string
   apiUrl: string
   apiName: string
 }
 
-// Get friendly AI model display name
-export function getModelDisplayName(modelId: string): string {
-  switch (modelId.toLowerCase()) {
-    case 'deepseek':
-      return 'DeepSeek'
-    case 'qwen':
-      return 'Qwen'
-    case 'claude':
-      return 'Claude'
-    default:
-      return modelId.toUpperCase()
-  }
-}
-
-// Extract name part after underscore
-export function getShortName(fullName: string): string {
-  const parts = fullName.split('_')
-  return parts.length > 1 ? parts[parts.length - 1] : fullName
-}
-
-// AI Provider configuration - default models and API links
-export const AI_PROVIDER_CONFIG: Record<string, AIProviderConfig> = {
+// Model provider configuration - default models and API links
+export const AGENT_PROVIDER_CONFIG: Record<string, AgentProviderConfig> = {
   deepseek: {
     defaultModel: 'deepseek-chat',
     apiUrl: 'https://platform.deepseek.com/api_keys',
@@ -71,8 +51,7 @@ export const AI_PROVIDER_CONFIG: Record<string, AIProviderConfig> = {
 }
 
 // Model a trader runs on, as the Connections page names it: the custom model name,
-// else the provider's default model. Model IDs are "<user>_<provider>", so an
-// unknown ID falls back to its provider.
+// else the provider's default model.
 export function getTraderModelLabel(
   modelId: string | undefined,
   models: {
@@ -83,13 +62,11 @@ export function getTraderModelLabel(
   }[]
 ): string {
   if (!modelId) return '—'
-  const model =
-    models.find((m) => m.id === modelId) ??
-    models.find((m) => m.provider === modelId)
-  if (!model) return getModelDisplayName(getShortName(modelId))
+  const model = models.find((m) => m.id === modelId)
+  if (!model) return '—'
   return (
     model.customModelName ||
-    AI_PROVIDER_CONFIG[model.provider]?.defaultModel ||
+    AGENT_PROVIDER_CONFIG[model.provider]?.defaultModel ||
     model.name
   )
 }

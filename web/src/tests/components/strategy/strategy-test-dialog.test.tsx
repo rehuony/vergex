@@ -19,7 +19,7 @@ vi.mock('@/hooks/use-connections', () => ({
   useModelConfigs: () => ({ data: mocks.models }),
 }))
 
-const config: StrategyConfig = { strategy_type: 'ai_trading' }
+const config: StrategyConfig = { strategy_type: 'agent_trading' }
 const estimate = { total: 6434 } as StrategyTokenEstimate
 
 const show = () =>
@@ -51,7 +51,7 @@ beforeEach(() => {
 afterEach(cleanup)
 
 it('states the cost before running and only then calls the model', async () => {
-  mocks.testRun.mockResolvedValue({ ...built, ai_response: 'hold' })
+  mocks.testRun.mockResolvedValue({ ...built, agent_response: 'hold' })
   show()
   expect(
     screen.getByText(/about 6,434 tokens to DeepSeek AI on your API key/)
@@ -62,7 +62,7 @@ it('states the cost before running and only then calls the model', async () => {
   await waitFor(() =>
     expect(mocks.testRun).toHaveBeenCalledWith({
       config,
-      ai_model_id: 'm1',
+      agent_model_id: 'm1',
       run_real_ai: true,
     })
   )
@@ -72,14 +72,14 @@ it('states the cost before running and only then calls the model', async () => {
 it('previews prompts without a model and hides the server reminder', async () => {
   mocks.testRun.mockResolvedValue({
     ...built,
-    ai_response: 'Please select an AI model',
+    agent_response: 'Please select an AI model',
   })
   show()
   fireEvent.click(screen.getByRole('button', { name: 'Preview prompts' }))
   await waitFor(() =>
     expect(mocks.testRun).toHaveBeenCalledWith({
       config,
-      ai_model_id: '',
+      agent_model_id: '',
       run_real_ai: false,
     })
   )
@@ -91,8 +91,8 @@ it('previews prompts without a model and hides the server reminder', async () =>
 it('shows why the model call failed, keeping the prompts', async () => {
   mocks.testRun.mockResolvedValue({
     ...built,
-    ai_response: 'failed',
-    ai_error: 'invalid key',
+    agent_response: 'failed',
+    agent_error: 'invalid key',
   })
   show()
   fireEvent.click(screen.getByRole('button', { name: 'Run test' }))
@@ -105,7 +105,7 @@ it('cannot run without an enabled model, but can still preview', () => {
     { id: 'off', name: 'Disabled', provider: 'openai', enabled: false },
   ]
   show()
-  expect(screen.getByText('No AI model is enabled.')).toBeVisible()
+  expect(screen.getByText('No model is enabled.')).toBeVisible()
   expect(screen.getByRole('button', { name: 'Run test' })).toBeDisabled()
   expect(screen.getByRole('button', { name: 'Preview prompts' })).toBeEnabled()
 })

@@ -1,4 +1,4 @@
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { Segmented } from '@/components/common/segmented'
 import { SettingRow } from '@/components/common/setting-row'
 import { Switch } from '@/components/ui/switch'

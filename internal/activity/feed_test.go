@@ -2,27 +2,32 @@ package activity
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
-	"vergex/internal/llm"
+	"vergex/internal/agent"
+	"vergex/internal/market/instrument"
 	"vergex/internal/store"
 	"vergex/internal/store/storetest"
+
+	"github.com/shopspring/decimal"
 )
 
-func feedFixture(t *testing.T, plans func(time.Time, int) ([]PlanRun, error)) (*Feed, *store.Store, *time.Time) {
+// trendTrader is the trader every feed test starts with.
+const trendTrader = "00000000-0000-4000-8000-0000000000a1"
+
+func feedFixture(t *testing.T, refused func(time.Time, int) ([]RefusedOrder, error)) (*Feed, *store.Store, *time.Time) {
 	t.Helper()
 	st := storetest.New(t)
 	t.Cleanup(func() { st.Close() })
-	if err := st.User().Create(&store.User{ID: "alice", Email: "alice@example.com", PasswordHash: "x"}); err != nil {
+	if err := st.User().Create(&store.User{ID: storetest.UserID, Email: "alice@example.com", PasswordHash: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Trader().Create(&store.Trader{ID: "t1", UserID: "alice", Name: "Trend", ExchangeID: "e1"}); err != nil {
-		t.Fatal(err)
-	}
+	storetest.AddTrader(t, st, &store.Trader{ID: trendTrader, Name: "Trend"})
 	now := time.Now().UTC()
 	clock := &now
-	feed := New(Sources{Store: st, PlanRuns: plans})
+	feed := New(Sources{Store: st, RefusedOrders: refused})
 	feed.now = func() time.Time { return *clock }
 	feed.reader.now = feed.now
 	return feed, st, clock
@@ -38,14 +43,14 @@ func byID(update Update) map[string]Event {
 
 func TestFeedSaysWhereEachCallWentAndWhoMadeIt(t *testing.T) {
 	feed, st, _ := feedFixture(t, nil)
-	for _, charge := range []store.AICharge{
-		{TraderID: "t1", Model: "m", Provider: "deepseek", Host: "api.deepseek.com", PromptTokens: 90, CompletionTokens: 10, CostUSD: 0.02},
-		{TraderID: llm.OwnerFrontier, Model: "m", Provider: "openai", Host: "api.openai.com", PromptTokens: 5, Unpriced: true},
-		{TraderID: llm.OwnerTelegram, Model: "m", Provider: "openai", Host: "api.openai.com", PromptTokens: 5, Unpriced: true},
-		{TraderID: llm.OwnerTest, Model: "m", Provider: "deepseek", PromptTokens: 5, Unpriced: true},
+	for _, call := range []store.AgentCall{
+		{Feature: agent.FeatureTrader, SourceID: trendTrader, Model: "m", Provider: "deepseek", Host: "api.deepseek.com", PromptTokens: 90, CompletionTokens: 10, CostUSD: 0.02},
+		{Feature: agent.FeatureFrontier, Model: "m", Provider: "openai", Host: "api.openai.com", PromptTokens: 5, Unpriced: true},
+		{Feature: agent.FeatureTelegram, Model: "m", Provider: "openai", Host: "api.openai.com", PromptTokens: 5, Unpriced: true},
+		{Feature: agent.FeatureTest, Model: "m", Provider: "deepseek", PromptTokens: 5, Unpriced: true},
 	} {
-		charge := charge
-		if err := st.AICharge().Record(&charge); err != nil {
+		call := call
+		if err := st.AgentCall().Record(&call); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -56,7 +61,7 @@ func TestFeedSaysWhereEachCallWentAndWhoMadeIt(t *testing.T) {
 	for _, event := range update.Events {
 		routes[event.Route()]++
 	}
-	for route, want := range map[string]int{"traders>models": 1, "frontier>models": 1, "telegram>models": 1, "other>models": 1, "models>ai_cost": 1} {
+	for route, want := range map[string]int{"traders>models": 1, "frontier>models": 1, "telegram>models": 1, "other>models": 1, "models>agent_cost": 1} {
 		if routes[route] != want {
 			t.Errorf("route %s: %d events, want %d (all: %v)", route, routes[route], want, routes)
 		}
@@ -65,7 +70,7 @@ func TestFeedSaysWhereEachCallWentAndWhoMadeIt(t *testing.T) {
 		t.Fatalf("trader total = %+v", total)
 	}
 	// A call that cannot be priced has no cost to report; the estimate is not zero.
-	if total := update.Totals["models>ai_cost"].H24; total.Count != 1 || total.Amount != 0.02 {
+	if total := update.Totals["models>agent_cost"].H24; total.Count != 1 || total.Amount != 0.02 {
 		t.Fatalf("cost total = %+v", total)
 	}
 }
@@ -73,13 +78,24 @@ func TestFeedSaysWhereEachCallWentAndWhoMadeIt(t *testing.T) {
 func TestFeedFollowsAnOrderAndItsMoneyOnce(t *testing.T) {
 	feed, st, clock := feedFixture(t, nil)
 	ctx := context.Background()
-	at := clock.UnixMilli()
-	order := &store.TraderOrder{TraderID: "t1", ExchangeID: "e1", ExchangeOrderID: "1", Symbol: "BTCUSDT", Side: "BUY", Type: "MARKET", OrderAction: "open_long", Quantity: 2, Status: "NEW", CreatedAt: at, UpdatedAt: at}
-	if err := st.Order().CreateOrder(order); err != nil {
+	ledger := storetest.NewLedger(t, st)
+	btc, err := instrument.Ensure(st.GormDB(), "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	if err != nil {
 		t.Fatal(err)
 	}
+	leverage := 5
+	order := &store.LedgerOrder{
+		AccountID: ledger.Account, InstrumentID: btc, Source: store.SourceTrader, SourceID: trendTrader, Role: store.RoleEntry,
+		ExchangeOrderID: "1", Side: store.SideBuy, PositionSide: store.SideLong, Type: "MARKET", Status: store.OrderNew,
+		Quantity: decimal.NewFromInt(2), Leverage: &leverage, CreatedAt: *clock,
+	}
+	if err := st.Ledger().RecordOrder(order); err != nil {
+		t.Fatal(err)
+	}
+	orderEvent := fmt.Sprintf("order:%d:", order.ID)
 	feed.poll(ctx)
-	if _, ok := byID(feed.After(0))["order:1:NEW"]; !ok {
+	placed, ok := byID(feed.After(0))[orderEvent+"NEW"]
+	if !ok || placed.Route() != "traders>accounts" {
 		t.Fatalf("placed order missing: %+v", feed.After(0).Events)
 	}
 	seq := feed.After(0).Seq
@@ -90,43 +106,70 @@ func TestFeedFollowsAnOrderAndItsMoneyOnce(t *testing.T) {
 		t.Fatalf("repeated read reported %+v", got)
 	}
 
-	// Order sync stamps rows with the exchange's trade time, older than what was read.
+	// The fill happened before it was read, which is usual: the sync comes later.
 	*clock = clock.Add(10 * time.Second)
-	if err := st.GormDB().Model(order).Updates(map[string]any{"status": "FILLED", "updated_at": at - time.Minute.Milliseconds()}).Error; err != nil {
-		t.Fatal(err)
-	}
-	if err := st.GormDB().Create(&store.TraderFill{TraderID: "t1", ExchangeID: "e1", OrderID: order.ID, ExchangeOrderID: "1", ExchangeTradeID: "f1", Symbol: "BTCUSDT", Side: "BUY", Price: 100, Quantity: 2, QuoteQuantity: 200, Commission: 0.08, CommissionAsset: "USDT", CreatedAt: at}).Error; err != nil {
-		t.Fatal(err)
-	}
-	position := &store.TraderPosition{TraderID: "t1", ExchangeID: "e1", Symbol: "BTCUSDT", Side: "LONG", EntryQuantity: 2, Quantity: 2, EntryPrice: 100, Leverage: 5, EntryTime: at, Status: "OPEN", UpdatedAt: at}
-	if err := st.GormDB().Create(position).Error; err != nil {
-		t.Fatal(err)
+	opened := clock.Add(-5 * time.Second)
+	recorded, err := st.Ledger().RecordTrade(store.Trade{
+		AccountID: ledger.Account, InstrumentID: btc, ExchangeTradeID: "f1", ExchangeOrderID: "1", Side: store.SideBuy, PositionSide: store.SideLong,
+		Price: decimal.NewFromInt(100), Quantity: decimal.NewFromInt(2), QuoteQuantity: decimal.NewFromInt(200),
+		Commission: decimal.RequireFromString("0.08"), CommissionAsset: "USDT", ExecutedAt: opened,
+	}, store.Owner{})
+	if err != nil || !recorded {
+		t.Fatalf("record trade: %v, %v", recorded, err)
 	}
 	feed.poll(ctx)
 	events := byID(feed.After(seq))
-	if events["order:1:FILLED"].Status != "FILLED" {
+	if events[orderEvent+"FILLED"].Status != "FILLED" {
 		t.Fatalf("filled order missing: %+v", events)
 	}
-	if fee := events["fee:1"]; fee.Amount != 0.08 || fee.Route() != "accounts>fees" {
+	var fills, positions int64
+	st.GormDB().Model(&store.LedgerFill{}).Select("MAX(id)").Scan(&fills)
+	st.GormDB().Model(&store.LedgerPosition{}).Select("MAX(id)").Scan(&positions)
+	if fee := events[fmt.Sprintf("fee:%d", fills)]; fee.Amount != 0.08 || fee.Route() != "accounts>fees" {
 		t.Fatalf("fee = %+v", fee)
 	}
-	margin := events["margin:1"]
-	if margin.Amount != 40 || margin.Route() != "accounts>positions" || margin.To.ID != "e1:BTCUSDT:long" {
+	margin := events[fmt.Sprintf("margin:%d", positions)]
+	if margin.Amount != 40 || margin.Route() != "accounts>positions" || margin.To.ID != ledger.Account+":BTCUSDT:long" {
 		t.Fatalf("margin = %+v", margin)
 	}
 
-	exit := clock.UnixMilli()
-	if err := st.GormDB().Model(position).Updates(map[string]any{"status": "CLOSED", "exit_time": exit, "realized_pnl": -3.5, "updated_at": exit}).Error; err != nil {
-		t.Fatal(err)
-	}
+	*clock = clock.Add(10 * time.Second)
+	ledger.Close(trendTrader, "BTCUSDT", store.SideLong, 2, 98.25, -3.5, *clock)
 	seq = feed.After(0).Seq
 	feed.poll(ctx)
 	events = byID(feed.After(seq))
-	if realized := events["realized:1"]; realized.Amount != -3.5 || realized.Route() != "positions>accounts" {
+	realized := events[fmt.Sprintf("realized:%d", positions)]
+	if realized.Amount != -3.5 || realized.Route() != "positions>accounts" {
 		t.Fatalf("realized = %+v", realized)
 	}
-	if len(events) != 1 {
-		t.Fatalf("closing reported more than the result: %+v", events)
+}
+
+func TestFeedTellsAnOrderFromFrontierAndOneNothingClaims(t *testing.T) {
+	feed, st, clock := feedFixture(t, nil)
+	ledger := storetest.NewLedger(t, st)
+	btc, err := instrument.Ensure(st.GormDB(), "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, owner := range []store.Owner{{Source: store.SourceFrontier, SourceID: "run"}, {}} {
+		id := fmt.Sprintf("%d", i)
+		_, err := st.Ledger().RecordTrade(store.Trade{
+			AccountID: ledger.Account, InstrumentID: btc, ExchangeTradeID: id, ExchangeOrderID: id, Side: store.SideBuy, PositionSide: store.SideLong,
+			Price: decimal.NewFromInt(100), Quantity: decimal.NewFromInt(1), QuoteQuantity: decimal.NewFromInt(100), ExecutedAt: *clock,
+		}, owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	feed.poll(context.Background())
+	routes := map[string]int{}
+	for _, event := range feed.After(0).Events {
+		if event.Kind == KindOrders {
+			routes[event.Route()]++
+		}
+	}
+	if routes["frontier>accounts"] != 1 || routes["other>accounts"] != 1 {
+		t.Fatalf("routes = %v", routes)
 	}
 }
 
@@ -135,12 +178,12 @@ func TestFeedPutsACycleInTheOrderItHappened(t *testing.T) {
 	saved := clock.Add(-time.Minute)
 	acted := saved.Add(-10 * time.Second)
 	record := &store.DecisionRecord{
-		TraderID:            "t1",
-		CycleNumber:         7,
-		Timestamp:           saved,
-		CandidateCoins:      []string{"BTCUSDT", "ETHUSDT"},
-		Success:             true,
-		AIRequestDurationMs: 3000,
+		TraderID:        trendTrader,
+		CycleNumber:     7,
+		Timestamp:       saved,
+		CandidateCoins:  []string{"BTCUSDT", "ETHUSDT"},
+		Success:         true,
+		AgentDurationMs: 3000,
 		Decisions: []store.DecisionAction{
 			{Action: "hold", Symbol: "ETHUSDT"},
 			{Action: "open_long", Symbol: "BTCUSDT", Timestamp: acted},
@@ -167,8 +210,8 @@ func TestFeedPutsACycleInTheOrderItHappened(t *testing.T) {
 
 func TestFeedRebuildsTheLastDayAfterARestart(t *testing.T) {
 	feed, st, clock := feedFixture(t, nil)
-	recent := store.AICharge{TraderID: "t1", Model: "m", Provider: "p", Host: "h", PromptTokens: 5, Unpriced: true, CreatedAt: clock.Add(-time.Hour)}
-	old := store.AICharge{TraderID: "t1", Model: "m", Provider: "p", Host: "h", PromptTokens: 5, Unpriced: true, CreatedAt: clock.Add(-25 * time.Hour)}
+	recent := store.AgentCall{Feature: agent.FeatureTrader, SourceID: trendTrader, Model: "m", Provider: "p", Host: "h", PromptTokens: 5, Unpriced: true, CreatedAt: clock.Add(-time.Hour)}
+	old := store.AgentCall{Feature: agent.FeatureTrader, SourceID: trendTrader, Model: "m", Provider: "p", Host: "h", PromptTokens: 5, Unpriced: true, CreatedAt: clock.Add(-25 * time.Hour)}
 	if err := st.GormDB().Create(&recent).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -187,32 +230,55 @@ func TestFeedRebuildsTheLastDayAfterARestart(t *testing.T) {
 	}
 }
 
-func TestFrontierOrdersCountOnceTheyReachTheExchange(t *testing.T) {
-	runs := []PlanRun{{
-		ID:         "run",
-		PlanID:     "plan",
-		ExchangeID: "e1",
-		Symbol:     "BTCUSDT",
-		UpdatedAt:  time.Now(),
-		Orders: []PlanOrder{
-			{ClientID: "a", Role: "ENTRY", Symbol: "BTCUSDT", Quantity: "0.5", Status: "pending"},
-			{ClientID: "b", OrderID: "9", Role: "ENTRY", Symbol: "BTCUSDT", Quantity: "0.5", Status: "NEW"},
-			{ClientID: "c", Role: "STOP", Symbol: "BTCUSDT", Quantity: "0.5", Error: "rejected"},
-		},
-	}}
-	feed, _, _ := feedFixture(t, func(time.Time, int) ([]PlanRun, error) { return runs, nil })
+func TestFrontierOrdersRefusedBeforeTheExchangeStillShow(t *testing.T) {
+	at := time.Now().Add(-time.Hour)
+	orders := []RefusedOrder{{RunID: "run", PlanID: "plan", AccountID: "e1", ClientID: "c", Role: "STOP", Symbol: "BTCUSDT", Quantity: "0.5", Error: "rejected", At: at}}
+	feed, _, _ := feedFixture(t, func(time.Time, int) ([]RefusedOrder, error) { return orders, nil })
+	feed.poll(context.Background())
 	feed.poll(context.Background())
 
 	events := byID(feed.After(0))
-	if len(events) != 2 {
+	if len(events) != 1 {
 		t.Fatalf("events = %+v", events)
 	}
-	placed := events["plan:run:b:NEW"]
-	if placed.Route() != "frontier>accounts" || placed.Ref != "plan" || placed.Quantity != 0.5 {
-		t.Fatalf("placed = %+v", placed)
-	}
-	if events["plan:run:c:failed"].Status != StatusFailed {
+	refused := events["plan:run:c:failed"]
+	if refused.Status != StatusFailed || refused.Route() != "frontier>accounts" || refused.Ref != "plan" || refused.At != at.UnixMilli() {
 		t.Fatalf("refused order = %+v", events)
+	}
+}
+
+// A sync catching up after an outage writes trades long after they happened. They must
+// show when they happened, not as news.
+func TestAnOrderFilledDuringAnOutageShowsWhenItFilled(t *testing.T) {
+	feed, st, clock := feedFixture(t, nil)
+	ledger := storetest.NewLedger(t, st)
+	btc, err := instrument.Ensure(st.GormDB(), "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trade := store.Trade{
+		AccountID: ledger.Account, InstrumentID: btc, ExchangeOrderID: "1", Side: store.SideBuy, PositionSide: store.SideLong,
+		Price: decimal.NewFromInt(100), Quantity: decimal.NewFromInt(1), QuoteQuantity: decimal.NewFromInt(100),
+	}
+	filled := clock.Add(-3 * time.Hour)
+	trade.ExchangeTradeID, trade.ExecutedAt = "recent", filled
+	if _, err := st.Ledger().RecordTrade(trade, store.Owner{}); err != nil {
+		t.Fatal(err)
+	}
+	trade.ExchangeOrderID, trade.ExchangeTradeID, trade.ExecutedAt = "2", "old", clock.Add(-48*time.Hour)
+	if _, err := st.Ledger().RecordTrade(trade, store.Owner{}); err != nil {
+		t.Fatal(err)
+	}
+	feed.poll(context.Background())
+
+	var orders []Event
+	for _, event := range feed.After(0).Events {
+		if event.Kind == KindOrders {
+			orders = append(orders, event)
+		}
+	}
+	if len(orders) != 1 || orders[0].At != filled.UnixMilli() {
+		t.Fatalf("orders = %+v, want one at %d", orders, filled.UnixMilli())
 	}
 }
 

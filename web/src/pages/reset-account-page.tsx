@@ -1,6 +1,6 @@
 import { RotateCcw } from 'lucide-react'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import {
   RECOVERY_CLI,
   RecoveryCommandPage,

@@ -5,56 +5,35 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
-	"vergex/internal/planning/live"
 
 	"vergex/internal/logger"
 	"vergex/internal/store"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
-const (
-	maxManualBTCETHLeverage = 20
-	maxManualAltLeverage    = 20
-)
-
-// AI trader management related structures
+// trader management related structures
 type CreateTraderRequest struct {
 	Name                string  `json:"name" binding:"required"`
-	AIModelID           string  `json:"ai_model_id" binding:"required"`
+	AgentModelID        string  `json:"agent_model_id" binding:"required"`
 	ExchangeID          string  `json:"exchange_id" binding:"required"`
 	StrategyID          string  `json:"strategy_id"` // Strategy ID (new version)
 	InitialBalance      float64 `json:"initial_balance"`
 	ScanIntervalMinutes int     `json:"scan_interval_minutes"`
 	IsCrossMargin       *bool   `json:"is_cross_margin"` // Pointer type, nil means use default value true
-	// The following fields are kept for backward compatibility, new version uses strategy config
-	BTCETHLeverage       int    `json:"btc_eth_leverage"`
-	AltcoinLeverage      int    `json:"altcoin_leverage"`
-	TradingSymbols       string `json:"trading_symbols"`
-	CustomPrompt         string `json:"custom_prompt"`
-	OverrideBasePrompt   bool   `json:"override_base_prompt"`
-	SystemPromptTemplate string `json:"system_prompt_template"` // System prompt template name
-	UseOITop             bool   `json:"use_oi_top"`
 }
 
 // UpdateTraderRequest Update trader request
 type UpdateTraderRequest struct {
 	Name                string  `json:"name" binding:"required"`
-	AIModelID           string  `json:"ai_model_id" binding:"required"`
+	AgentModelID        string  `json:"agent_model_id" binding:"required"`
 	ExchangeID          string  `json:"exchange_id" binding:"required"`
 	StrategyID          string  `json:"strategy_id"` // Strategy ID (new version)
 	InitialBalance      float64 `json:"initial_balance"`
 	ScanIntervalMinutes int     `json:"scan_interval_minutes"`
 	IsCrossMargin       *bool   `json:"is_cross_margin"`
-	// The following fields are kept for backward compatibility, new version uses strategy config
-	BTCETHLeverage       int    `json:"btc_eth_leverage"`
-	AltcoinLeverage      int    `json:"altcoin_leverage"`
-	TradingSymbols       string `json:"trading_symbols"`
-	CustomPrompt         string `json:"custom_prompt"`
-	OverrideBasePrompt   bool   `json:"override_base_prompt"`
-	SystemPromptTemplate string `json:"system_prompt_template"`
 }
 
 func formatTraderCreationError(reason, nextStep string) string {
@@ -68,35 +47,14 @@ func traderCreationRequestError(reason string) string {
 	return formatTraderCreationError(reason, "Please check the information you just entered and submit again")
 }
 
-func validateTraderLeverageRange(btcEthLeverage, altcoinLeverage int) (string, string) {
-	if btcEthLeverage < 0 || btcEthLeverage > maxManualBTCETHLeverage {
-		return traderCreationRequestError("BTC/ETH leverage must be between 1x and 20x"), "trader.create.invalid_btc_eth_leverage"
-	}
-	if altcoinLeverage < 0 || altcoinLeverage > maxManualAltLeverage {
-		return traderCreationRequestError("Altcoin leverage must be between 1x and 20x"), "trader.create.invalid_altcoin_leverage"
-	}
-	return "", ""
-}
-
-func isSupportedTraderSymbol(symbol string) bool {
-	normalized := strings.ToUpper(strings.TrimSpace(symbol))
-	if normalized == "" {
-		return true
-	}
-	return strings.HasSuffix(normalized, "USDT")
-}
-
 func exchangeDisplayName(exchange *store.Exchange) string {
 	if exchange == nil {
 		return "the selected exchange account"
 	}
 	if exchange.AccountName != "" {
-		return fmt.Sprintf("%s (%s)", exchange.Name, exchange.AccountName)
+		return fmt.Sprintf("%s (%s)", exchange.VenueName(), exchange.AccountName)
 	}
-	if exchange.Name != "" {
-		return exchange.Name
-	}
-	return "the selected exchange account"
+	return exchange.VenueName()
 }
 
 func missingExchangeFields(exchange *store.Exchange) []string {
@@ -144,12 +102,6 @@ func validateExchangeForTraderCreation(exchange *store.Exchange) (string, string
 	if exchange == nil {
 		return formatTraderCreationError("The exchange account you selected was not found", "Please go to \"Settings > Exchange Config\" and add an available account first, then come back to create the bot"),
 			"trader.create.exchange_not_found", nil
-	}
-	if !exchange.Enabled {
-		return formatTraderCreationError(
-			fmt.Sprintf("Exchange account \"%s\" is currently disabled", exchangeDisplayName(exchange)),
-			"Please go to \"Settings > Exchange Config\" to enable this account, then create the bot again",
-		), "trader.create.exchange_disabled", mapStringPairs("exchange_name", exchangeDisplayName(exchange))
 	}
 
 	missing := missingExchangeFields(exchange)
@@ -269,7 +221,7 @@ func formatTraderStartError(reason, nextStep string) string {
 	return fmt.Sprintf("Failed to start the bot this time: %s. %s.", reason, nextStep)
 }
 
-// handleCreateTrader Create new AI trader
+// handleCreateTrader Create new trader
 func (s *Server) handleCreateTrader(c *gin.Context) {
 	userID := c.GetString("user_id")
 	var req CreateTraderRequest
@@ -278,48 +230,28 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		return
 	}
 
-	// Validate leverage values against the same limits exposed by manual user config.
-	if errMsg, errCode := validateTraderLeverageRange(req.BTCETHLeverage, req.AltcoinLeverage); errMsg != "" {
-		SafeBadRequestWithDetails(c, errMsg, errCode, nil)
-		return
-	}
-
-	// Validate trading symbol format: only USDT perpetuals are supported.
-	if req.TradingSymbols != "" {
-		symbols := strings.Split(req.TradingSymbols, ",")
-		for _, symbol := range symbols {
-			symbol = strings.TrimSpace(symbol)
-			if !isSupportedTraderSymbol(symbol) {
-				SafeBadRequestWithDetails(c, traderCreationRequestError(
-					fmt.Sprintf("The trading pair %s has an invalid format; only USDT perpetuals are currently supported", symbol),
-				), "trader.create.invalid_symbol", mapStringPairs("symbol", symbol))
-				return
-			}
-		}
-	}
-
-	model, err := s.store.AIModel().Get(userID, req.AIModelID)
+	model, err := s.store.AgentModel().Get(userID, req.AgentModelID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			SafeBadRequestWithDetails(c, formatTraderCreationError("The AI model you selected was not found", "Please go to \"Settings > Model Config\" to add and enable an available model first, then come back to create the bot"), "trader.create.model_not_found", nil)
+			SafeBadRequestWithDetails(c, formatTraderCreationError("The model you selected was not found", "Please go to \"Settings > Model Config\" to add and enable an available model first, then come back to create the bot"), "trader.create.model_not_found", nil)
 			return
 		}
 		SafeError(c, http.StatusInternalServerError,
-			formatTraderCreationError("Unable to read your AI model configuration for now", "Please retry later; if the problem persists, check whether the local service is running normally"),
+			formatTraderCreationError("Unable to read your model configuration for now", "Please retry later; if the problem persists, check whether the local service is running normally"),
 			err,
 		)
 		return
 	}
 	if !model.Enabled {
 		SafeBadRequestWithDetails(c, formatTraderCreationError(
-			fmt.Sprintf("AI model \"%s\" is not enabled yet", model.Name),
+			fmt.Sprintf("Model \"%s\" is not enabled yet", model.Name),
 			"Please go to \"Settings > Model Config\" to enable it, then create the bot again",
 		), "trader.create.model_disabled", mapStringPairs("model_name", model.Name))
 		return
 	}
 	if model.APIKey == "" {
 		SafeBadRequestWithDetails(c, formatTraderCreationError(
-			fmt.Sprintf("AI model \"%s\" is missing an API Key", model.Name),
+			fmt.Sprintf("Model \"%s\" is missing an API Key", model.Name),
 			"Please go to \"Settings > Model Config\" to complete the model credentials, then create the bot again",
 		), "trader.create.model_missing_credentials", mapStringPairs("model_name", model.Name))
 		return
@@ -345,33 +277,12 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		}
 	}
 
-	// Generate trader ID (use short UUID prefix for readability)
-	exchangeIDShort := req.ExchangeID
-	if len(exchangeIDShort) > 8 {
-		exchangeIDShort = exchangeIDShort[:8]
-	}
-	traderID := fmt.Sprintf("%s_%s_%d", exchangeIDShort, req.AIModelID, time.Now().Unix())
+	traderID := uuid.NewString()
 
 	// Set default values
 	isCrossMargin := true // Default to cross margin mode
 	if req.IsCrossMargin != nil {
 		isCrossMargin = *req.IsCrossMargin
-	}
-
-	// Set leverage default values
-	btcEthLeverage := 10 // Default value
-	altcoinLeverage := 5 // Default value
-	if req.BTCETHLeverage > 0 {
-		btcEthLeverage = req.BTCETHLeverage
-	}
-	if req.AltcoinLeverage > 0 {
-		altcoinLeverage = req.AltcoinLeverage
-	}
-
-	// Set system prompt template default value
-	systemPromptTemplate := "default"
-	if req.SystemPromptTemplate != "" {
-		systemPromptTemplate = req.SystemPromptTemplate
 	}
 
 	// Set scan interval default value
@@ -435,25 +346,18 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 	}
 
 	// Create trader configuration (database entity)
-	logger.Infof("🔧 DEBUG: Starting to create trader config, ID=%s, Name=%s, AIModel=%s, Exchange=%s, StrategyID=%s", traderID, req.Name, req.AIModelID, req.ExchangeID, req.StrategyID)
+	logger.Infof("🔧 DEBUG: Starting to create trader config, ID=%s, Name=%s, AgentModel=%s, Exchange=%s, StrategyID=%s", traderID, req.Name, req.AgentModelID, req.ExchangeID, req.StrategyID)
 	traderRecord := &store.Trader{
-		ID:                   traderID,
-		UserID:               userID,
-		Name:                 req.Name,
-		AIModelID:            req.AIModelID,
-		ExchangeID:           req.ExchangeID,
-		StrategyID:           req.StrategyID, // Associated strategy ID (new version)
-		InitialBalance:       actualBalance,  // Use actual queried balance
-		BTCETHLeverage:       btcEthLeverage,
-		AltcoinLeverage:      altcoinLeverage,
-		TradingSymbols:       req.TradingSymbols,
-		UseOITop:             req.UseOITop,
-		CustomPrompt:         req.CustomPrompt,
-		OverrideBasePrompt:   req.OverrideBasePrompt,
-		SystemPromptTemplate: systemPromptTemplate,
-		IsCrossMargin:        isCrossMargin,
-		ScanIntervalMinutes:  scanIntervalMinutes,
-		IsRunning:            false,
+		ID:                  traderID,
+		UserID:              userID,
+		Name:                req.Name,
+		AgentModelID:        req.AgentModelID,
+		ExchangeID:          req.ExchangeID,
+		StrategyID:          req.StrategyID, // Associated strategy ID (new version)
+		InitialBalance:      actualBalance,  // Use actual queried balance
+		MarginMode:          store.MarginModeOf(isCrossMargin),
+		ScanIntervalMinutes: scanIntervalMinutes,
+		IsRunning:           false,
 	}
 
 	// Save to database
@@ -495,12 +399,12 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		}
 	}
 
-	logger.Infof("✓ Trader created successfully: %s (model: %s, exchange: %s)", req.Name, req.AIModelID, req.ExchangeID)
+	logger.Infof("✓ Trader created successfully: %s (model: %s, exchange: %s)", req.Name, req.AgentModelID, req.ExchangeID)
 
 	c.JSON(http.StatusCreated, gin.H{
 		"trader_id":       traderID,
 		"trader_name":     req.Name,
-		"ai_model":        req.AIModelID,
+		"agent_model":     req.AgentModelID,
 		"is_running":      false,
 		"startup_warning": startupWarning,
 	})
@@ -537,25 +441,26 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 		return
 	}
 
-	if errMsg, errCode := validateTraderLeverageRange(req.BTCETHLeverage, req.AltcoinLeverage); errMsg != "" {
-		SafeBadRequestWithDetails(c, errMsg, errCode, nil)
+	// What it is pointed at must exist: the database would refuse it, less helpfully.
+	if _, err := s.store.AgentModel().Get(userID, req.AgentModelID); err != nil {
+		SafeBadRequest(c, "The model you selected was not found")
 		return
+	}
+	if _, err := s.store.Exchange().GetByID(userID, req.ExchangeID); err != nil {
+		SafeBadRequest(c, "The exchange account you selected was not found")
+		return
+	}
+	if req.StrategyID != "" {
+		if _, err := s.store.Strategy().Get(userID, req.StrategyID); err != nil {
+			SafeBadRequest(c, "The strategy you selected was not found")
+			return
+		}
 	}
 
 	// Set default values
-	isCrossMargin := existingTrader.IsCrossMargin // Keep original value
+	isCrossMargin := existingTrader.IsCrossMargin() // Keep original value
 	if req.IsCrossMargin != nil {
 		isCrossMargin = *req.IsCrossMargin
-	}
-
-	// Set leverage default values
-	btcEthLeverage := req.BTCETHLeverage
-	altcoinLeverage := req.AltcoinLeverage
-	if btcEthLeverage <= 0 {
-		btcEthLeverage = existingTrader.BTCETHLeverage // Keep original value
-	}
-	if altcoinLeverage <= 0 {
-		altcoinLeverage = existingTrader.AltcoinLeverage // Keep original value
 	}
 
 	// Set scan interval, allow updates
@@ -567,12 +472,6 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 		scanIntervalMinutes = 3
 	}
 	logger.Infof("📊 Final scan_interval_minutes: %d", scanIntervalMinutes)
-
-	// Set system prompt template
-	systemPromptTemplate := req.SystemPromptTemplate
-	if systemPromptTemplate == "" {
-		systemPromptTemplate = existingTrader.SystemPromptTemplate // Keep original value
-	}
 
 	// Handle strategy ID (if not provided, keep original value)
 	strategyID := req.StrategyID
@@ -593,22 +492,16 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 
 	// Update trader configuration
 	traderRecord := &store.Trader{
-		ID:                   traderID,
-		UserID:               userID,
-		Name:                 req.Name,
-		AIModelID:            req.AIModelID,
-		ExchangeID:           req.ExchangeID,
-		StrategyID:           strategyID, // Associated strategy ID
-		InitialBalance:       initialBalance,
-		BTCETHLeverage:       btcEthLeverage,
-		AltcoinLeverage:      altcoinLeverage,
-		TradingSymbols:       req.TradingSymbols,
-		CustomPrompt:         req.CustomPrompt,
-		OverrideBasePrompt:   req.OverrideBasePrompt,
-		SystemPromptTemplate: systemPromptTemplate,
-		IsCrossMargin:        isCrossMargin,
-		ScanIntervalMinutes:  scanIntervalMinutes,
-		IsRunning:            existingTrader.IsRunning, // Keep original value
+		ID:                  traderID,
+		UserID:              userID,
+		Name:                req.Name,
+		AgentModelID:        req.AgentModelID,
+		ExchangeID:          req.ExchangeID,
+		StrategyID:          strategyID, // Associated strategy ID
+		InitialBalance:      initialBalance,
+		MarginMode:          store.MarginModeOf(isCrossMargin),
+		ScanIntervalMinutes: scanIntervalMinutes,
+		IsRunning:           existingTrader.IsRunning, // Keep original value
 	}
 
 	// Check if trader was running before update (we'll restart it after)
@@ -622,8 +515,8 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 	}
 
 	// Update database
-	logger.Infof("🔄 Updating trader: ID=%s, Name=%s, AIModelID=%s, StrategyID=%s, ScanInterval=%d min",
-		traderRecord.ID, traderRecord.Name, traderRecord.AIModelID, traderRecord.StrategyID, scanIntervalMinutes)
+	logger.Infof("🔄 Updating trader: ID=%s, Name=%s, AgentModelID=%s, StrategyID=%s, ScanInterval=%d min",
+		traderRecord.ID, traderRecord.Name, traderRecord.AgentModelID, traderRecord.StrategyID, scanIntervalMinutes)
 	err = s.store.Trader().Update(traderRecord)
 	if err != nil {
 		SafeInternalError(c, "Failed to update trader", err)
@@ -659,12 +552,12 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 		}
 	}
 
-	logger.Infof("✓ Trader updated successfully: %s (model: %s, exchange: %s, strategy: %s)", req.Name, req.AIModelID, req.ExchangeID, strategyID)
+	logger.Infof("✓ Trader updated successfully: %s (model: %s, exchange: %s, strategy: %s)", req.Name, req.AgentModelID, req.ExchangeID, strategyID)
 
 	c.JSON(http.StatusOK, gin.H{
 		"trader_id":   traderID,
 		"trader_name": req.Name,
-		"ai_model":    req.AIModelID,
+		"agent_model": req.AgentModelID,
 		// A running trader is restarted with the new config (async above), so
 		// report it as running — callers must not fire a redundant start.
 		"is_running": wasRunning,
@@ -677,9 +570,11 @@ func (s *Server) handleDeleteTrader(c *gin.Context) {
 	userID := c.GetString("user_id")
 	traderID := c.Param("id")
 
-	// Delete from database
-	err := s.store.Trader().Delete(userID, traderID)
-	if err != nil {
+	if _, err := s.store.Trader().Get(userID, traderID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Trader does not exist"})
+			return
+		}
 		SafeInternalError(c, "Failed to delete trader", err)
 		return
 	}
@@ -695,6 +590,12 @@ func (s *Server) handleDeleteTrader(c *gin.Context) {
 
 	// Remove trader from memory
 	s.traderManager.RemoveTrader(traderID)
+
+	// Its cycles, equity and ledger entries stay.
+	if err := s.store.Trader().Archive(userID, traderID); err != nil {
+		SafeInternalError(c, "Failed to delete trader", err)
+		return
+	}
 
 	logger.Infof("✓ Trader deleted: %s", traderID)
 	c.JSON(http.StatusOK, gin.H{"message": "Trader deleted"})
@@ -718,13 +619,12 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 			return
 		}
 		defer unlock()
-		var lease live.Lease
-		leaseError := s.store.GormDB().Where("account_key = ?", accountKey(fullCfg.Exchange)).First(&lease).Error
-		if leaseError != nil && !errors.Is(leaseError, gorm.ErrRecordNotFound) {
+		leased, leaseError := s.store.Exchange().Leased(fullCfg.Exchange.ID)
+		if leaseError != nil {
 			SafeBadRequest(c, "无法核对交易计划账户锁定状态")
 			return
 		}
-		if leaseError == nil {
+		if leased {
 			SafeBadRequest(c, "该账户有已批准或尚未结束的交易计划，先取消或完成计划再启动自动交易")
 			return
 		}
@@ -766,28 +666,21 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 				SafeBadRequestWithDetails(c, describeTraderStartError(traderName, fmt.Errorf("trader has no strategy configured")), "trader.start.strategy_missing", mapStringPairs("trader_name", traderName))
 				return
 			}
-			// Check AI model
-			if fullCfg.AIModel == nil {
-				SafeBadRequestWithDetails(c, formatTraderStartError("The AI model associated with this bot does not exist", "Please go to \"Settings > Model Config\" to check, then click start again"), "trader.start.model_not_found", mapStringPairs("trader_name", traderName))
+			// Check model
+			if fullCfg.AgentModel == nil {
+				SafeBadRequestWithDetails(c, formatTraderStartError("The model associated with this bot does not exist", "Please go to \"Settings > Model Config\" to check, then click start again"), "trader.start.model_not_found", mapStringPairs("trader_name", traderName))
 				return
 			}
-			if !fullCfg.AIModel.Enabled {
+			if !fullCfg.AgentModel.Enabled {
 				SafeBadRequestWithDetails(c, formatTraderStartError(
-					fmt.Sprintf("The AI model \"%s\" associated with bot \"%s\" is not enabled yet", fullCfg.AIModel.Name, traderName),
+					fmt.Sprintf("The model \"%s\" associated with bot \"%s\" is not enabled yet", fullCfg.AgentModel.Name, traderName),
 					"Please go to \"Settings > Model Config\" to enable it, then click start again",
-				), "trader.start.model_disabled", mapStringPairs("trader_name", traderName, "model_name", fullCfg.AIModel.Name))
+				), "trader.start.model_disabled", mapStringPairs("trader_name", traderName, "model_name", fullCfg.AgentModel.Name))
 				return
 			}
 			// Check exchange
 			if fullCfg.Exchange == nil {
 				SafeBadRequestWithDetails(c, formatTraderStartError("The exchange account associated with this bot does not exist", "Please go to \"Settings > Exchange Config\" to check, then click start again"), "trader.start.exchange_not_found", mapStringPairs("trader_name", traderName))
-				return
-			}
-			if !fullCfg.Exchange.Enabled {
-				SafeBadRequestWithDetails(c, formatTraderStartError(
-					fmt.Sprintf("The exchange account \"%s\" associated with bot \"%s\" is not enabled yet", exchangeDisplayName(fullCfg.Exchange), traderName),
-					"Please go to \"Settings > Exchange Config\" to enable it, then click start again",
-				), "trader.start.exchange_disabled", mapStringPairs("trader_name", traderName, "exchange_name", exchangeDisplayName(fullCfg.Exchange)))
 				return
 			}
 		}
@@ -800,14 +693,14 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 		return
 	}
 
-	// Server-side launch gate: the trader cannot function without a funded AI
+	// Server-side launch gate: the trader cannot function without a funded agent
 	// wallet and a ready exchange account, so verify both before the run loop
 	// starts. `?force=true` skips the gate for deliberate manual overrides.
 	if c.Query("force") != "true" {
 		// strategyRequired=false: a trader that loaded into memory necessarily
 		// has a valid strategy (the manager refuses to load without one), so the
 		// preflight strategy check would be redundant here.
-		preflight := s.runLaunchPreflight(userID, fullCfg.AIModel, fullCfg.Exchange, fullCfg.Strategy, false)
+		preflight := s.runLaunchPreflight(userID, fullCfg.AgentModel, fullCfg.Exchange, fullCfg.Strategy, false)
 		if !preflight.Ready {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":     formatTraderStartError(preflight.Summary(), "Complete the failing checks, then start the bot again"),

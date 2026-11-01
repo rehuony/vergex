@@ -3,7 +3,7 @@ package api
 import (
 	"errors"
 	"vergex/internal/store"
-	"vergex/internal/trader/types"
+	"vergex/internal/trading"
 )
 
 // Keep account inspection independent of autonomous-trader loading. A finite
@@ -11,7 +11,7 @@ import (
 // This interface cannot submit, cancel, or change account settings.
 type accountReader interface {
 	GetPositions() ([]map[string]interface{}, error)
-	GetOpenOrders(string) ([]types.OpenOrder, error)
+	GetOpenOrders(string) ([]trading.OpenOrder, error)
 }
 
 func (s *Server) accountReadConfig(user, traderID string, exchangeIDs ...string) (*store.Exchange, error) {
@@ -26,8 +26,8 @@ func (s *Server) accountReadConfig(user, traderID string, exchangeIDs ...string)
 			}
 		}
 		ex, err := s.store.Exchange().GetByID(user, exchangeIDs[0])
-		if err != nil || !ex.Enabled {
-			return nil, errors.New("Trading account is unavailable or disabled")
+		if err != nil {
+			return nil, errors.New("Trading account is unavailable")
 		}
 		return ex, nil
 	}
@@ -40,8 +40,8 @@ func (s *Server) accountReadConfig(user, traderID string, exchangeIDs ...string)
 			continue
 		}
 		ex, err := s.store.Exchange().GetByID(user, t.ExchangeID)
-		if err != nil || !ex.Enabled {
-			return nil, errors.New("Trading account is unavailable or disabled")
+		if err != nil {
+			return nil, errors.New("Trading account is unavailable")
 		}
 		return ex, nil
 	}

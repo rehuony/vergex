@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -13,39 +14,74 @@ type StrategyStore struct {
 	db *gorm.DB
 }
 
+// What a trading strategy is in strategy.strategies.
+const strategyDomain = "trading"
+
 // Strategy strategy configuration
 type Strategy struct {
 	ID          string    `gorm:"primaryKey" json:"id"`
-	UserID      string    `gorm:"column:user_id;not null;default:'';index" json:"user_id"`
-	Name        string    `gorm:"not null" json:"name"`
-	Description string    `gorm:"default:''" json:"description"`
-	IsActive    bool      `gorm:"column:is_active;default:false;index" json:"is_active"`
-	IsDefault   bool      `gorm:"column:is_default;default:false" json:"is_default"`
-	Config      string    `gorm:"not null;default:'{}'" json:"config"`
+	UserID      string    `json:"user_id"`
+	Domain      string    `json:"-"`
+	Type        string    `json:"-"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	IsActive    bool      `json:"is_active"`
+	Config      string    `json:"config"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
-func (Strategy) TableName() string { return "strategies" }
+func (Strategy) TableName() string { return "strategy.strategies" }
 
 // NewStrategyStore creates a new StrategyStore
 func NewStrategyStore(db *gorm.DB) *StrategyStore {
 	return &StrategyStore{db: db}
 }
 
-func (s *StrategyStore) initTables() error {
-	// AutoMigrate will add missing columns without dropping existing data
-	return s.db.AutoMigrate(&Strategy{})
-}
-
-func (s *StrategyStore) initDefaultData() error {
-	// No longer pre-populate strategies - create on demand when user configures
-	return nil
+// typeColumn is the type column for a stored config.
+func typeColumn(config string) string {
+	var fields struct {
+		StrategyType string `json:"strategy_type"`
+	}
+	if json.Unmarshal([]byte(config), &fields) == nil && normalizeStrategyType(fields.StrategyType) == "grid_trading" {
+		return "grid"
+	}
+	return "agent"
 }
 
 // Create create a strategy
 func (s *StrategyStore) Create(strategy *Strategy) error {
-	return s.db.Create(strategy).Error
+	return createStrategy(s.db, strategy)
+}
+
+func createStrategy(db *gorm.DB, strategy *Strategy) error {
+	strategy.Domain = strategyDomain
+	strategy.Type = typeColumn(strategy.Config)
+	return db.Create(strategy).Error
+}
+
+// SeedIfNone creates the given strategies for an account that has none, and returns
+// those it created. They are a starting point, not something to keep in sync: matching
+// by name would add a second copy whenever the language differs or the user renamed one.
+func (s *StrategyStore) SeedIfNone(userID string, strategies []*Strategy) ([]*Strategy, error) {
+	var created []*Strategy
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&Strategy{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+			return fmt.Errorf("failed to count strategies: %w", err)
+		}
+		if count > 0 {
+			return nil
+		}
+		for _, strategy := range strategies {
+			if err := createStrategy(tx, strategy); err != nil {
+				return fmt.Errorf("failed to create strategy %q: %w", strategy.Name, err)
+			}
+		}
+		created = strategies
+		return nil
+	})
+	return created, err
 }
 
 // Update update a strategy
@@ -56,28 +92,29 @@ func (s *StrategyStore) Update(strategy *Strategy) error {
 			"name":        strategy.Name,
 			"description": strategy.Description,
 			"config":      strategy.Config,
+			"type":        typeColumn(strategy.Config),
 			"updated_at":  time.Now().UTC(),
 		}).Error
 }
 
 // Delete delete a strategy
 func (s *StrategyStore) Delete(userID, id string) error {
-	// do not allow deleting system default strategy
-	var st Strategy
-	if err := s.db.Where("id = ?", id).First(&st).Error; err == nil {
-		if st.IsDefault {
-			return fmt.Errorf("cannot delete system default strategy")
-		}
-		if st.IsActive {
-			return fmt.Errorf("cannot delete active strategy")
-		}
+	st, err := s.Get(userID, id)
+	if err != nil {
+		return err
+	}
+	if st.IsActive {
+		return fmt.Errorf("cannot delete active strategy")
 	}
 
 	// Check if any trader references this strategy
 	var count int64
 	if err := s.db.Model(&Trader{}).
 		Where("user_id = ? AND strategy_id = ?", userID, id).
-		Count(&count).Error; err == nil && count > 0 {
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
 		return fmt.Errorf("cannot delete strategy in use by %d trader(s) - reassign those traders first", count)
 	}
 
@@ -87,8 +124,8 @@ func (s *StrategyStore) Delete(userID, id string) error {
 // List get user's strategy list
 func (s *StrategyStore) List(userID string) ([]*Strategy, error) {
 	var strategies []*Strategy
-	err := s.db.Where("user_id = ? OR is_default = ?", userID, true).
-		Order("is_default DESC, created_at DESC").
+	err := s.db.Where("user_id = ?", userID).
+		Order("created_at DESC").
 		Find(&strategies).Error
 	if err != nil {
 		return nil, err
@@ -98,9 +135,11 @@ func (s *StrategyStore) List(userID string) ([]*Strategy, error) {
 
 // Get get a single strategy
 func (s *StrategyStore) Get(userID, id string) (*Strategy, error) {
+	if uuid.Validate(id) != nil {
+		return nil, gorm.ErrRecordNotFound
+	}
 	var st Strategy
-	err := s.db.Where("id = ? AND (user_id = ? OR is_default = ?)", id, userID, true).
-		First(&st).Error
+	err := s.db.Where("id = ? AND user_id = ?", id, userID).First(&st).Error
 	if err != nil {
 		return nil, err
 	}
@@ -110,21 +149,7 @@ func (s *StrategyStore) Get(userID, id string) (*Strategy, error) {
 // GetActive get user's currently active strategy
 func (s *StrategyStore) GetActive(userID string) (*Strategy, error) {
 	var st Strategy
-	err := s.db.Where("user_id = ? AND is_active = ?", userID, true).First(&st).Error
-	if err == gorm.ErrRecordNotFound {
-		// no active strategy, return system default strategy
-		return s.GetDefault()
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &st, nil
-}
-
-// GetDefault get system default strategy
-func (s *StrategyStore) GetDefault() (*Strategy, error) {
-	var st Strategy
-	err := s.db.Where("is_default = ?", true).First(&st).Error
+	err := s.db.Where("user_id = ? AND is_active", userID).First(&st).Error
 	if err != nil {
 		return nil, err
 	}
@@ -133,16 +158,15 @@ func (s *StrategyStore) GetDefault() (*Strategy, error) {
 
 // SetActive set active strategy (will first deactivate other strategies)
 func (s *StrategyStore) SetActive(userID, strategyID string) error {
+	if _, err := s.Get(userID, strategyID); err != nil {
+		return err
+	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		// first deactivate all strategies for the user
-		if err := tx.Model(&Strategy{}).Where("user_id = ?", userID).
+		if err := tx.Model(&Strategy{}).Where("user_id = ? AND is_active", userID).
 			Update("is_active", false).Error; err != nil {
 			return err
 		}
-
-		// activate specified strategy
-		return tx.Model(&Strategy{}).
-			Where("id = ? AND (user_id = ? OR is_default = ?)", strategyID, userID, true).
+		return tx.Model(&Strategy{}).Where("id = ? AND user_id = ?", strategyID, userID).
 			Update("is_active", true).Error
 	})
 }
@@ -162,7 +186,6 @@ func (s *StrategyStore) Duplicate(userID, sourceID, newID, newName string) error
 		Name:        newName,
 		Description: "Created based on [" + source.Name + "]",
 		IsActive:    false,
-		IsDefault:   false,
 		Config:      source.Config,
 	}
 

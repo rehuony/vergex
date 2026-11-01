@@ -44,7 +44,7 @@ const open = () => {
 const ready = {
   ready: true,
   min_trading_usdc: 12,
-  checks: [{ id: 'ai_model', status: 'ok' }],
+  checks: [{ id: 'agent_model', status: 'ok' }],
 }
 
 it('holds the start until the checks have passed', async () => {

@@ -28,7 +28,7 @@ const (
 
 // Check IDs — stable identifiers the frontend maps to guided-setup steps.
 const (
-	launchCheckAIModel         = "ai_model"
+	launchCheckAgentModel      = "agent_model"
 	launchCheckStrategy        = "strategy"
 	launchCheckExchangeConfig  = "exchange_config"
 	launchCheckExchangeAccount = "exchange_account"
@@ -82,9 +82,9 @@ func (r LaunchPreflightResult) Summary() string {
 }
 
 type launchPreflightRequest struct {
-	AIModelID  string `json:"ai_model_id"`
-	ExchangeID string `json:"exchange_id"`
-	StrategyID string `json:"strategy_id"`
+	AgentModelID string `json:"agent_model_id"`
+	ExchangeID   string `json:"exchange_id"`
+	StrategyID   string `json:"strategy_id"`
 }
 
 // handleLaunchPreflight runs launch readiness checks for a model/exchange
@@ -97,12 +97,12 @@ func (s *Server) handleLaunchPreflight(c *gin.Context) {
 		SafeBadRequest(c, "Invalid preflight request")
 		return
 	}
-	if strings.TrimSpace(req.AIModelID) == "" || strings.TrimSpace(req.ExchangeID) == "" {
-		SafeBadRequest(c, "ai_model_id and exchange_id are required")
+	if strings.TrimSpace(req.AgentModelID) == "" || strings.TrimSpace(req.ExchangeID) == "" {
+		SafeBadRequest(c, "agent_model_id and exchange_id are required")
 		return
 	}
 
-	model, err := s.store.AIModel().Get(userID, req.AIModelID)
+	model, err := s.store.AgentModel().Get(userID, req.AgentModelID)
 	if err != nil {
 		model = nil
 	}
@@ -136,7 +136,7 @@ func (s *Server) handleTraderPreflight(c *gin.Context) {
 		return
 	}
 
-	result := s.runLaunchPreflight(userID, fullCfg.AIModel, fullCfg.Exchange, fullCfg.Strategy, true)
+	result := s.runLaunchPreflight(userID, fullCfg.AgentModel, fullCfg.Exchange, fullCfg.Strategy, true)
 	c.JSON(http.StatusOK, result)
 }
 
@@ -145,12 +145,12 @@ func (s *Server) handleTraderPreflight(c *gin.Context) {
 // of "failed" so an infrastructure hiccup never hard-blocks a launch.
 func (s *Server) runLaunchPreflight(
 	userID string,
-	model *store.AIModel,
+	model *store.AgentModel,
 	exchange *store.Exchange,
 	strategy *store.Strategy,
 	strategyRequired bool,
 ) LaunchPreflightResult {
-	checks := []LaunchCheck{checkLaunchAIModel(model)}
+	checks := []LaunchCheck{checkLaunchAgentModel(model)}
 	checks = append(checks, checkLaunchStrategy(strategy, strategyRequired))
 	checks = append(checks, s.checkLaunchExchange(userID, exchange)...)
 
@@ -170,22 +170,22 @@ func (s *Server) runLaunchPreflight(
 	}
 }
 
-func checkLaunchAIModel(model *store.AIModel) LaunchCheck {
-	check := LaunchCheck{ID: launchCheckAIModel}
+func checkLaunchAgentModel(model *store.AgentModel) LaunchCheck {
+	check := LaunchCheck{ID: launchCheckAgentModel}
 
 	switch {
 	case model == nil:
 		check.Status = launchCheckStatusFailed
 		check.Code = "MODEL_NOT_FOUND"
-		check.Message = "The selected AI model was not found. Configure an AI model first."
+		check.Message = "The selected model was not found. Configure a model first."
 	case !model.Enabled:
 		check.Status = launchCheckStatusFailed
 		check.Code = "MODEL_DISABLED"
-		check.Message = fmt.Sprintf("AI model \"%s\" is disabled. Enable it first.", model.Name)
+		check.Message = fmt.Sprintf("Model \"%s\" is disabled. Enable it first.", model.Name)
 	case strings.TrimSpace(model.APIKey.String()) == "":
 		check.Status = launchCheckStatusFailed
 		check.Code = "MODEL_MISSING_CREDENTIALS"
-		check.Message = fmt.Sprintf("AI model \"%s\" has no credential saved. Add the API key first.", model.Name)
+		check.Message = fmt.Sprintf("Model \"%s\" has no credential saved. Add the API key first.", model.Name)
 	default:
 		check.Status = launchCheckStatusOK
 		check.Message = model.Name
@@ -293,9 +293,6 @@ func (s *Server) checkLaunchExchange(userID string, exchange *store.Exchange) []
 func describeExchangeConfigIssue(exchange *store.Exchange) (string, string) {
 	if exchange == nil {
 		return "The selected exchange account was not found. Connect an exchange first.", "EXCHANGE_NOT_FOUND"
-	}
-	if !exchange.Enabled {
-		return fmt.Sprintf("Exchange account \"%s\" is disabled. Enable it first.", exchangeDisplayName(exchange)), "EXCHANGE_DISABLED"
 	}
 	if missing := missingExchangeFields(exchange); len(missing) > 0 {
 		return fmt.Sprintf(

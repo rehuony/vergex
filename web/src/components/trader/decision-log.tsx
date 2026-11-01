@@ -9,7 +9,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { api } from '@/api'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import type { DecisionRecord } from '@/types'
 import { Panel, PanelState } from '@/components/common/panel'
 import { ScrollArea } from '@/components/ui/scroll-area'

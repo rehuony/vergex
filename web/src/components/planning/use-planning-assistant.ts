@@ -51,7 +51,7 @@ interface PlanningAssistantOptions {
   refreshHistory: () => Promise<void>
   setError: Dispatch<SetStateAction<string>>
   setOrderNotice: Dispatch<SetStateAction<string>>
-  // Called instead of planning when no AI model is set up yet.
+  // Called instead of planning when no model is set up yet.
   onNeedModel: (text: string, compare: boolean) => void
 }
 
@@ -150,7 +150,7 @@ export function usePlanningAssistant({
       await streamPlanning(
         {
           exchange_id: exchangeID,
-          model_id: modelID,
+          agent_model_id: modelID,
           symbol,
           venue,
           interval: context.interval,
@@ -240,7 +240,7 @@ export function usePlanningAssistant({
           if (event.type === 'drawings') {
             const drawings = event.data.drawings as Drawing[]
             chart.current
-              ?.draw(drawings, 'ai', context.interval)
+              ?.draw(drawings, 'agent', context.interval)
               .catch((e) => setError(e.message))
           }
         }

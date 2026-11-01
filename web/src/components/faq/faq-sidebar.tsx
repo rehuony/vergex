@@ -1,4 +1,4 @@
-import type { FAQCategory } from '@/i18n/faq-translations'
+import type { FAQCategory } from '@/i18n'
 
 interface FAQSidebarProps {
   categories: FAQCategory[]

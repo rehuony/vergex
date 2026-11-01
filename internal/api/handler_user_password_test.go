@@ -7,24 +7,25 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
-	"vergex/internal/auth"
+	"vergex/internal/security/auth"
 	"vergex/internal/store"
 	"vergex/internal/store/storetest"
+
+	"github.com/gin-gonic/gin"
 )
 
 func TestChangePasswordNeedsTheCurrentOne(t *testing.T) {
 	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 	hash, _ := auth.HashPassword("old-password")
-	if err := st.User().Create(&store.User{ID: "owner", Email: "owner@example.test", PasswordHash: hash}); err != nil {
+	if err := st.User().Create(&store.User{ID: storetest.UserID, Email: "owner@example.test", PasswordHash: hash}); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 
 	s := &Server{store: st, authLimiter: newIPRateLimiter(1, 100)}
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	r.Use(func(c *gin.Context) { c.Set("user_id", "owner") })
+	r.Use(func(c *gin.Context) { c.Set("user_id", storetest.UserID) })
 	r.PUT("/user/password", s.handleChangePassword)
 
 	change := func(body map[string]string) (int, string) {
@@ -38,7 +39,7 @@ func TestChangePasswordNeedsTheCurrentOne(t *testing.T) {
 		return w.Code, resp.ErrorKey
 	}
 	passwordIs := func(p string) bool {
-		user, _ := st.User().GetByID("owner")
+		user, _ := st.User().GetByID(storetest.UserID)
 		return auth.CheckPassword(p, user.PasswordHash)
 	}
 

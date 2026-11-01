@@ -71,7 +71,7 @@ vergex forecast-backtest --symbols BTCUSDT,ETHUSDT --intervals 1h,4h,1d --months
 | :----- | :------ |
 | Samples | Non-overlapping tests: each series every `horizon` bars, so one move is not counted several times |
 | Hit rate | Hits over directional calls that moved |
-| Rose anyway | How often price simply rose over the same samples. This is what a hit rate has to beat |
+| Rose anyway | How often price simply rose, over the samples where it moved. This is what a hit rate has to beat |
 | Brier score, lift | Error of the scores, and the improvement over always predicting the base rate. Zero or below means no skill beyond it |
 | Per signal after fees | Average return of acting on each call, less 0.10% round-trip fees |
 | Within expected move | How often the actual move stayed inside the expected move |

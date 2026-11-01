@@ -1,4 +1,4 @@
-import type { AIStrategyConfig, StrategyConfig } from '@/types'
+import type { AgentStrategyConfig, StrategyConfig } from '@/types'
 
 // Strategy settings the strategy page edits: candle choices, coin
 // list limits and the risk profiles that set several limits at once.
@@ -47,8 +47,10 @@ export const profileOptions: ProfileOption[] = [
   },
 ]
 
-export function getAIConfig(config: StrategyConfig): AIStrategyConfig | null {
-  if (config.ai_config) return config.ai_config
+export function getAgentConfig(
+  config: StrategyConfig
+): AgentStrategyConfig | null {
+  if (config.agent_config) return config.agent_config
   if (config.coin_source && config.indicators && config.risk_control) {
     return {
       coin_source: config.coin_source,
@@ -61,14 +63,16 @@ export function getAIConfig(config: StrategyConfig): AIStrategyConfig | null {
   return null
 }
 
-export function profileFromConfig(ai: AIStrategyConfig | null): Profile | null {
-  if (!ai) return null
+export function profileFromConfig(
+  agent: AgentStrategyConfig | null
+): Profile | null {
+  if (!agent) return null
   const match = profileOptions.find(
     (p) =>
-      p.maxPositions === ai.risk_control.max_positions &&
-      p.leverage === ai.risk_control.altcoin_max_leverage &&
-      p.confidence === ai.risk_control.min_confidence &&
-      p.timeframe === ai.indicators.klines.primary_timeframe
+      p.maxPositions === agent.risk_control.max_positions &&
+      p.leverage === agent.risk_control.altcoin_max_leverage &&
+      p.confidence === agent.risk_control.min_confidence &&
+      p.timeframe === agent.indicators.klines.primary_timeframe
   )
   return match?.value ?? null
 }
@@ -77,9 +81,9 @@ export function profileFromConfig(ai: AIStrategyConfig | null): Profile | null {
 // ones, dropping the oldest other choice when the list is full: the engine
 // reads the main timeframe's data out of that list.
 export function withPrimaryTimeframe(
-  current: AIStrategyConfig,
+  current: AgentStrategyConfig,
   timeframe: string
-): AIStrategyConfig {
+): AgentStrategyConfig {
   const selected = current.indicators.klines.selected_timeframes ?? []
   let next = selected
   if (selected.length > 0 && !selected.includes(timeframe)) {
@@ -104,9 +108,9 @@ export function withPrimaryTimeframe(
 
 // applyProfile sets the candles and risk limits a profile stands for.
 export function applyProfile(
-  current: AIStrategyConfig,
+  current: AgentStrategyConfig,
   profile: ProfileOption
-): AIStrategyConfig {
+): AgentStrategyConfig {
   const withTimeframe = withPrimaryTimeframe(current, profile.timeframe)
   return {
     ...withTimeframe,

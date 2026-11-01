@@ -3,9 +3,13 @@ package trader
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
-	"vergex/internal/kernel"
 	"vergex/internal/logger"
+	"vergex/internal/store"
+	"vergex/internal/trader/agent"
+
+	"github.com/shopspring/decimal"
 )
 
 // ============================================================================
@@ -55,7 +59,7 @@ func (at *AutoTrader) checkTotalPositionLimit(symbol string, additionalValue flo
 }
 
 // placeGridLimitOrder places a limit order for grid trading
-func (at *AutoTrader) placeGridLimitOrder(d *kernel.Decision, side string) error {
+func (at *AutoTrader) placeGridLimitOrder(d *agent.Decision, side string) error {
 	// Check if trader supports GridTrader interface
 	gridTrader, ok := at.trader.(GridTrader)
 	if !ok {
@@ -66,7 +70,7 @@ func (at *AutoTrader) placeGridLimitOrder(d *kernel.Decision, side string) error
 	gridConfig := at.config.StrategyConfig.GridConfig
 
 	// CRITICAL: Validate and cap quantity to prevent excessive position sizes
-	// This protects against AI miscalculations or leverage misconfigurations
+	// This protects against agent miscalculations or leverage misconfigurations
 	quantity := d.Quantity
 	if d.Price > 0 && gridConfig.TotalInvestment > 0 {
 		// Calculate max allowed position value per grid level
@@ -144,6 +148,8 @@ func (at *AutoTrader) placeGridLimitOrder(d *kernel.Decision, side string) error
 	}
 	at.gridState.mu.Unlock()
 
+	at.recordGridOrder(req, result)
+
 	logger.Infof("[Grid] Placed %s limit order at $%.2f, qty=%.4f, level=%d, orderID=%s",
 		side, d.Price, d.Quantity, d.LevelIndex, result.OrderID)
 
@@ -151,7 +157,7 @@ func (at *AutoTrader) placeGridLimitOrder(d *kernel.Decision, side string) error
 }
 
 // cancelGridOrder cancels a specific grid order
-func (at *AutoTrader) cancelGridOrder(d *kernel.Decision) error {
+func (at *AutoTrader) cancelGridOrder(d *agent.Decision) error {
 	gridTrader, ok := at.trader.(GridTrader)
 	if !ok {
 		gridTrader = NewGridTraderAdapter(at.trader)
@@ -224,7 +230,7 @@ func (at *AutoTrader) resumeGrid() error {
 }
 
 // adjustGrid adjusts grid parameters
-func (at *AutoTrader) adjustGrid(d *kernel.Decision) error {
+func (at *AutoTrader) adjustGrid(d *agent.Decision) error {
 	// Cancel existing orders first
 	at.cancelAllGridOrders()
 
@@ -415,5 +421,39 @@ func (at *AutoTrader) checkAndExecuteStopLoss() {
 					i, currentPrice, lossPct)
 			}
 		}
+	}
+}
+
+// recordGridOrder puts a placed limit order in the ledger. A failure is only logged: the
+// order is already on the exchange.
+func (at *AutoTrader) recordGridOrder(req *LimitOrderRequest, result *LimitOrderResult) {
+	if at.store == nil {
+		return
+	}
+	leverage := req.Leverage
+	positionSide := strings.ToLower(result.PositionSide)
+	if positionSide != store.SideLong && positionSide != store.SideShort {
+		positionSide = ""
+	}
+	order := store.LedgerOrder{
+		AccountID:       at.exchangeID,
+		Source:          store.SourceTrader,
+		SourceID:        at.id,
+		Role:            store.RoleGrid,
+		ExchangeOrderID: result.OrderID,
+		ClientOrderID:   result.ClientID,
+		Side:            strings.ToLower(req.Side),
+		PositionSide:    positionSide,
+		Type:            "LIMIT",
+		Status:          store.OrderNew,
+		Quantity:        decimal.NewFromFloat(req.Quantity),
+		Price:           decimal.NewNullDecimal(decimal.NewFromFloat(req.Price)),
+		PostOnly:        req.PostOnly,
+		ReduceOnly:      req.ReduceOnly,
+		Leverage:        &leverage,
+		MarginMode:      at.marginMode(),
+	}
+	if err := at.saveOrder(&order, req.Symbol); err != nil {
+		logger.Errorf("[Grid] Failed to record order %s: %v", result.OrderID, err)
 	}
 }

@@ -2,44 +2,23 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+	"vergex/internal/trading"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
-	"vergex/internal/planning"
-	"vergex/internal/planning/core"
+	"vergex/internal/exchange/binance"
+	"vergex/internal/exchange/okx"
 	"vergex/internal/planning/instrument"
 	"vergex/internal/planning/live"
 	"vergex/internal/store"
-	"vergex/internal/trader/binance"
-	"vergex/internal/trader/execution"
-	"vergex/internal/trader/okx"
 )
-
-// Persist before submission. A timeout, reload or duplicate click must never
-// authorize another close without reconciling the original exchange order.
-type accountCloseIntent struct {
-	ID         string `gorm:"primaryKey"`
-	UserID     string
-	ExchangeID string
-	AccountKey string `gorm:"index"`
-	Symbol     string
-	Side       string
-	Quantity   string
-	Entry      string
-	State      string
-	OrderJSON  string
-	UpdatedAt  time.Time
-}
-
-func (accountCloseIntent) TableName() string { return "planning_account_closes" }
 
 type accountCloseRequest struct {
 	ExchangeID string `json:"exchange_id"`
@@ -53,8 +32,8 @@ type accountCloseRequest struct {
 type accountCloser interface {
 	GetPositions() ([]map[string]interface{}, error)
 	RouteClientID(string) (string, error)
-	SubmitOrder(context.Context, execution.Order) (execution.Order, error)
-	LookupOrder(context.Context, execution.Order) (execution.Order, error)
+	SubmitOrder(context.Context, trading.Order) (trading.Order, error)
+	LookupOrder(context.Context, trading.Order) (trading.Order, error)
 }
 
 type closeNotSubmittedError struct{ error }
@@ -111,7 +90,7 @@ func (s *Server) handlePlanningAccountClose(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": message, "order": order})
 }
 
-func (s *Server) closeFuturesAccount(ctx context.Context, user string, in accountCloseRequest, factory func(*store.Exchange) (accountCloser, error)) (out execution.Order, err error) {
+func (s *Server) closeFuturesAccount(ctx context.Context, user string, in accountCloseRequest, factory func(*store.Exchange) (accountCloser, error)) (out trading.Order, err error) {
 	// Only a definite pre-submission failure may release the UI's close latch.
 	// Existing durable intents and ambiguous submissions must stay protected.
 	mayHaveSubmitted := false
@@ -121,7 +100,7 @@ func (s *Server) closeFuturesAccount(ctx context.Context, user string, in accoun
 		}
 	}()
 	id, err := uuid.Parse(in.RequestID)
-	if err != nil || id == uuid.Nil || !instrument.ValidSymbol(in.Symbol) || (in.Side != "long" && in.Side != "short") || !execution.Positive(execution.Decimal(in.Quantity)) || !execution.ValidOrderPrice(execution.Order{Role: "entry", Type: "market", ReduceOnly: true, Price: execution.Decimal(in.Entry)}) {
+	if err != nil || id == uuid.Nil || !instrument.ValidSymbol(in.Symbol) || (in.Side != "long" && in.Side != "short") || !trading.Positive(trading.Decimal(in.Quantity)) || !trading.ValidOrderPrice(trading.Order{Role: "entry", Type: "market", ReduceOnly: true, Price: trading.Decimal(in.Entry)}) {
 		return out, errors.New("Review a valid position and quantity before closing")
 	}
 	in.RequestID = id.String()
@@ -132,62 +111,51 @@ func (s *Server) closeFuturesAccount(ctx context.Context, user string, in accoun
 	if in.ExchangeID == "" || (ex.ExchangeType != "binance" && ex.ExchangeType != "okx") {
 		return out, errors.New("Select a Binance or OKX USDT futures account")
 	}
-	key := accountKey(ex)
-	unlock := planning.LockAccount(key)
+	key := ex.Identity
+	unlock := store.LockAccount(ex.ID)
 	defer unlock()
-	// Include duplicate configurations of the same credential, not only its UI ID.
-	accounts, err := s.store.Exchange().List(user)
+	traders, err := s.store.Trader().ListByExchangeID(user, ex.ID)
 	if err != nil {
-		return out, errors.New("Could not verify account state")
+		return out, errors.New("Could not verify trader state")
 	}
-	for _, account := range accounts {
-		if accountKey(account) != key {
-			continue
-		}
-		traders, err := s.store.Trader().ListByExchangeID(user, account.ID)
-		if err != nil {
-			return out, errors.New("Could not verify trader state")
-		}
-		for _, trader := range traders {
-			running := trader.IsRunning
-			if s.traderManager != nil {
-				if runtime, e := s.traderManager.GetTrader(trader.ID); e == nil {
-					active, _ := runtime.GetStatus()["is_running"].(bool)
-					running = running || active
-				}
-			}
-			if running {
-				return out, errors.New("Stop the trader on this account before closing manually")
+	for _, trader := range traders {
+		running := trader.IsRunning
+		if s.traderManager != nil {
+			if runtime, e := s.traderManager.GetTrader(trader.ID); e == nil {
+				active, _ := runtime.GetStatus()["is_running"].(bool)
+				running = running || active
 			}
 		}
+		if running {
+			return out, errors.New("Stop the trader on this account before closing manually")
+		}
 	}
-	if err := s.checkCloseEntries(key, in.Symbol); err != nil {
+	if err := live.CheckCloseEntries(s.store, key, in.Symbol); err != nil {
 		return out, err
 	}
 	client, err := factory(ex)
 	if err != nil {
 		return out, err
 	}
-	db := s.store.GormDB()
-	var previous accountCloseIntent
-	query := db.Where("id = ?", in.RequestID).First(&previous)
-	if query.Error == nil {
+	closes := s.store.AccountClose()
+	previous, err := closes.Get(in.RequestID)
+	if err == nil {
 		mayHaveSubmitted = true
 		if previous.UserID != user || previous.ExchangeID != in.ExchangeID || previous.Symbol != in.Symbol || previous.Side != in.Side || previous.Quantity != in.Quantity || previous.Entry != in.Entry {
 			return out, errors.New("Close request identity mismatch")
 		}
-		return reconcileAccountClose(ctx, db, client, &previous)
+		return s.reconcileAccountClose(ctx, ex, client, previous)
 	}
-	if !errors.Is(query.Error, gorm.ErrRecordNotFound) {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return out, errors.New("Could not verify the earlier close request")
 	}
-	var pending []accountCloseIntent
-	if err := db.Where("account_key = ? AND symbol = ? AND side = ? AND state = ?", key, in.Symbol, in.Side, "unconfirmed").Find(&pending).Error; err != nil {
+	pending, err := closes.Unconfirmed(key, in.Symbol, in.Side)
+	if err != nil {
 		return out, err
 	}
 	for i := range pending {
 		mayHaveSubmitted = true
-		if _, err := reconcileAccountClose(ctx, db, client, &pending[i]); err != nil {
+		if _, err := s.reconcileAccountClose(ctx, ex, client, &pending[i]); err != nil {
 			return out, err
 		}
 	}
@@ -203,14 +171,13 @@ func (s *Server) closeFuturesAccount(ctx context.Context, user string, in accoun
 	if in.Side == "short" {
 		side = "long"
 	}
-	out = execution.Order{ClientID: strings.ReplaceAll(id.String(), "-", ""), Symbol: in.Symbol, Role: "entry", Type: "market", Side: side, Price: execution.Decimal(in.Entry), Quantity: execution.Decimal(quantity), ReduceOnly: true, Status: "submitting", Filled: "0"}
+	out = trading.Order{ClientID: strings.ReplaceAll(id.String(), "-", ""), Symbol: in.Symbol, Role: "entry", Type: "market", Side: side, Price: trading.Decimal(in.Entry), Quantity: trading.Decimal(quantity), ReduceOnly: true, Status: "submitting", Filled: "0"}
 	out.VenueClientID, err = client.RouteClientID(out.ClientID)
 	if err != nil {
 		return out, err
 	}
-	raw, _ := json.Marshal(out)
-	intent := accountCloseIntent{ID: in.RequestID, UserID: user, ExchangeID: in.ExchangeID, AccountKey: key, Symbol: in.Symbol, Side: in.Side, Quantity: in.Quantity, Entry: in.Entry, State: "unconfirmed", OrderJSON: string(raw), UpdatedAt: time.Now().UTC()}
-	if err := db.Create(&intent).Error; err != nil {
+	intent := store.AccountClose{ID: in.RequestID, UserID: user, ExchangeID: in.ExchangeID, AccountKey: key, Symbol: in.Symbol, Side: in.Side, Quantity: in.Quantity, Entry: in.Entry, State: store.AccountCloseUnconfirmed, Order: out, UpdatedAt: time.Now().UTC()}
+	if err := closes.Create(&intent); err != nil {
 		return out, errors.New("Could not record close intent; no order was sent")
 	}
 	mayHaveSubmitted = true
@@ -218,7 +185,7 @@ func (s *Server) closeFuturesAccount(ctx context.Context, user string, in accoun
 	if err != nil {
 		return out, errors.New("The exchange close is unconfirmed. Check the position and exchange order history before retrying; no automatic repeat was sent")
 	}
-	if err := saveAccountClose(db, &intent, out); err != nil {
+	if err := s.saveAccountClose(ex, &intent, out); err != nil {
 		return out, err
 	}
 	return out, nil
@@ -242,59 +209,28 @@ func reviewedCloseQuantity(positions []map[string]interface{}, in accountCloseRe
 	return "", errors.New("Position is no longer open; no close was sent")
 }
 
-func (s *Server) checkCloseEntries(key, symbol string) error {
-	var runs []live.Run
-	if err := s.store.GormDB().Where("account_key = ? AND state NOT IN ?", key, []string{"completed", "cancelled", "expired"}).Find(&runs).Error; err != nil {
-		return errors.New("Could not verify remaining Frontier entries")
+func (s *Server) saveAccountClose(ex *store.Exchange, intent *store.AccountClose, order trading.Order) error {
+	known := intent.Order.OrderID != ""
+	intent.Order, intent.UpdatedAt = order, time.Now().UTC()
+	if live.OrderEnded(order.Status) {
+		intent.State = store.AccountCloseConfirmed
 	}
-	for _, run := range runs {
-		var plan core.Plan
-		var orders []execution.Order
-		if json.Unmarshal([]byte(run.PlanJSON), &plan) != nil || json.Unmarshal([]byte(run.OrdersJSON), &orders) != nil {
-			return errors.New("Execution record needs reconciliation before closing")
-		}
-		if plan.Snapshot.Symbol != symbol {
-			continue
-		}
-		if run.State == "approved" || run.State == "starting" || run.State == "running" {
-			return errors.New("Stop remaining Frontier entries before closing this position")
-		}
-		for _, order := range orders {
-			if order.Role == "entry" && !closeOrderTerminal(order.Status) {
-				return errors.New("An entry is still open or unconfirmed. Stop and reconcile it before closing")
-			}
-		}
-	}
-	return nil
-}
-
-func closeOrderTerminal(status string) bool {
-	return status == "FILLED" || status == "CANCELED" || status == "REJECTED" || status == "EXPIRED"
-}
-
-func saveAccountClose(db *gorm.DB, intent *accountCloseIntent, order execution.Order) error {
-	raw, _ := json.Marshal(order)
-	intent.OrderJSON, intent.UpdatedAt = string(raw), time.Now().UTC()
-	if closeOrderTerminal(order.Status) {
-		intent.State = "confirmed"
-	}
-	if err := db.Save(intent).Error; err != nil {
+	if err := s.store.AccountClose().Save(intent); err != nil {
 		return errors.New("Close receipt could not be saved; check the exchange before another close")
 	}
+	if !known {
+		live.RecordManualClose(s.store, ex.ExchangeType, ex.ID, intent.ID, intent.Side, order)
+	}
 	return nil
 }
 
-func reconcileAccountClose(ctx context.Context, db *gorm.DB, client accountCloser, intent *accountCloseIntent) (execution.Order, error) {
-	var order execution.Order
-	if json.Unmarshal([]byte(intent.OrderJSON), &order) != nil {
-		return order, errors.New("Close record needs reconciliation")
+func (s *Server) reconcileAccountClose(ctx context.Context, ex *store.Exchange, client accountCloser, intent *store.AccountClose) (trading.Order, error) {
+	if intent.State == store.AccountCloseConfirmed {
+		return intent.Order, nil
 	}
-	if intent.State == "confirmed" {
-		return order, nil
+	result, err := client.LookupOrder(ctx, intent.Order)
+	if err != nil || !live.OrderEnded(result.Status) {
+		return intent.Order, errors.New("An earlier close is still unconfirmed. Check exchange order history; it will not be sent again")
 	}
-	result, err := client.LookupOrder(ctx, order)
-	if err != nil || !closeOrderTerminal(result.Status) {
-		return order, errors.New("An earlier close is still unconfirmed. Check exchange order history; it will not be sent again")
-	}
-	return result, saveAccountClose(db, intent, result)
+	return result, s.saveAccountClose(ex, intent, result)
 }

@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"time"
 
-	"vergex/internal/marketdata"
+	"vergex/internal/market/feed"
+	"vergex/internal/planning/agent"
 	"vergex/internal/planning/core"
-	"vergex/internal/planning/harness"
 	"vergex/internal/planning/market"
 
 	"github.com/gin-gonic/gin"
@@ -28,11 +28,11 @@ type liveCharts interface {
 // chartCandles is one chart's subscription.
 type chartCandles interface {
 	Ready() <-chan struct{}
-	Drain() []marketdata.LiveCandle
+	Drain() []feed.LiveCandle
 	Close()
 }
 
-type serviceCharts struct{ service *marketdata.Service }
+type serviceCharts struct{ service *feed.Service }
 
 func (s serviceCharts) follow(venue, symbol, interval string) chartCandles {
 	if s.service == nil {
@@ -51,7 +51,7 @@ func (s serviceCharts) healthy(venue string) bool {
 func (s *Server) servePlanningFeed(c *gin.Context, source market.ChartSource, q market.CandleQuery) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("X-Accel-Buffering", "no")
-	write := func(event harness.Event) error {
+	write := func(event agent.Event) error {
 		raw, err := json.Marshal(event)
 		if err != nil {
 			return err
@@ -70,15 +70,15 @@ func (s *Server) servePlanningFeed(c *gin.Context, source market.ChartSource, q 
 // from the candles' times, so a stream that drops needs nothing more than polling
 // until it is back. liveOnly is for a chart with candles of its own: it hears the
 // stream and nothing else, so it never spends a request.
-func runChartFeed(ctx context.Context, write func(harness.Event) error, source market.ChartSource, live liveCharts, q market.CandleQuery, pollEvery time.Duration, liveOnly bool) {
+func runChartFeed(ctx context.Context, write func(agent.Event) error, source market.ChartSource, live liveCharts, q market.CandleQuery, pollEvery time.Duration, liveOnly bool) {
 	send := func(rows []market.Candle) error {
-		return write(harness.Event{Type: "candles", Data: gin.H{"candles": rows, "venue": q.Venue, "symbol": q.Symbol, "interval": q.Interval, "mode": "public", "received": time.Now().UTC()}})
+		return write(agent.Event{Type: "candles", Data: gin.H{"candles": rows, "venue": q.Venue, "symbol": q.Symbol, "interval": q.Interval, "mode": "public", "received": time.Now().UTC()}})
 	}
 	var latest []market.Candle
 	poll := func() error {
 		rows, err := source.Candles(ctx, q)
 		if err != nil {
-			return write(harness.Event{Type: "feed_error", Data: gin.H{"message": err.Error()}})
+			return write(agent.Event{Type: "feed_error", Data: gin.H{"message": err.Error()}})
 		}
 		if len(rows) > 0 {
 			latest = rows[len(rows)-1:]
@@ -128,7 +128,7 @@ func runChartFeed(ctx context.Context, write func(harness.Event) error, source m
 	}
 }
 
-func chartRows(candles []marketdata.LiveCandle) []market.Candle {
+func chartRows(candles []feed.LiveCandle) []market.Candle {
 	rows := make([]market.Candle, len(candles))
 	for i, candle := range candles {
 		rows[i] = market.Candle{

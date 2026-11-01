@@ -33,7 +33,7 @@ vi.mock('@/components/common/notify', () => ({ confirmToast: mocks.confirm }))
 beforeEach(() => {
   mocks.models.mockResolvedValue([
     {
-      id: 'ai',
+      id: 'agent',
       name: 'My AI',
       provider: 'deepseek',
       enabled: true,
@@ -62,7 +62,7 @@ it('adds a provider that is not connected yet and sends only that one', async ()
   expect(await screen.findByText('configured-model')).toBeVisible()
   expect(screen.getByText('Enabled')).toBeVisible()
 
-  fireEvent.click(screen.getByRole('button', { name: 'Add AI model' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Add model' }))
   // DeepSeek is connected already, so OpenAI is the only choice.
   expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveTextContent(
     'OpenAI'
@@ -86,9 +86,7 @@ it('adds a provider that is not connected yet and sends only that one', async ()
       },
     })
   )
-  expect(
-    await screen.findByRole('button', { name: 'Add AI model' })
-  ).toBeVisible()
+  expect(await screen.findByRole('button', { name: 'Add model' })).toBeVisible()
 })
 
 it('keeps the saved key when an edit leaves it blank', async () => {
@@ -102,7 +100,7 @@ it('keeps the saved key when an edit leaves it blank', async () => {
   await waitFor(() =>
     expect(mocks.update).toHaveBeenCalledWith({
       models: {
-        ai: {
+        agent: {
           enabled: true,
           api_key: '',
           custom_api_url: '',
@@ -115,7 +113,7 @@ it('keeps the saved key when an edit leaves it blank', async () => {
 
 it('will not remove a model a trader uses', async () => {
   mocks.traders.mockResolvedValue([
-    { trader_id: 't1', trader_name: 'Alpha', ai_model: 'ai' },
+    { trader_id: 't1', trader_name: 'Alpha', agent_model: 'agent' },
   ])
   show()
   fireEvent.click(await screen.findByRole('button', { name: 'Edit My AI' }))
@@ -132,8 +130,8 @@ it('will not remove a model a trader uses', async () => {
 it('centres a note while no model is connected', async () => {
   mocks.models.mockResolvedValue([])
   show()
-  expect(await screen.findByText('No AI model connected yet')).toBeVisible()
-  expect(screen.getByRole('button', { name: 'Add AI model' })).toBeEnabled()
+  expect(await screen.findByText('No model connected yet')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Add model' })).toBeEnabled()
 })
 
 it('tests the form values without saving and clears the result on edit', async () => {
@@ -148,7 +146,7 @@ it('tests the form values without saving and clears the result on edit', async (
 
   // A blank key field asks the server to use the saved key.
   expect(mocks.test).toHaveBeenCalledWith({
-    model_id: 'ai',
+    agent_model_id: 'agent',
     api_key: '',
     custom_api_url: '',
     custom_model_name: 'configured-model',

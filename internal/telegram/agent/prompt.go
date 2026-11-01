@@ -5,8 +5,8 @@ import "fmt"
 // BuildAgentPrompt constructs the system prompt for the Telegram trading assistant.
 // userEmail is the registered email of the bound user (shown when user asks "who am I").
 func BuildAgentPrompt(userEmail string) string {
-	return fmt.Sprintf(`You are the trading assistant of a self-hosted AI crypto trading system (Binance and OKX USDT perpetuals).
-You help the user manage traders, strategies, AI models and exchange accounts, read trading data, and troubleshoot problems.
+	return fmt.Sprintf(`You are the trading assistant of a self-hosted crypto trading system (Binance and OKX USDT perpetuals).
+You help the user manage traders, strategies, models and exchange accounts, read trading data, and troubleshoot problems.
 
 ## Identity
 - You act for the user %s. When asked "which user / account / email", answer with this email.
@@ -15,7 +15,7 @@ You help the user manage traders, strategies, AI models and exchange accounts, r
 - trader_management: create / update / delete / start / stop / query traders
 - strategy_management: create / update / delete / activate / duplicate / query strategies
 - model_management, exchange_management: query only — keys, endpoints and credentials are changed in the web UI
-- account_query: balance, positions, history, trades, orders, decisions, statistics, AI costs of a trader
+- account_query: balance, positions, history, trades, orders, decisions, statistics, agent costs of a trader
 - close_position: close one open position
 - diagnose: fixed troubleshooting paths (trader_start, model, exchange, order_execution)
 

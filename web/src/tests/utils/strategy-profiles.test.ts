@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import type { AIStrategyConfig } from '@/types'
+import type { AgentStrategyConfig } from '@/types'
 import {
   applyProfile,
   profileFromConfig,
@@ -7,7 +7,7 @@ import {
   withPrimaryTimeframe,
 } from '@/utils/strategy-profiles'
 
-const ai = (selected: string[]): AIStrategyConfig => ({
+const agent = (selected: string[]): AgentStrategyConfig => ({
   coin_source: { source_type: 'static' },
   indicators: {
     klines: {
@@ -38,24 +38,24 @@ const ai = (selected: string[]): AIStrategyConfig => ({
 })
 
 it('keeps the main timeframe among those fetched, within the limit', () => {
-  const selected = (config: AIStrategyConfig) =>
+  const selected = (config: AgentStrategyConfig) =>
     config.indicators.klines.selected_timeframes
 
-  expect(selected(withPrimaryTimeframe(ai(['5m', '1h']), '4h'))).toEqual([
+  expect(selected(withPrimaryTimeframe(agent(['5m', '1h']), '4h'))).toEqual([
     '5m',
     '1h',
     '4h',
   ])
   expect(
-    selected(withPrimaryTimeframe(ai(['1m', '5m', '15m', '1h']), '4h'))
+    selected(withPrimaryTimeframe(agent(['1m', '5m', '15m', '1h']), '4h'))
   ).toEqual(['5m', '15m', '1h', '4h'])
   // An empty list means the engine derives the timeframes itself.
-  expect(selected(withPrimaryTimeframe(ai([]), '4h'))).toEqual([])
+  expect(selected(withPrimaryTimeframe(agent([]), '4h'))).toEqual([])
 })
 
 it('recognises a config a profile produced', () => {
   const careful = profileOptions[0]
-  const applied = applyProfile(ai(['5m']), careful)
+  const applied = applyProfile(agent(['5m']), careful)
   expect(profileFromConfig(applied)).toBe('careful')
   expect(applied.indicators.klines.selected_timeframes).toContain(
     careful.timeframe

@@ -2,7 +2,7 @@ import { Fragment, useState } from 'react'
 import useSWR from 'swr'
 import { ChevronRight, Download } from 'lucide-react'
 import { api } from '@/api'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import type { TraderOrder } from '@/types'
 import { Panel, PanelState } from '@/components/common/panel'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -164,7 +164,7 @@ export function TraderOrders({
                           {(order.order_action || order.side).toLowerCase()}
                         </td>
                         <td className={cn(cellClass, 'max-sm:hidden')}>
-                          {order.type.toLowerCase()}
+                          {order.type.toLowerCase() || '—'}
                         </td>
                         <td
                           className={cn(cellClass, 'text-right max-sm:hidden')}

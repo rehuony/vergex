@@ -1,16 +1,16 @@
 import useSWR, { type SWRConfiguration } from 'swr'
 import { api } from '@/api'
-import type { AIModel, Exchange, TraderInfo } from '@/types'
+import type { AgentModel, Exchange, TraderInfo } from '@/types'
 
-// AI models and exchange accounts are edited in settings, over whatever page
+// models and exchange accounts are edited in settings, over whatever page
 // is open. Every reader shares these cache keys, so a saved change shows on
 // that page at once.
 
 export const useModelConfigs = () =>
-  useSWR<AIModel[]>('model-configs', () => api.getModelConfigs())
+  useSWR<AgentModel[]>('model-configs', () => api.getModelConfigs())
 
 export const useSupportedModels = () =>
-  useSWR<AIModel[]>('supported-models', () => api.getSupportedModels(), {
+  useSWR<AgentModel[]>('supported-models', () => api.getSupportedModels(), {
     revalidateOnFocus: false,
   })
 
@@ -35,10 +35,10 @@ export const useTraders = () =>
 
 // A model counts as set up once it is enabled or holds a key or endpoint;
 // a disabled one stays listed so it can be edited again.
-export const configuredModels = (models: AIModel[] = []) =>
+export const configuredModels = (models: AgentModel[] = []) =>
   models.filter(
     (m) => m.enabled || m.has_api_key || Boolean(m.customApiUrl?.trim())
   )
 
 export const configuredExchanges = (exchanges: Exchange[] = []) =>
-  exchanges.filter((e) => e.enabled || e.has_api_key)
+  exchanges.filter((e) => e.has_api_key)

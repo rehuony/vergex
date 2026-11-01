@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { ForecastDetail } from '@/api/forecast'
 import { Panel } from '@/components/common/panel'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import {
   DirectionLabel,
   baseAsset,

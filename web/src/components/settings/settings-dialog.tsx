@@ -19,14 +19,14 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/contexts/auth-context'
 import { useLanguage } from '@/contexts/language-context'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { api } from '@/api'
 import { cn } from '@/utils/cn'
 import { ApiError } from '@/api/http-client'
 import { displayWidth } from '@/utils/text'
 import { useProfile } from '@/hooks/use-profile'
 import { Dialog, dialogInputClass } from '@/components/common/dialog'
-import { AICostPanel } from './ai-cost-panel'
+import { AgentCostPanel } from './agent-cost-panel'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AvatarEditor } from './avatar-editor'
@@ -41,7 +41,7 @@ const SECTIONS = [
   { id: 'account', label: 'accountTab', icon: UserRound },
   { id: 'models', label: 'modelsTab', icon: Brain },
   { id: 'exchanges', label: 'exchangesTab', icon: Landmark },
-  { id: 'costs', label: 'aiCostsTab', icon: Receipt },
+  { id: 'costs', label: 'agentCostsTab', icon: Receipt },
   { id: 'telegram', label: 'telegramTab', icon: Send },
 ] as const
 
@@ -166,6 +166,7 @@ function PasswordSettings({
           }}
           aria-invalid={wrongCurrent}
           aria-describedby={wrongCurrent ? messageId : undefined}
+          placeholder={t('currentPasswordPlaceholder', language)}
           language={language}
         />
       </SettingRow>
@@ -178,7 +179,7 @@ function PasswordSettings({
           minLength={8}
           value={next}
           onChange={(e) => setNext(e.target.value)}
-          placeholder={t('passwordMin8', language)}
+          placeholder={t('newPasswordPlaceholder', language)}
           language={language}
         />
       </SettingRow>
@@ -196,6 +197,7 @@ function PasswordSettings({
           onChange={(e) => setConfirm(e.target.value)}
           aria-invalid={mismatch}
           aria-describedby={mismatch ? messageId : undefined}
+          placeholder={t('confirmPasswordPlaceholder', language)}
           language={language}
         />
       </SettingRow>
@@ -287,7 +289,7 @@ function AccountSettings({ language }: { language: Language }) {
   )
 }
 
-/** Account, AI model, exchange, AI cost and Telegram settings. */
+/** Account, model, exchange, agent cost and Telegram settings. */
 export function SettingsDialog({
   section,
   onSectionChange,
@@ -347,7 +349,7 @@ export function SettingsDialog({
         {section === 'telegram' && <TelegramSettings language={language} />}
         {section === 'costs' && (
           <div className="flex min-h-full flex-col py-4">
-            <AICostPanel />
+            <AgentCostPanel />
           </div>
         )}
       </ScrollArea>

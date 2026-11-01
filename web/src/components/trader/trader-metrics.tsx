@@ -5,7 +5,7 @@ import type {
   TraderFullStats,
   TraderMetrics as StoredMetrics,
 } from '@/types'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { Panel } from '@/components/common/panel'
 import { fmtCountdown, fmtPct, fmtTime, fmtUsd } from '@/utils/trader-format'

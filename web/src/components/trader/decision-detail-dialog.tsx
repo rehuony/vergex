@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import useSWR from 'swr'
 import { api } from '@/api'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { Dialog } from '@/components/common/dialog'
 import { PanelState } from '@/components/common/panel'
 import { StoredText } from '@/components/common/stored-text'

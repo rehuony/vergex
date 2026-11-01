@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import type { SymbolStats } from '@/types'
 import { cn } from '@/utils/cn'
 import { Panel, PanelState } from '@/components/common/panel'

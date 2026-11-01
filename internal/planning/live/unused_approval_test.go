@@ -6,6 +6,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"vergex/internal/store"
 
 	"vergex/internal/planning"
 	"vergex/internal/planning/core"
@@ -19,8 +20,8 @@ func nextApprovalPlan(t *testing.T, c *Controller, m *testMarket, original core.
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := planning.DraftStore{DB: c.DB, UserID: "alice", ExchangeID: "exchange", Venue: "binance"}
-	if err = store.Add([]core.Plan{next}); err != nil {
+	drafts := planning.DraftStore{DB: c.DB, UserID: testUser, ExchangeID: testAccount, Venue: "binance"}
+	if err = drafts.Add([]core.Plan{next}); err != nil {
 		t.Fatal(err)
 	}
 	return next
@@ -37,31 +38,31 @@ func TestReplaceOnlyExactUnusedApproval(t *testing.T) {
 				old = approved(t, c, p)
 			}
 			next := nextApprovalPlan(t, c, m, p, "new selection")
-			id, hash, user := old.ID, old.ApprovalHash, "alice"
+			id, hash, user := old.ID, old.ApprovalHash, testUser
 			switch scenario {
 			case "wrong_hash":
 				hash = "wrong"
 			case "wrong_id":
 				id = "other"
 			case "other_user":
-				user = "bob"
+				user = testOtherUser
 			case "draft_changed":
 				c.DB.Model(&planning.Draft{}).Where("id = ?", next.ID).Update("status", "cancelled")
 			}
 			got, err := c.ApproveReplacing(context.Background(), user, next.ID, next.Hash, "APPROVE LIVE", id, hash)
-			previous, _ := c.Get("alice", old.ID)
-			var lease Lease
+			previous, _ := c.Get(testUser, old.ID)
+			var lease store.AccountLease
 			if e := c.DB.First(&lease).Error; e != nil {
 				t.Fatal(e)
 			}
 			if scenario == "replace" {
-				if err != nil || got.State != "approved" || previous.State != "cancelled" || lease.RunID != got.ID {
+				if err != nil || got.State != "approved" || previous.State != "cancelled" || lease.HolderID != got.ID {
 					t.Fatalf("replacement failed: %v %s %s", err, got.State, previous.State)
 				}
-				if _, e := c.Execute(context.Background(), "alice", old.ID, old.ApprovalHash); e == nil {
+				if _, e := c.Execute(context.Background(), testUser, old.ID, old.ApprovalHash); e == nil {
 					t.Fatal("superseded approval executed")
 				}
-			} else if err == nil || previous.State != old.State || lease.RunID != old.ID {
+			} else if err == nil || previous.State != old.State || lease.HolderID != old.ID {
 				t.Fatalf("changed an unrelated or active approval: %v %s", err, previous.State)
 			}
 			if len(b.placed) != 0 || len(b.cancelled) != 0 {
@@ -81,7 +82,7 @@ func TestConcurrentReplacementsCannotReplaceAnUnreviewedApproval(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := c.ApproveReplacing(context.Background(), "alice", next.ID, next.Hash, "APPROVE LIVE", old.ID, old.ApprovalHash)
+			_, err := c.ApproveReplacing(context.Background(), testUser, next.ID, next.Hash, "APPROVE LIVE", old.ID, old.ApprovalHash)
 			results <- err
 		}()
 	}
@@ -104,12 +105,15 @@ func TestExpiredUnusedApprovalReleasesDuringStateRead(t *testing.T) {
 	v.Plan.Expires = time.Now().Add(-time.Minute)
 	v.Plan.Hash = v.Plan.Digest()
 	raw, _ := json.Marshal(v.Plan)
-	if err := c.DB.Model(&Run{}).Where("id = ?", v.ID).Updates(map[string]any{"plan_json": string(raw), "plan_hash": v.Plan.Hash, "approval_hash": digest(v.Plan, v.UserID, v.ExchangeID, v.AccountKey)}).Error; err != nil {
+	if err := c.DB.Model(&planning.Draft{}).Where("id = ?", v.PlanID).Update("body", string(raw)).Error; err != nil {
 		t.Fatal(err)
 	}
-	rows, err := c.ListContext(context.Background(), "alice")
+	if err := c.DB.Model(&Run{}).Where("id = ?", v.ID).Updates(map[string]any{"plan_hash": v.Plan.Hash, "approval_hash": digest(v.Plan, v.UserID, v.ExchangeID, v.AccountKey)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	rows, err := c.ListContext(context.Background(), testUser)
 	var leases int64
-	c.DB.Model(&Lease{}).Count(&leases)
+	c.DB.Model(&store.AccountLease{}).Count(&leases)
 	if err != nil || len(rows) != 1 || rows[0].State != "expired" || leases != 0 {
 		t.Fatalf("expired approval still reserved: %v %+v", err, rows)
 	}

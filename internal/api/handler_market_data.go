@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"vergex/internal/marketdata"
+	"vergex/internal/market/feed"
 
 	"github.com/gin-gonic/gin"
 )
@@ -66,7 +66,7 @@ func (s *Server) handleGetMarketDataSettings(c *gin.Context) {
 		SafeInternalError(c, "Read market data settings", err)
 		return
 	}
-	watchlist := settings.WatchSymbols()
+	watchlist := settings.Watchlist
 	if watchlist == nil {
 		watchlist = []string{}
 	}
@@ -108,7 +108,7 @@ func (s *Server) handleMarketDataBackfill(c *gin.Context) {
 	if !s.requireMarketData(c) {
 		return
 	}
-	var req marketdata.BackfillOptions
+	var req feed.BackfillOptions
 	if err := c.ShouldBindJSON(&req); err != nil {
 		SafeBadRequest(c, "Invalid request parameters")
 		return
@@ -119,7 +119,7 @@ func (s *Server) handleMarketDataBackfill(c *gin.Context) {
 		return
 	}
 	for _, interval := range req.Intervals {
-		if !marketdata.IsHistoryInterval(interval) {
+		if !feed.IsHistoryInterval(interval) {
 			SafeBadRequest(c, "Unsupported interval")
 			return
 		}

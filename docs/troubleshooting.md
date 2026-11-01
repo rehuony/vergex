@@ -16,6 +16,8 @@ Logs also go to `data/vergex_YYYY-MM-DD.log`. The [Telegram assistant](telegram.
 
 **Stored keys can't be read after a change.** `DATA_ENCRYPTION_KEY` changed. Restore the old value from your backup; otherwise re-enter the exchange and model keys.
 
+**`cannot drop schema public` at startup.** The database holds tables from before the schemas were introduced. There is nothing to migrate from them: back up anything you need, then delete the database volume with `docker compose down -v`, or drop and recreate the database.
+
 **Port already in use.** Find the process with `lsof -i :8000` (`:3000` when running from source), or set `VERGEX_FRONTEND_PORT` in `.env`. If `make run-postgresql` finds its port taken, set `DB_PORT` in `.env`.
 
 **`failed to open PostgreSQL database`.** The backend can't reach the database. Check `make status`; from source, `make run-postgresql` starts it with the settings in `.env`, and `make run-backend` does so first.
@@ -40,7 +42,7 @@ See [exchanges.md](exchanges.md) for API key errors.
 
 - max positions reached, or not enough margin
 - a just-closed symbol in its 4-hour re-entry cooldown
-- safe mode after 3 AI failures in a row
+- safe mode after 3 model failures in a row
 
 **It only opens one side, or fails with `-4061`.** The Binance account is in One-way Mode: see [exchanges.md](exchanges.md).
 
@@ -50,7 +52,7 @@ See [exchanges.md](exchanges.md) for API key errors.
 
 ## Models
 
-**AI unavailable, or a model call fails.** Check that the model is enabled and has an API key, then use the test button in Settings → AI models.
+**A model call fails.** Check that the model is enabled and has an API key, then use the test button in Settings → Models.
 
 **A custom URL is rejected.** Localhost and private addresses are blocked, and the URL must not include `/chat/completions` unless it ends with `#`: see [models.md](models.md).
 

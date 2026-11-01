@@ -48,10 +48,8 @@ const account = {
   name: 'Binance',
   account_name: 'Main',
   exchange_type: 'binance',
-  enabled: true,
   has_api_key: true,
   has_secret_key: true,
-  type: 'cex',
 }
 
 beforeEach(() => {
@@ -106,7 +104,6 @@ it('checks a newly added account and shows its balance once, with the currency',
   expect(await screen.findByText('Connected')).toBeVisible()
   expect(screen.getByText('Binance · 321.97 USDT')).toBeVisible()
   expect(mocks.create).toHaveBeenCalledWith({
-    enabled: true,
     exchange_type: 'binance',
     account_name: 'Second',
     api_key: 'fixture-key',
@@ -155,7 +152,6 @@ it('replaces only the keys typed into an edit', async () => {
     expect(mocks.update).toHaveBeenCalledWith({
       exchanges: {
         exchange: {
-          enabled: true,
           api_key: '',
           secret_key: 'new-secret',
           passphrase: '',

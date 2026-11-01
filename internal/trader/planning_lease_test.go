@@ -2,35 +2,26 @@ package trader
 
 import (
 	"testing"
-	"vergex/internal/planning"
-	"vergex/internal/planning/live"
 	"vergex/internal/store"
-	"vergex/internal/testdb"
+	"vergex/internal/store/storetest"
 )
 
 func TestPlanningLeaseBlocksConstructorAndRestoration(t *testing.T) {
-	db := testdb.Open(t)
-	sql, _ := db.DB()
-	defer sql.Close()
-	if e := db.AutoMigrate(&store.Exchange{}, &live.Lease{}); e != nil {
-		t.Fatal(e)
-	}
-	ex := store.Exchange{ID: "ex", UserID: "alice", ExchangeType: "binance", APIKey: "owner-key", Enabled: true}
+	st := storetest.New(t)
+	db := st.GormDB()
+	user := storetest.Account(t, st)
+	ex := store.Exchange{UserID: user, ExchangeType: "binance", APIKey: "owner-key"}
 	if e := db.Create(&ex).Error; e != nil {
 		t.Fatal(e)
 	}
-	if e := db.Create(&live.Lease{AccountKey: planning.AccountIdentity("binance", "owner-key"), RunID: "locked", UserID: "alice", ExchangeID: "ex"}).Error; e != nil {
+	if e := db.Create(&store.AccountLease{AccountID: ex.ID, Holder: store.LeaseHolderFrontier, HolderID: "locked"}).Error; e != nil {
 		t.Fatal(e)
 	}
-	st, e := store.NewFromGorm(db)
-	if e != nil {
-		t.Fatal(e)
-	}
-	if _, e = NewAutoTrader(AutoTraderConfig{ExchangeID: "ex"}, st, "alice"); e == nil {
+	if _, e := NewAutoTrader(AutoTraderConfig{ExchangeID: ex.ID}, st, user); e == nil {
 		t.Fatal("constructor escaped unresolved lease")
 	}
-	at := &AutoTrader{store: st, userID: "alice", exchangeID: "ex"}
-	if e = at.Run(); e == nil {
+	at := &AutoTrader{store: st, userID: user, exchangeID: ex.ID}
+	if e := at.Run(); e == nil {
 		t.Fatal("restoration escaped unresolved lease")
 	}
 	if at.isRunning {

@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AppSelect } from '@/components/ui/select'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { cn } from '@/utils/cn'
 
 const RANGES = { '3': '3m', '6': '6m', '12': '1y', '24': '2y' } as const
@@ -66,9 +66,7 @@ export function ForecastBacktestsPage() {
     }
   )
 
-  const [strategyId, setStrategyId] = useState(
-    Number(params.get('strategy')) || 0
-  )
+  const [strategyId, setStrategyId] = useState(params.get('strategy') ?? '')
   const [symbols, setSymbols] = useState<string[] | null>(null)
   const [intervals, setIntervals] = useState<string[]>(['1h', '4h'])
   const [range, setRange] = useState<Range>('12')
@@ -76,7 +74,7 @@ export function ForecastBacktestsPage() {
   const [openRun, setOpenRun] = useState<number | null>(null)
 
   const chosenSymbols = symbols ?? settings?.watchlist.slice(0, 5) ?? []
-  const strategy = strategyId || strategies?.active_strategy_id || 0
+  const strategy = strategyId || strategies?.active_strategy_id || ''
 
   const coverageKey =
     chosenSymbols.length && intervals.length
@@ -180,7 +178,7 @@ export function ForecastBacktestsPage() {
                   value: item.id,
                   label: item.name,
                 }))}
-                onChange={(id) => setStrategyId(Number(id))}
+                onChange={(id) => setStrategyId(id)}
               />
             </SettingRow>
             <SettingRow label={label('coins')} htmlFor="bt-symbols">

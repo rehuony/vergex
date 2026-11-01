@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -162,11 +161,7 @@ func (s *Server) handleActivateForecastStrategy(c *gin.Context) {
 	if !s.requireForecast(c) {
 		return
 	}
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		SafeBadRequest(c, "Invalid strategy")
-		return
-	}
+	id := c.Param("id")
 	if err := s.forecast.Store.Activate(id); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "strategy not found"})
 		return
@@ -178,11 +173,7 @@ func (s *Server) handleDeleteForecastStrategy(c *gin.Context) {
 	if !s.requireForecast(c) {
 		return
 	}
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil {
-		SafeBadRequest(c, "Invalid strategy")
-		return
-	}
+	id := c.Param("id")
 	switch err := s.forecast.Store.DeleteStrategy(id, time.Now()); {
 	case err == nil:
 		c.JSON(http.StatusOK, gin.H{"deleted": id})
@@ -269,7 +260,7 @@ func (s *Server) handleCreateForecastBacktest(c *gin.Context) {
 		return
 	}
 	var req struct {
-		StrategyID int64 `json:"strategy_id"`
+		StrategyID string `json:"strategy_id"`
 		forecast.BacktestOptions
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {

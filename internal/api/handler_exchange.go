@@ -2,16 +2,18 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"vergex/internal/config"
-	"vergex/internal/crypto"
 	"vergex/internal/logger"
+	"vergex/internal/security/crypto"
 	"vergex/internal/store"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // SafeExchangeConfig Safe exchange configuration structure (does not contain sensitive information)
@@ -20,8 +22,6 @@ type SafeExchangeConfig struct {
 	ExchangeType  string `json:"exchange_type"` // "binance" or "okx"
 	AccountName   string `json:"account_name"`  // User-defined account name
 	Name          string `json:"name"`          // Display name
-	Type          string `json:"type"`          // "cex"
-	Enabled       bool   `json:"enabled"`
 	HasAPIKey     bool   `json:"has_api_key"`
 	HasSecretKey  bool   `json:"has_secret_key"`
 	HasPassphrase bool   `json:"has_passphrase"`
@@ -32,9 +32,7 @@ func safeExchangeConfigFromStore(exchange *store.Exchange) SafeExchangeConfig {
 		ID:            exchange.ID,
 		ExchangeType:  exchange.ExchangeType,
 		AccountName:   exchange.AccountName,
-		Name:          exchange.Name,
-		Type:          exchange.Type,
-		Enabled:       exchange.Enabled,
+		Name:          exchange.VenueName(),
 		HasAPIKey:     exchange.APIKey != "",
 		HasSecretKey:  exchange.SecretKey != "",
 		HasPassphrase: exchange.Passphrase != "",
@@ -46,7 +44,6 @@ func safeExchangeConfigFromStore(exchange *store.Exchange) SafeExchangeConfig {
 // utils.go is guaranteed to cover every sensitive field — a drift between the
 // two shapes is what let passphrases / private keys reach the logs previously.
 type ExchangeConfigUpdate struct {
-	Enabled    bool   `json:"enabled"`
 	APIKey     string `json:"api_key"`
 	SecretKey  string `json:"secret_key"`
 	Passphrase string `json:"passphrase"` // OKX specific
@@ -60,7 +57,6 @@ type UpdateExchangeConfigRequest struct {
 type CreateExchangeRequest struct {
 	ExchangeType string `json:"exchange_type" binding:"required"` // "binance" or "okx"
 	AccountName  string `json:"account_name"`                     // User-defined account name
-	Enabled      bool   `json:"enabled"`
 	APIKey       string `json:"api_key"`
 	SecretKey    string `json:"secret_key"`
 	Passphrase   string `json:"passphrase"`
@@ -196,7 +192,11 @@ func (s *Server) handleUpdateExchangeConfigs(c *gin.Context) {
 			tradersToReload[t.ID] = true
 		}
 
-		err = s.store.Exchange().Update(userID, exchangeID, true, exchangeData.APIKey, exchangeData.SecretKey, exchangeData.Passphrase)
+		err = s.store.Exchange().Update(userID, exchangeID, exchangeData.APIKey, exchangeData.SecretKey, exchangeData.Passphrase)
+		if errors.Is(err, store.ErrDuplicateAccount) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": store.ErrDuplicateAccount.Error()})
+			return
+		}
 		if err != nil {
 			SafeInternalError(c, fmt.Sprintf("Update exchange %s", exchangeID), err)
 			return
@@ -291,11 +291,15 @@ func (s *Server) handleCreateExchange(c *gin.Context) {
 		return
 	}
 
-	// Exchange configs only persist once complete; persisted configs are always enabled.
+	// Exchange configs only persist once complete.
 	id, err := s.store.Exchange().Create(
-		userID, req.ExchangeType, req.AccountName, true,
+		userID, req.ExchangeType, req.AccountName,
 		req.APIKey, req.SecretKey, req.Passphrase,
 	)
+	if errors.Is(err, store.ErrDuplicateAccount) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": store.ErrDuplicateAccount.Error()})
+		return
+	}
 	if err != nil {
 		logger.Infof("❌ Failed to create exchange account: %v", err)
 		SafeInternalError(c, "Failed to create exchange account", err)
@@ -341,6 +345,10 @@ func (s *Server) handleDeleteExchange(c *gin.Context) {
 
 	// Delete exchange account
 	err = s.store.Exchange().Delete(userID, exchangeID)
+	if errors.Is(err, gorm.ErrForeignKeyViolated) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete an account with trading history or an unfinished Frontier trade"})
+		return
+	}
 	if err != nil {
 		logger.Infof("❌ Failed to delete exchange account: %v", err)
 		SafeInternalError(c, "Failed to delete exchange account", err)
@@ -358,8 +366,8 @@ func (s *Server) handleGetSupportedExchanges(c *gin.Context) {
 	// Return static list of supported exchange types
 	// Note: ID is empty for supported exchanges (they are templates, not actual accounts)
 	supportedExchanges := []SafeExchangeConfig{
-		{ExchangeType: "binance", Name: "Binance Futures", Type: "cex"},
-		{ExchangeType: "okx", Name: "OKX Futures", Type: "cex"},
+		{ExchangeType: "binance", Name: store.VenueName("binance")},
+		{ExchangeType: "okx", Name: store.VenueName("okx")},
 	}
 
 	c.JSON(http.StatusOK, supportedExchanges)

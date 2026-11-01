@@ -7,9 +7,9 @@
   <a href="README.zh-CN.md">中文</a>
 </p>
 
-vergex 是一个自托管的 AI 交易系统，面向 **Binance** 与 **OKX** 的加密货币 USDT 永续合约。模型 API Key 和交易所 API Key 都由你自己提供；不经过任何付费网关，也不会把使用数据发送到你的机器之外。
+vergex 是一个自托管的 Agent 交易系统，面向 **Binance** 与 **OKX** 的加密货币 USDT 永续合约。模型 API Key 和交易所 API Key 都由你自己提供；不经过任何付费网关，也不会把使用数据发送到你的机器之外。
 
-- **Frontier** — 在实时图表上与 AI 一起推演交易，比较多种入场方案（市价、限价、阶梯、TWAP），每一笔订单都由你亲自批准。
+- **Frontier** — 在实时图表上与 Agent 一起推演交易，比较多种入场方案（市价、限价、阶梯、TWAP），每一笔订单都由你亲自批准。
 - **Traders** — 持续运行策略：trader 读取行情、请模型给出决策，并在策略的风控限制内下单。
 - **网格交易** — 带市场状态判断的网格策略。
 - **Telegram** — 通过 Telegram 机器人管理 trader 和策略、查看持仓、排查问题、接收告警。
@@ -57,7 +57,7 @@ make dev           # 同时启动前后端
 ## 首次使用
 
 1. **创建账号。** 第一个注册的用户就是本实例唯一的用户。
-2. **在 Settings → AI models 中添加 AI 模型**：DeepSeek、OpenAI、Claude、Qwen、Gemini、Grok、Kimi 或 MiniMax，使用你自己的 API Key，可选自定义 base URL 和模型名。
+2. **在“设置 → 模型”中添加模型**：DeepSeek、OpenAI、Claude、Qwen、Gemini、Grok、Kimi 或 MiniMax，使用你自己的 API Key，可选自定义 base URL 和模型名。
 3. **在 Settings → Exchanges 中添加交易所账户**：Binance 或 OKX USDT 永续（[API Key 指南](docs/exchanges.md)）。把 Key 绑定到该页面显示的服务器 IP。
 4. **打开 Frontier** 规划交易，或在 Strategies 和 Traders 页面创建策略和 trader。
 
@@ -65,7 +65,7 @@ Frontier 的每一笔订单都需要批准。运行中的 trader 会自行下单
 
 ## 模型、数据与成本
 
-模型直接用你的 Key 调用。每次调用的 token 用量都保存在本地，并按公开的 [models.dev](https://models.dev) 价格表估算；Settings → AI costs 中按模型显示估算成本。没有公开价格的模型显示为未定价。
+模型直接用你的 Key 调用。每次调用的 token 用量都保存在本地，并按公开的 [models.dev](https://models.dev) 价格表估算；“设置 → Agent 费用” 中按模型显示估算成本。没有公开价格的模型显示为未定价。
 
 行情数据来自免费公开接口：交易所实时流提供 K 线和价格并存入本地历史，另有交易所盘口，以及基于 Binance 公开数据计算的选币排行（24h 成交额、涨幅榜、跌幅榜、持仓量变化）。OKX trader 的排行候选只保留 OKX 上可交易的币。
 
@@ -89,14 +89,14 @@ Browser (React)                Telegram bot
                         │
         ┌───────────────┼────────────────┐
    Frontier planning  Traders         Grid engine
-   (planning/)        (trader/, kernel/)
+   (planning/)        (trader/)
         └───────────────┼────────────────┘
                Exchange adapters
-               trader/binance · trader/okx
+               exchange/binance · exchange/okx
                         │
             Binance / OKX USDT perpetuals
 
-Models: llm/ provider clients     Storage: PostgreSQL (GORM)
+Models: agent/ provider clients   Storage: PostgreSQL (GORM)
 ```
 
 Go 包都在 `internal/` 下。代码结构见 [docs/architecture.md](docs/architecture.md)，开发约定见 [AGENTS.md](AGENTS.md)。
@@ -108,7 +108,7 @@ Go 包都在 `internal/` 下。代码结构见 [docs/architecture.md](docs/archi
 | 指南 | 内容 |
 | :--- | :--- |
 | [入门](docs/getting-started.md) | 安装、首次使用、备份与账户恢复 |
-| [AI 模型](docs/models.md) | Provider、自定义接口与成本 |
+| [模型](docs/models.md) | Provider、自定义接口与成本 |
 | [交易所 API Key](docs/exchanges.md) | Binance 与 OKX 配置 |
 | [Frontier](docs/frontier.md) | 规划、实盘执行与恢复 |
 | [Traders 和策略](docs/traders.md) | 策略、提示词、风控上限与网格 |
@@ -123,4 +123,4 @@ Go 包都在 `internal/` 下。代码结构见 [docs/architecture.md](docs/archi
 
 [AGPL-3.0](LICENSE)。vergex 是 NOFX（github.com/NoFxAiOS/nofx）的个人 fork，独立维护。
 
-<sub>自动交易存在重大风险。AI 驱动的策略仍属实验性质，可能亏损。请合理控制仓位，了解每个交易所的规则，切勿投入无法承受损失的资金。详见 [DISCLAIMER.md](DISCLAIMER.md)。</sub>
+<sub>自动交易存在重大风险。Agent 驱动的策略仍属实验性质，可能亏损。请合理控制仓位，了解每个交易所的规则，切勿投入无法承受损失的资金。详见 [DISCLAIMER.md](DISCLAIMER.md)。</sub>

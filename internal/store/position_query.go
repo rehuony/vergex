@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 )
 
 // TraderStats trading statistics metrics
@@ -21,49 +22,16 @@ type TraderStats struct {
 	MaxDrawdownPct float64 `json:"max_drawdown_pct"`
 }
 
-// GetPositionStats gets position statistics
-func (s *PositionStore) GetPositionStats(traderID string) (map[string]interface{}, error) {
-	stats := make(map[string]interface{})
-
-	type result struct {
-		Total    int
-		Wins     int
-		TotalPnL float64
-		TotalFee float64
-	}
-	var r result
-
-	err := s.db.Model(&TraderPosition{}).
-		Select("COUNT(*) as total, SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins, COALESCE(SUM(realized_pnl), 0) as total_pnl, COALESCE(SUM(fee), 0) as total_fee").
-		Where("trader_id = ? AND status = ?", traderID, "CLOSED").
-		Scan(&r).Error
-	if err != nil {
-		return nil, err
-	}
-
-	stats["total_trades"] = r.Total
-	stats["win_trades"] = r.Wins
-	stats["total_pnl"] = r.TotalPnL
-	stats["total_fee"] = r.TotalFee
-	if r.Total > 0 {
-		stats["win_rate"] = float64(r.Wins) / float64(r.Total) * 100
-	} else {
-		stats["win_rate"] = 0.0
-	}
-
-	return stats, nil
-}
-
-// RealizedSince sums the realized P/L of the traders' positions closed since the
-// given time (Unix milliseconds).
-func (s *PositionStore) RealizedSince(traderIDs []string, sinceMs int64) (float64, error) {
-	if len(traderIDs) == 0 {
+// RealizedOnAccounts sums the realized P/L of positions closed on the accounts since
+// the given time (Unix milliseconds), whoever traded them.
+func (s *PositionStore) RealizedOnAccounts(accountIDs []string, sinceMs int64) (float64, error) {
+	if len(accountIDs) == 0 {
 		return 0, nil
 	}
 	var total float64
-	err := s.db.Model(&TraderPosition{}).
+	err := s.db.Table("trading.positions").
 		Select("COALESCE(SUM(realized_pnl), 0)").
-		Where("status = ? AND trader_id IN ? AND exit_time >= ?", "CLOSED", traderIDs, sinceMs).
+		Where("status = ? AND account_id IN ? AND closed_at >= ?", PositionClosed, accountIDs, time.UnixMilli(sinceMs).UTC()).
 		Scan(&total).Error
 	if err != nil {
 		return 0, fmt.Errorf("failed to sum realized P/L: %w", err)
@@ -74,8 +42,15 @@ func (s *PositionStore) RealizedSince(traderIDs []string, sinceMs int64) (float6
 // UpdatedSince returns the positions updated at or after a time, oldest change first.
 func (s *PositionStore) UpdatedSince(sinceMs int64, limit int) ([]*TraderPosition, error) {
 	var positions []*TraderPosition
-	err := s.db.Where("updated_at >= ?", sinceMs).Order("updated_at ASC").Limit(limit).Find(&positions).Error
+	err := s.positions().Where("p.updated_at >= ?", time.UnixMilli(sinceMs).UTC()).Order("p.updated_at ASC").Limit(limit).Find(&positions).Error
 	return positions, err
+}
+
+// afterMilli is the first moment past a time in Unix milliseconds. Callers remember
+// the time of the last row they read, cut to milliseconds, and a stored time is finer,
+// so a plain comparison would hand that row back.
+func afterMilli(sinceMs int64) time.Time {
+	return time.UnixMilli(sinceMs + 1).UTC()
 }
 
 // ClosedSince returns positions closed after sinceMs, oldest first.
@@ -84,8 +59,8 @@ func (s *PositionStore) ClosedSince(traderIDs []string, sinceMs int64, limit int
 		return nil, nil
 	}
 	var positions []*TraderPosition
-	err := s.db.Where("status = ? AND trader_id IN ? AND exit_time > ?", "CLOSED", traderIDs, sinceMs).
-		Order("exit_time ASC").
+	err := s.positions().Where("p.status = ? AND p.source = ? AND p.source_id IN ? AND p.closed_at >= ?", PositionClosed, SourceTrader, traderIDs, afterMilli(sinceMs)).
+		Order("p.closed_at ASC").
 		Limit(limit).
 		Find(&positions).Error
 	if err != nil {
@@ -101,7 +76,7 @@ func (s *PositionStore) GetFullStats(traderID string, startingEquity float64) (*
 
 	var positions []TraderPosition
 	err := s.closedPositions(traderID).
-		Order("exit_time ASC").
+		Order("p.closed_at ASC").
 		Find(&positions).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query position statistics: %w", err)
@@ -163,8 +138,8 @@ type RecentTrade struct {
 // GetRecentTrades gets recent closed trades
 func (s *PositionStore) GetRecentTrades(traderID string, limit int) ([]RecentTrade, error) {
 	var positions []TraderPosition
-	err := s.db.Where("trader_id = ? AND status = ?", traderID, "CLOSED").
-		Order("exit_time DESC").
+	err := s.closedPositions(traderID).
+		Order("p.closed_at DESC").
 		Limit(limit).
 		Find(&positions).Error
 	if err != nil {
@@ -189,10 +164,12 @@ func (s *PositionStore) GetRecentTrades(traderID string, limit int) ([]RecentTra
 		}
 
 		if pos.EntryPrice > 0 {
+			// A position known only through its fills has no leverage on record.
+			leverage := float64(max(pos.Leverage, 1))
 			if t.Side == "long" {
-				t.PnLPct = (pos.ExitPrice - pos.EntryPrice) / pos.EntryPrice * 100 * float64(pos.Leverage)
+				t.PnLPct = (pos.ExitPrice - pos.EntryPrice) / pos.EntryPrice * 100 * leverage
 			} else {
-				t.PnLPct = (pos.EntryPrice - pos.ExitPrice) / pos.EntryPrice * 100 * float64(pos.Leverage)
+				t.PnLPct = (pos.EntryPrice - pos.ExitPrice) / pos.EntryPrice * 100 * leverage
 			}
 		}
 
@@ -330,75 +307,6 @@ func (s *PositionStore) GetSymbolStats(traderID string, limit int) ([]SymbolStat
 
 	if limit > 0 && len(stats) > limit {
 		stats = stats[:limit]
-	}
-
-	return stats, nil
-}
-
-// HoldingTimeStats holding duration analysis
-type HoldingTimeStats struct {
-	Range      string  `json:"range"`
-	TradeCount int     `json:"trade_count"`
-	WinRate    float64 `json:"win_rate"`
-	AvgPnL     float64 `json:"avg_pnl"`
-}
-
-// GetHoldingTimeStats analyzes performance by holding duration
-func (s *PositionStore) GetHoldingTimeStats(traderID string) ([]HoldingTimeStats, error) {
-	var positions []TraderPosition
-	err := s.db.Where("trader_id = ? AND status = ? AND exit_time > 0", traderID, "CLOSED").Find(&positions).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to query holding time stats: %w", err)
-	}
-
-	rangeStats := map[string]*struct {
-		count    int
-		wins     int
-		totalPnL float64
-	}{
-		"<1h":   {},
-		"1-4h":  {},
-		"4-24h": {},
-		">24h":  {},
-	}
-
-	for _, pos := range positions {
-		if pos.ExitTime == 0 {
-			continue
-		}
-		holdHours := float64(pos.ExitTime-pos.EntryTime) / 3600000.0 // ms to hours
-
-		var rangeKey string
-		switch {
-		case holdHours < 1:
-			rangeKey = "<1h"
-		case holdHours < 4:
-			rangeKey = "1-4h"
-		case holdHours < 24:
-			rangeKey = "4-24h"
-		default:
-			rangeKey = ">24h"
-		}
-
-		r := rangeStats[rangeKey]
-		r.count++
-		r.totalPnL += pos.RealizedPnL
-		if pos.RealizedPnL > 0 {
-			r.wins++
-		}
-	}
-
-	var stats []HoldingTimeStats
-	for _, rangeKey := range []string{"<1h", "1-4h", "4-24h", ">24h"} {
-		r := rangeStats[rangeKey]
-		if r.count > 0 {
-			stats = append(stats, HoldingTimeStats{
-				Range:      rangeKey,
-				TradeCount: r.count,
-				WinRate:    float64(r.wins) / float64(r.count) * 100,
-				AvgPnL:     r.totalPnL / float64(r.count),
-			})
-		}
 	}
 
 	return stats, nil

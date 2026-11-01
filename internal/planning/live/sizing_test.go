@@ -6,6 +6,7 @@ import (
 	"time"
 	"vergex/internal/planning"
 	"vergex/internal/planning/core"
+	"vergex/internal/store"
 )
 
 func TestZeroFreeMarginAllowsDraftsButNeverApproval(t *testing.T) {
@@ -21,19 +22,19 @@ func TestZeroFreeMarginAllowsDraftsButNeverApproval(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			store := planning.DraftStore{DB: controller.DB, UserID: "alice", ExchangeID: "exchange", Venue: "binance"}
-			if err = store.Add([]core.Plan{preview}); err != nil {
+			drafts := planning.DraftStore{DB: controller.DB, UserID: testUser, ExchangeID: testAccount, Venue: "binance"}
+			if err = drafts.Add([]core.Plan{preview}); err != nil {
 				t.Fatal(err)
 			}
 			// Even after funding, this exact reference-size plan needs a fresh review.
 			if err = CheckAccountCapacity(preview, broker.account); err == nil {
 				t.Fatal("equity preview treated as a funded order")
 			}
-			if _, err = controller.Approve(context.Background(), "alice", preview.ID, preview.Hash, "APPROVE LIVE"); err == nil {
+			if _, err = controller.Approve(context.Background(), testUser, preview.ID, preview.Hash, "APPROVE LIVE"); err == nil {
 				t.Fatal("equity preview acquired live approval")
 			}
 			var leases int64
-			controller.DB.Model(&Lease{}).Count(&leases)
+			controller.DB.Model(&store.AccountLease{}).Count(&leases)
 			if leases != 0 || len(broker.placed) != 0 {
 				t.Fatal("planning reserved the account or placed orders")
 			}

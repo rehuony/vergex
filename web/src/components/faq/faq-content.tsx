@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef } from 'react'
 import { ExternalLink } from 'lucide-react'
-import type { FAQBlock, FAQCategory } from '@/i18n/faq-translations'
+import type { FAQBlock, FAQCategory } from '@/i18n'
 
 interface FAQContentProps {
   categories: FAQCategory[]

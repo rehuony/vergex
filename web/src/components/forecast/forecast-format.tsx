@@ -1,6 +1,6 @@
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react'
 import type { ForecastDirection } from '@/api/forecast'
-import { t, type Language } from '@/i18n/translations'
+import { activeLanguage, t, type Language } from '@/i18n'
 import { cn } from '@/utils/cn'
 
 export const baseAsset = (symbol: string) => symbol.replace(/USDT$/, '')
@@ -17,7 +17,7 @@ export const fmtPct = (value: number, signed = false) =>
   `${signed && value > 0 ? '+' : ''}${value.toFixed(2)}%`
 
 export const fmtTime = (ms: number) =>
-  new Date(ms).toLocaleString('en-US', {
+  new Date(ms).toLocaleString(activeLanguage(), {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -26,7 +26,7 @@ export const fmtTime = (ms: number) =>
   })
 
 export const fmtDate = (ms: number) =>
-  new Date(ms).toLocaleDateString('en-US', {
+  new Date(ms).toLocaleDateString(activeLanguage(), {
     year: 'numeric',
     month: 'short',
     day: 'numeric',

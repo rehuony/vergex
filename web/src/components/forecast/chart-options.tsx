@@ -7,7 +7,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { Switch } from '@/components/ui/switch'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 
 export interface ChartOptions {
   levels: boolean

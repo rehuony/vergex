@@ -29,7 +29,7 @@ import { AppSelect } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { ROUTES } from '@/constants/route-paths'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 
 const FACTOR_ORDER = [
   'trend',
@@ -74,7 +74,7 @@ export function ForecastStrategiesPage() {
     api.getForecastStrategies,
     { revalidateOnFocus: false }
   )
-  const [selectedId, setSelectedId] = useState<number | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const [draft, setDraft] = useState<ForecastConfig | null>(null)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
@@ -99,7 +99,7 @@ export function ForecastStrategiesPage() {
     draft && selected && !sameConfig(draft, selected.config)
   )
 
-  const choose = async (id: number) => {
+  const choose = async (id: string) => {
     if (id === selected?.id) return
     if (
       changed &&
@@ -233,7 +233,7 @@ export function ForecastStrategiesPage() {
                     ? ` · ${label('inUse')}`
                     : ''),
               }))}
-              onChange={(id) => void choose(Number(id))}
+              onChange={(id) => void choose(id)}
             />
             <Panel
               title={

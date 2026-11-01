@@ -3,8 +3,8 @@ import { ArrowRight, Check, ExternalLink, Unlink } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api'
 import { cn } from '@/utils/cn'
-import type { TelegramConfig, AIModel } from '@/types'
-import { t, type Language } from '@/i18n/translations'
+import type { TelegramConfig, AgentModel } from '@/types'
+import { t, type Language } from '@/i18n'
 import { AppSelect } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -47,20 +47,20 @@ export function TelegramSettings({ language }: { language: Language }) {
   const [token, setToken] = useState('')
   const [modelId, setModelId] = useState('')
   const [config, setConfig] = useState<TelegramConfig | null>(null)
-  const [models, setModels] = useState<AIModel[]>([])
+  const [models, setModels] = useState<AgentModel[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     Promise.all([
       api.getTelegramConfig().catch(() => null),
-      api.getModelConfigs().catch(() => [] as AIModel[]),
+      api.getModelConfigs().catch(() => [] as AgentModel[]),
     ])
       .then(([cfg, allModels]) => {
         setModels(allModels.filter((m) => m.enabled))
         if (cfg) {
           setConfig(cfg)
-          setModelId(cfg.model_id ?? '')
+          setModelId(cfg.agent_model_id ?? '')
           if (cfg.is_bound) setStep(2)
           else if (cfg.token_masked) setStep(1)
         }
@@ -117,7 +117,9 @@ export function TelegramSettings({ language }: { language: Language }) {
     run(async () => {
       try {
         await api.updateTelegramModel(modelId)
-        setConfig((prev) => (prev ? { ...prev, model_id: modelId } : prev))
+        setConfig((prev) =>
+          prev ? { ...prev, agent_model_id: modelId } : prev
+        )
         toast.success(t('telegram.modelUpdated', language))
       } catch {
         toast.error(t('telegram.modelUpdateFailed', language))
@@ -356,7 +358,7 @@ export function TelegramSettings({ language }: { language: Language }) {
                 size="sm"
                 variant="primary"
                 onClick={() => void saveModel()}
-                disabled={busy || modelId === (config?.model_id ?? '')}
+                disabled={busy || modelId === (config?.agent_model_id ?? '')}
               >
                 {t('telegram.save', language)}
               </Button>

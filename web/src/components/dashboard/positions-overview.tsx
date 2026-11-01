@@ -3,7 +3,7 @@ import type { Overview } from '@/api/overview'
 import { Panel, PanelState } from '@/components/common/panel'
 import { baseLabel, fmtUsd } from '@/utils/trader-format'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { traderPath } from './overview-links'
 

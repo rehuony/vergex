@@ -33,7 +33,7 @@ beforeEach(() => {
   mocks.models = {
     data: [
       {
-        id: 'ai',
+        id: 'agent',
         name: 'My AI',
         provider: 'deepseek',
         enabled: true,
@@ -48,8 +48,7 @@ beforeEach(() => {
         id: 'exchange',
         name: 'My account',
         exchange_type: 'binance',
-        enabled: true,
-        type: 'cex',
+        has_api_key: true,
       },
     ],
     error: undefined,
@@ -67,7 +66,7 @@ it('offers creation once connections are saved', () => {
   expect(screen.getByRole('button', { name: 'Create trader' })).toBeEnabled()
   expect(mocks.update).not.toHaveBeenCalled()
 })
-it('holds creation until an AI model is connected', () => {
+it('holds creation until a model is connected', () => {
   mocks.models.data = []
   open()
   expect(screen.getByRole('button', { name: 'Create trader' })).toBeDisabled()

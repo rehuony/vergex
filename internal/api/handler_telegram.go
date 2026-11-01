@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strings"
 
 	"vergex/internal/store"
 	"vergex/internal/telegram"
@@ -28,28 +27,28 @@ func (s *Server) handleGetTelegramConfig(c *gin.Context) {
 	tokenMasked := ""
 	if cfg.BotToken != "" {
 		if len(cfg.BotToken) > 6 {
-			tokenMasked = "***" + cfg.BotToken[len(cfg.BotToken)-6:]
+			tokenMasked = "***" + string(cfg.BotToken[len(cfg.BotToken)-6:])
 		} else {
 			tokenMasked = "***"
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"configured":   cfg.BotToken != "",
-		"is_bound":     cfg.ChatID != 0,
-		"username":     cfg.Username,
-		"bound_at":     cfg.BoundAt,
-		"token_masked": tokenMasked,
-		"model_id":     cfg.ModelID,
-		"alerts":       alertSwitches(cfg),
+		"configured":     cfg.BotToken != "",
+		"is_bound":       cfg.ChatID != 0,
+		"username":       cfg.Username,
+		"bound_at":       cfg.BoundAt,
+		"token_masked":   tokenMasked,
+		"agent_model_id": cfg.AgentModelID,
+		"alerts":         alertSwitches(cfg),
 	})
 }
 
 // handleUpdateTelegramConfig saves bot token (+ optional model ID) and triggers bot hot-reload
 func (s *Server) handleUpdateTelegramConfig(c *gin.Context) {
 	var req struct {
-		BotToken string `json:"bot_token"`
-		ModelID  string `json:"model_id"`
+		BotToken     string `json:"bot_token"`
+		AgentModelID string `json:"agent_model_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -60,7 +59,10 @@ func (s *Server) handleUpdateTelegramConfig(c *gin.Context) {
 		return
 	}
 
-	if err := s.store.TelegramConfig().Save(req.BotToken, req.ModelID); err != nil {
+	if !s.validTelegramModel(c, req.AgentModelID) {
+		return
+	}
+	if err := s.store.TelegramConfig().Save(req.BotToken, req.AgentModelID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save config"})
 		return
 	}
@@ -80,10 +82,10 @@ func (s *Server) handleUnbindTelegram(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Telegram binding removed"})
 }
 
-// handleUpdateTelegramModel updates only the AI model used for Telegram replies (no token re-entry needed)
+// handleUpdateTelegramModel updates only the model used for Telegram replies (no token re-entry needed)
 func (s *Server) handleUpdateTelegramModel(c *gin.Context) {
 	var req struct {
-		ModelID string `json:"model_id"`
+		AgentModelID string `json:"agent_model_id"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -96,14 +98,30 @@ func (s *Server) handleUpdateTelegramModel(c *gin.Context) {
 		return
 	}
 
-	if err := s.store.TelegramConfig().Save(cfg.BotToken, req.ModelID); err != nil {
+	if !s.validTelegramModel(c, req.AgentModelID) {
+		return
+	}
+	if err := s.store.TelegramConfig().Save(string(cfg.BotToken), req.AgentModelID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save model config"})
 		return
 	}
 
-	// Chats keep the AI client they were created with until the bot reloads.
+	// Chats keep the model client they were created with until the bot reloads.
 	s.reloadTelegram()
-	c.JSON(http.StatusOK, gin.H{"success": true, "model_id": req.ModelID})
+	c.JSON(http.StatusOK, gin.H{"success": true, "agent_model_id": req.AgentModelID})
+}
+
+// validTelegramModel reports whether id is empty or one of the user's models, and
+// answers the request when it is not.
+func (s *Server) validTelegramModel(c *gin.Context, id string) bool {
+	if id == "" {
+		return true
+	}
+	if _, err := s.store.AgentModel().Get(c.GetString("user_id"), id); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unknown model"})
+		return false
+	}
+	return true
 }
 
 // reloadTelegram asks the Telegram bot to restart with the saved settings. The
@@ -153,7 +171,7 @@ func (s *Server) handleUpdateTelegramAlerts(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save alerts"})
 		return
 	}
-	cfg.MutedAlerts = strings.Join(muted, ",")
+	cfg.MutedAlerts = muted
 	c.JSON(http.StatusOK, gin.H{"alerts": alertSwitches(cfg)})
 }
 

@@ -19,7 +19,7 @@ type named struct {
 	Name string
 }
 
-// resolveError is returned to the LLM instead of guessing a target.
+// resolveError is returned to the model instead of guessing a target.
 type resolveError struct {
 	Code       string   `json:"error"` // not_found | ambiguous | none_exist
 	Kind       string   `json:"kind"`

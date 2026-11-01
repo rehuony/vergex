@@ -16,7 +16,7 @@ func TestCreateDefaultStrategiesUsesOneReadyToRunPreset(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 
 	s := &Server{store: st}
-	userID := "user-default-strategy"
+	userID := storetest.Account(t, st)
 	if err := s.createDefaultStrategies(userID, "zh"); err != nil {
 		t.Fatalf("createDefaultStrategies failed: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestCreateDefaultStrategiesSkipsAccountWithStrategies(t *testing.T) {
 	st := storetest.New(t)
 	t.Cleanup(func() { _ = st.Close() })
 
-	userID := "user-existing-custom"
+	userID := storetest.Account(t, st)
 	customCfg := store.GetDefaultStrategyConfig("zh")
 	custom := &store.Strategy{
 		ID:          uuid.New().String(),
@@ -100,7 +100,7 @@ func TestListStrategiesAfterRegistrationKeepsOnePreset(t *testing.T) {
 	t.Cleanup(func() { _ = st.Close() })
 
 	s := &Server{store: st}
-	userID := "user-registered-en"
+	userID := storetest.Account(t, st)
 	if err := s.createDefaultStrategies(userID, "en"); err != nil {
 		t.Fatalf("createDefaultStrategies failed: %v", err)
 	}

@@ -4,15 +4,13 @@ import (
 	"fmt"
 	"sync"
 	"time"
-	"vergex/internal/kernel"
-	"vergex/internal/llm"
-	_ "vergex/internal/llm/provider"
+	"vergex/internal/agent"
+	_ "vergex/internal/agent/provider"
+	"vergex/internal/exchange/binance"
+	"vergex/internal/exchange/okx"
 	"vergex/internal/logger"
-	"vergex/internal/planning"
-	"vergex/internal/planning/live"
 	"vergex/internal/store"
-	"vergex/internal/trader/binance"
-	"vergex/internal/trader/okx"
+	traderagent "vergex/internal/trader/agent"
 )
 
 func (at *AutoTrader) logTag() string {
@@ -60,13 +58,15 @@ func (at *AutoTrader) logErrorf(format string, args ...interface{}) {
 	logger.Errorf("%s "+format, values...)
 }
 
-// AutoTraderConfig auto trading configuration (simplified version - AI makes all decisions)
+// AutoTraderConfig auto trading configuration (simplified version - agent makes all decisions)
 type AutoTraderConfig struct {
 	// Trader identification
 	ID         string // Trader unique identifier (for log directory, etc.)
 	Name       string // Trader display name
 	StrategyID string // Associated strategy ID used to refresh live strategy config
-	AIModel    string // AI model: "qwen" or "deepseek"
+	AgentModel string // model: "qwen" or "deepseek"
+	// AgentModelID is the model's row, which the trader's conversations point at.
+	AgentModelID string
 
 	// Trading platform selection
 	Exchange   string // Exchange type: "binance" or "okx"
@@ -81,12 +81,12 @@ type AutoTraderConfig struct {
 	OKXSecretKey  string
 	OKXPassphrase string
 
-	// AI configuration
+	// Agent configuration
 	UseQwen     bool
 	DeepSeekKey string
 	QwenKey     string
 
-	// Custom AI API configuration
+	// Custom model API configuration
 	CustomAPIURL    string
 	CustomAPIKey    string
 	CustomModelName string
@@ -97,7 +97,7 @@ type AutoTraderConfig struct {
 	// Account configuration
 	InitialBalance float64 // Initial balance (for P&L calculation, must be set manually)
 
-	// Risk control (only as hints, AI can make autonomous decisions)
+	// Risk control (only as hints, agent can make autonomous decisions)
 	MaxDailyLoss    float64       // Maximum daily loss percentage (hint)
 	MaxDrawdown     float64       // Maximum drawdown percentage (hint)
 	StopTradingTime time.Duration // Pause duration after risk control triggers
@@ -112,42 +112,40 @@ type AutoTraderConfig struct {
 
 // AutoTrader automatic trader
 type AutoTrader struct {
-	id                    string // Trader unique identifier
-	name                  string // Trader display name
-	aiModel               string // AI model name
-	exchange              string // Trading platform type (binance/okx)
-	exchangeID            string // Exchange account UUID
-	config                AutoTraderConfig
-	trader                Trader // Use Trader interface (supports multiple platforms)
-	llmClient             llm.AIClient
-	store                 *store.Store           // Data storage (decision records, etc.)
-	strategyEngine        *kernel.StrategyEngine // Strategy engine (uses strategy configuration)
-	cycleNumber           int                    // Current cycle number
-	initialBalance        float64
-	dailyPnL              float64
-	customPrompt          string // Custom trading strategy prompt
-	overrideBasePrompt    bool   // Whether to override base prompt
-	lastResetTime         time.Time
-	stopUntil             time.Time
-	isRunning             bool
-	isRunningMutex        sync.RWMutex       // Mutex to protect isRunning flag
-	startTime             time.Time          // System start time
-	callCount             int                // AI call count
-	positionFirstSeenTime map[string]int64   // Position first seen time (symbol_side -> timestamp in milliseconds)
-	stopMonitorCh         chan struct{}      // Used to stop monitoring goroutine
-	monitorWg             sync.WaitGroup     // Used to wait for monitoring goroutine to finish
-	peakPnLCache          map[string]float64 // Peak profit cache (symbol -> peak P&L percentage)
-	peakPnLCacheMutex     sync.RWMutex       // Cache read-write lock
-	lastBalanceSyncTime   time.Time          // Last balance sync time
-	userID                string             // User ID
-	gridState             *GridState         // Grid trading state (only used when StrategyType == "grid_trading")
-	consecutiveAIFailures int                // Consecutive AI call failures
-	runtimeHealthMu       sync.RWMutex       // Guards safe mode + trading authorization state (loop writes, API reads)
-	tradingBlocked        bool
-	tradingError          string
-	tradingCheckedAt      time.Time
-	safeMode              bool   // Safe mode: no new positions, protect existing ones
-	safeModeReason        string // Why safe mode was activated
+	id                       string // Trader unique identifier
+	name                     string // Trader display name
+	agentModel               string // model name
+	exchange                 string // Trading platform type (binance/okx)
+	exchangeID               string // Exchange account UUID
+	config                   AutoTraderConfig
+	trader                   Trader // Use Trader interface (supports multiple platforms)
+	agentClient              agent.Client
+	store                    *store.Store                // Data storage (decision records, etc.)
+	strategyEngine           *traderagent.StrategyEngine // Strategy engine (uses strategy configuration)
+	cycleNumber              int                         // Current cycle number
+	initialBalance           float64
+	dailyPnL                 float64
+	lastResetTime            time.Time
+	stopUntil                time.Time
+	isRunning                bool
+	isRunningMutex           sync.RWMutex       // Mutex to protect isRunning flag
+	startTime                time.Time          // System start time
+	callCount                int                // model call count
+	positionFirstSeenTime    map[string]int64   // Position first seen time (symbol_side -> timestamp in milliseconds)
+	stopMonitorCh            chan struct{}      // Used to stop monitoring goroutine
+	monitorWg                sync.WaitGroup     // Used to wait for monitoring goroutine to finish
+	peakPnLCache             map[string]float64 // Peak profit cache (symbol -> peak P&L percentage)
+	peakPnLCacheMutex        sync.RWMutex       // Cache read-write lock
+	lastBalanceSyncTime      time.Time          // Last balance sync time
+	userID                   string             // User ID
+	gridState                *GridState         // Grid trading state (only used when StrategyType == "grid_trading")
+	consecutiveAgentFailures int                // Consecutive model call failures
+	runtimeHealthMu          sync.RWMutex       // Guards safe mode + trading authorization state (loop writes, API reads)
+	tradingBlocked           bool
+	tradingError             string
+	tradingCheckedAt         time.Time
+	safeMode                 bool   // Safe mode: no new positions, protect existing ones
+	safeModeReason           string // Why safe mode was activated
 }
 
 // NewAutoTrader creates an automatic trader
@@ -160,12 +158,8 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 		if err != nil {
 			return nil, fmt.Errorf("cannot verify planning account ownership: %w", err)
 		}
-		if st.GormDB().Migrator().HasTable(&live.Lease{}) {
-			var count int64
-			err = st.GormDB().Model(&live.Lease{}).Where("account_key = ?", planning.AccountIdentity(ex.ExchangeType, string(ex.APIKey))).Count(&count).Error
-			if err != nil || count != 0 {
-				return nil, fmt.Errorf("account has an unresolved planning lease or lease lookup failed")
-			}
+		if leased, err := st.Exchange().Leased(ex.ID); err != nil || leased {
+			return nil, fmt.Errorf("account has an unresolved planning lease or lease lookup failed")
 		}
 	}
 
@@ -176,25 +170,25 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 	if config.Name == "" {
 		config.Name = "Default Trader"
 	}
-	if config.AIModel == "" {
+	if config.AgentModel == "" {
 		if config.UseQwen {
-			config.AIModel = "qwen"
+			config.AgentModel = "qwen"
 		} else {
-			config.AIModel = "deepseek"
+			config.AgentModel = "deepseek"
 		}
 	}
 
-	// Initialize AI client based on provider
-	var llmClient llm.AIClient
-	aiModel := config.AIModel
-	if config.UseQwen && aiModel == "" {
-		aiModel = "qwen"
+	// Initialize model client based on provider
+	var agentClient agent.Client
+	agentModel := config.AgentModel
+	if config.UseQwen && agentModel == "" {
+		agentModel = "qwen"
 	}
 
 	// Resolve API key (provider-specific overrides)
 	apiKey := config.CustomAPIKey
 	customURL := config.CustomAPIURL
-	switch aiModel {
+	switch agentModel {
 	case "qwen":
 		if config.QwenKey != "" {
 			apiKey = config.QwenKey
@@ -206,22 +200,22 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 	}
 
 	// Create client via registry (covers all registered providers)
-	if aiModel == "custom" {
-		llmClient = llm.New()
-	} else if aiModel == "" {
-		aiModel = "deepseek"
-		llmClient = llm.NewAIClientByProvider(aiModel)
+	if agentModel == "custom" {
+		agentClient = agent.New()
+	} else if agentModel == "" {
+		agentModel = "deepseek"
+		agentClient = agent.NewClientByProvider(agentModel)
 	} else {
-		llmClient = llm.NewAIClientByProvider(aiModel)
+		agentClient = agent.NewClientByProvider(agentModel)
 	}
-	if llmClient == nil {
-		llmClient = llm.New()
+	if agentClient == nil {
+		agentClient = agent.New()
 	}
 
-	llmClient.SetAPIKey(apiKey, customURL, config.CustomModelName)
-	// Attribute token usage (ai_charges) to this trader
-	llm.TagUsage(llmClient, config.ID)
-	logger.Infof("🤖 [%s] Using %s AI", config.Name, aiModel)
+	agentClient.SetAPIKey(apiKey, customURL, config.CustomModelName)
+	// Attribute calls (agent.calls) to this trader
+	agent.TagUsage(agentClient, agent.FeatureTrader, config.ID)
+	logger.Infof("🤖 [%s] Using %s agent", config.Name, agentModel)
 
 	if config.CustomAPIURL != "" || config.CustomModelName != "" {
 		logger.Infof("🔧 [%s] Custom config - URL: %s, Model: %s", config.Name, config.CustomAPIURL, config.CustomModelName)
@@ -289,18 +283,18 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 	if config.StrategyConfig == nil {
 		return nil, fmt.Errorf("[%s] strategy not configured", config.Name)
 	}
-	strategyEngine := kernel.NewStrategyEngine(config.StrategyConfig).WithVenue(config.Exchange)
+	strategyEngine := traderagent.NewStrategyEngine(config.StrategyConfig).WithVenue(config.Exchange)
 	logger.Infof("✓ [%s] Using strategy engine (strategy configuration loaded)", config.Name)
 
 	return &AutoTrader{
 		id:                    config.ID,
 		name:                  config.Name,
-		aiModel:               config.AIModel,
+		agentModel:            config.AgentModel,
 		exchange:              config.Exchange,
 		exchangeID:            config.ExchangeID,
 		config:                config,
 		trader:                trader,
-		llmClient:             llmClient,
+		agentClient:           agentClient,
 		store:                 st,
 		strategyEngine:        strategyEngine,
 		cycleNumber:           cycleNumber,
@@ -347,7 +341,7 @@ func (at *AutoTrader) reloadStrategyConfigIfChanged() error {
 
 	at.config.StrategyConfig = strategyConfig
 	at.config.StrategyConfigRaw = strategy.Config
-	at.strategyEngine = kernel.NewStrategyEngine(strategyConfig).WithVenue(at.exchange)
+	at.strategyEngine = traderagent.NewStrategyEngine(strategyConfig).WithVenue(at.exchange)
 	at.logInfof("🔄 Strategy config refreshed from DB: %s", strategy.Name)
 	return nil
 }
@@ -361,15 +355,10 @@ func (at *AutoTrader) Run() error {
 		if err != nil {
 			return fmt.Errorf("cannot verify planning account ownership: %w", err)
 		}
-		key := planning.AccountIdentity(ex.ExchangeType, string(ex.APIKey))
-		unlock = planning.LockAccount(key)
-		if at.store.GormDB().Migrator().HasTable(&live.Lease{}) {
-			var count int64
-			err = at.store.GormDB().Model(&live.Lease{}).Where("account_key = ?", key).Count(&count).Error
-			if err != nil || count != 0 {
-				unlock()
-				return fmt.Errorf("account has an unresolved planning lease or lease lookup failed")
-			}
+		unlock = store.LockAccount(ex.ID)
+		if leased, err := at.store.Exchange().Leased(ex.ID); err != nil || leased {
+			unlock()
+			return fmt.Errorf("account has an unresolved planning lease or lease lookup failed")
 		}
 	}
 
@@ -383,32 +372,16 @@ func (at *AutoTrader) Run() error {
 	at.stopMonitorCh = make(chan struct{})
 	at.startTime = time.Now()
 
-	logger.Info("🚀 AI-driven automatic trading system started")
+	logger.Info("🚀 Agent-driven automatic trading system started")
 	at.logInfof("💰 Initial balance: %.2f USDT", at.initialBalance)
 	at.logInfof("⚙️  Scan interval: %v", at.config.ScanInterval)
-	logger.Info("🤖 AI will make full decisions on leverage, position size, stop loss/take profit, etc.")
+	logger.Info("🤖 The agent will make full decisions on leverage, position size, stop loss/take profit, etc.")
 
 	at.monitorWg.Add(1)
 	defer at.monitorWg.Done()
 
 	// Start drawdown monitoring
 	at.startDrawdownMonitor()
-
-	// Start OKX order sync if using OKX exchange
-	if at.exchange == "okx" {
-		if okxTrader, ok := at.trader.(*okx.OKXTrader); ok && at.store != nil {
-			okxTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
-			at.logInfof("🔄 OKX order+position sync enabled (every 30s)")
-		}
-	}
-
-	// Start Binance order sync if using Binance exchange
-	if at.exchange == "binance" {
-		if binanceTrader, ok := at.trader.(*binance.FuturesTrader); ok && at.store != nil {
-			binanceTrader.StartOrderSync(at.id, at.exchangeID, at.exchange, at.store, 30*time.Second, at.stopMonitorCh)
-			at.logInfof("🔄 Binance order+position sync enabled (every 30s)")
-		}
-	}
 
 	// Check if this is a grid trading strategy
 	isGridStrategy := at.IsGridStrategy()
@@ -501,9 +474,9 @@ func (at *AutoTrader) GetName() string {
 	return at.name
 }
 
-// GetAIModel gets AI model
-func (at *AutoTrader) GetAIModel() string {
-	return at.aiModel
+// GetAgentModel gets model
+func (at *AutoTrader) GetAgentModel() string {
+	return at.agentModel
 }
 
 // GetExchange gets exchange
@@ -511,29 +484,8 @@ func (at *AutoTrader) GetExchange() string {
 	return at.exchange
 }
 
-// SetCustomPrompt sets custom trading strategy prompt
-func (at *AutoTrader) SetCustomPrompt(prompt string) {
-	at.customPrompt = prompt
-}
-
-// SetOverrideBasePrompt sets whether to override base prompt
-func (at *AutoTrader) SetOverrideBasePrompt(override bool) {
-	at.overrideBasePrompt = override
-}
-
-// GetSystemPromptTemplate gets current system prompt template name (from strategy config)
-func (at *AutoTrader) GetSystemPromptTemplate() string {
-	if at.strategyEngine != nil {
-		config := at.strategyEngine.GetConfig()
-		if config.CustomPrompt != "" {
-			return "custom"
-		}
-	}
-	return "strategy"
-}
-
 // GetCandidateCoins returns the current candidate coin set from the trader's strategy engine.
-func (at *AutoTrader) GetCandidateCoins() ([]kernel.CandidateCoin, error) {
+func (at *AutoTrader) GetCandidateCoins() ([]traderagent.CandidateCoin, error) {
 	if at.strategyEngine == nil {
 		return nil, fmt.Errorf("strategy engine not configured")
 	}

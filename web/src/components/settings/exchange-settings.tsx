@@ -11,7 +11,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Exchange, ExchangeAccountState } from '@/types'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { api } from '@/api'
 import { cn } from '@/utils/cn'
 import { CryptoService, diagnoseWebCryptoEnvironment } from '@/utils/crypto'
@@ -71,7 +71,6 @@ function balance(state: ExchangeAccountState) {
 
 const KNOWN_STATES = [
   'ok',
-  'disabled',
   'missing_credentials',
   'invalid_credentials',
   'permission_denied',
@@ -316,7 +315,6 @@ function ExchangeForm({
     e.preventDefault()
     if (!ready || !canTravel) return
     const keys = {
-      enabled: true,
       api_key: apiKey.trim(),
       secret_key: secretKey.trim(),
       passphrase: okx ? passphrase.trim() : '',
@@ -328,14 +326,14 @@ function ExchangeForm({
             [existing.id]: keys,
           },
         })
-        toast.success(t('aiTradersToast.exchangeConfigUpdated', language))
+        toast.success(t('agentTradersToast.exchangeConfigUpdated', language))
       } else {
         await api.createExchangeEncrypted({
           ...keys,
           exchange_type: type,
           account_name: accountName.trim(),
         })
-        toast.success(t('aiTradersToast.exchangeCreated', language))
+        toast.success(t('agentTradersToast.exchangeCreated', language))
       }
     }, 'saveConfigFailed')
   }
@@ -359,7 +357,7 @@ function ExchangeForm({
       return
     await run(async () => {
       await api.deleteExchange(existing.id)
-      toast.success(t('aiTradersToast.exchangeDeleted', language))
+      toast.success(t('agentTradersToast.exchangeDeleted', language))
     }, 'deleteExchangeConfigFailed')
   }
 

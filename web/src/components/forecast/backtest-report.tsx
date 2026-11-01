@@ -1,6 +1,6 @@
 import type { BacktestMetrics, BacktestReport } from '@/api/forecast'
 import { Panel } from '@/components/common/panel'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { fmtDate, fmtPct } from './forecast-format'
 

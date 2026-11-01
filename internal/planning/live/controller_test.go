@@ -2,7 +2,6 @@ package live
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -11,7 +10,8 @@ import (
 	"time"
 	"vergex/internal/planning"
 	"vergex/internal/planning/core"
-	"vergex/internal/testdb"
+	"vergex/internal/store"
+	"vergex/internal/store/database/testdb"
 )
 
 type testMarket struct {
@@ -29,6 +29,8 @@ func (m *testMarket) Snapshot(context.Context, string, string) (core.Snapshot, e
 }
 
 type testBroker struct {
+	// onPlace sees each order just before it would reach the exchange.
+	onPlace                func(Order)
 	mu                     sync.Mutex
 	orders                 map[string]Order
 	placed                 []Order
@@ -47,6 +49,9 @@ func (b *testBroker) Account(context.Context, string) (Account, error) {
 }
 func (b *testBroker) Prepare(context.Context, string) error { return b.prepareErr }
 func (b *testBroker) Place(_ context.Context, o Order) (Order, error) {
+	if b.onPlace != nil {
+		b.onPlace(o)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.placed = append(b.placed, o)
@@ -67,19 +72,19 @@ func TestImmediateFillWaitsForPositionBeforeCompletion(t *testing.T) {
 			v := started(t, c, p)
 			b.fillEntryImmediately = true
 			for range 2 {
-				if c.step(context.Background(), "alice", v.ID) {
+				if c.step(context.Background(), testUser, v.ID) {
 					t.Fatal("monitor stopped before position confirmation")
 				}
 			}
-			got, _ := c.Get("alice", v.ID)
+			got, _ := c.Get(testUser, v.ID)
 			var leases int64
-			c.DB.Model(&Lease{}).Count(&leases)
+			c.DB.Model(&store.AccountLease{}).Count(&leases)
 			if got.State == "completed" || leases != 1 || len(b.placed) != 1 {
 				t.Fatal("filled entry lost its reservation or was resubmitted", got.State, leases, len(b.placed))
 			}
 			b.account.Position = got.Orders[0].Filled
 			for range 2 {
-				c.step(context.Background(), "alice", v.ID)
+				c.step(context.Background(), testUser, v.ID)
 			}
 			if len(b.placed) != 3 || b.placed[1].Role != "sl" || b.placed[2].Role != "tp" {
 				t.Fatal("confirmed position did not receive exactly one protection pair", b.placed)
@@ -89,11 +94,11 @@ func TestImmediateFillWaitsForPositionBeforeCompletion(t *testing.T) {
 			tp.Status, tp.Filled = "FILLED", tp.Quantity
 			b.orders[tp.ClientID] = tp
 			b.account.Position = "0"
-			if !c.step(context.Background(), "alice", v.ID) {
+			if !c.step(context.Background(), testUser, v.ID) {
 				t.Fatal("confirmed closed trade did not finish")
 			}
-			got, _ = c.Get("alice", v.ID)
-			c.DB.Model(&Lease{}).Count(&leases)
+			got, _ = c.Get(testUser, v.ID)
+			c.DB.Model(&store.AccountLease{}).Count(&leases)
 			if got.State != "completed" || leases != 0 {
 				t.Fatal("closed trade retained reservation")
 			}
@@ -142,9 +147,26 @@ func (b testExecutionTrader) CancelExecutionOrder(c context.Context, o Order) er
 	return b.Cancel(c, o)
 }
 
+const (
+	// testAccount is the account the tests' plans are drafted on.
+	testAccount   = "00000000-0000-4000-8000-0000000000a1"
+	testUser      = "00000000-0000-4000-8000-000000000001"
+	testOtherUser = "00000000-0000-4000-8000-000000000002"
+)
+
 func setup(t *testing.T, kind string) (*Controller, *testBroker, *testMarket, core.Plan) {
 	t.Helper()
 	db := testdb.Open(t)
+	st, e := store.NewMigrated(db)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if e := st.User().Create(&store.User{ID: testUser, Email: "alice@example.com", PasswordHash: "x"}); e != nil {
+		t.Fatal(e)
+	}
+	if e := db.Create(&store.Exchange{ID: testAccount, UserID: testUser, ExchangeType: "binance", APIKey: "fixture-key"}).Error; e != nil {
+		t.Fatal(e)
+	}
 	now := time.Now().UTC()
 	m := &testMarket{book: core.Snapshot{Venue: "binance", Symbol: "BTCUSDT", Kind: "perpetual", Bid: "99999", Ask: "100000", BidSize: "100", AskSize: "100", Tick: "1", Step: "0.00001", MinQty: "0.00001", MinNotional: "10", Observed: now}}
 	idea := core.Idea{Name: "plan", Side: "long", Entry: "100000", Stop: "99000", Target: "104000"}
@@ -162,14 +184,14 @@ func setup(t *testing.T, kind string) (*Controller, *testBroker, *testMarket, co
 		t.Fatal(e)
 	}
 	b := &testBroker{orders: map[string]Order{}, account: Account{Equity: "10000", Available: "10000", FeeBPS: "5", Position: "0"}}
-	c, e := New(db, func(context.Context, string, string) (Broker, string, error) {
-		return TraderBroker{Trader: testExecutionTrader{b}}, "account", nil
+	c, e := New(st, func(context.Context, string, string) (Broker, string, error) {
+		return TraderBroker{Executor: testExecutionTrader{b}}, "account", nil
 	}, m)
 	if e != nil {
 		t.Fatal(e)
 	}
 	t.Cleanup(c.Shutdown)
-	ds := planning.DraftStore{DB: db, UserID: "alice", ExchangeID: "exchange", Venue: "binance"}
+	ds := planning.DraftStore{DB: db, UserID: testUser, ExchangeID: testAccount, Venue: "binance"}
 	if e = ds.Add([]core.Plan{p}); e != nil {
 		t.Fatal(e)
 	}
@@ -177,7 +199,7 @@ func setup(t *testing.T, kind string) (*Controller, *testBroker, *testMarket, co
 }
 func approved(t *testing.T, c *Controller, p core.Plan) View {
 	t.Helper()
-	v, e := c.Approve(context.Background(), "alice", p.ID, p.Hash, "APPROVE LIVE")
+	v, e := c.Approve(context.Background(), testUser, p.ID, p.Hash, "APPROVE LIVE")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -206,27 +228,27 @@ func started(t *testing.T, c *Controller, p core.Plan) View {
 }
 func TestApprovalOwnerHashAndAccountLease(t *testing.T) {
 	c, b, _, p := setup(t, "limit")
-	for _, args := range [][3]string{{"bob", p.Hash, "APPROVE LIVE"}, {"alice", "wrong", "APPROVE LIVE"}, {"alice", p.Hash, "approve live"}} {
+	for _, args := range [][3]string{{testOtherUser, p.Hash, "APPROVE LIVE"}, {testUser, "wrong", "APPROVE LIVE"}, {testUser, p.Hash, "approve live"}} {
 		if _, e := c.Approve(context.Background(), args[0], p.ID, args[1], args[2]); e == nil {
 			t.Fatal("invalid approval accepted")
 		}
 	}
 	v := approved(t, c, p)
-	if _, e := c.Get("bob", v.ID); e == nil {
+	if _, e := c.Get(testOtherUser, v.ID); e == nil {
 		t.Fatal("cross user read")
 	}
-	if _, e := c.Execute(context.Background(), "alice", v.ID, "bad"); e == nil {
+	if _, e := c.Execute(context.Background(), testUser, v.ID, "bad"); e == nil {
 		t.Fatal("bad execution hash")
 	}
 	if len(b.placed) != 0 {
 		t.Fatal("ordered without approval")
 	}
-	if _, e := c.Approve(context.Background(), "alice", p.ID, p.Hash, "APPROVE LIVE"); e == nil {
+	if _, e := c.Approve(context.Background(), testUser, p.ID, p.Hash, "APPROVE LIVE"); e == nil {
 		t.Fatal("approval replay")
 	}
-	ds := planning.DraftStore{DB: c.DB, UserID: "alice", ExchangeID: "exchange", Venue: "binance"}
+	ds := planning.DraftStore{DB: c.DB, UserID: testUser, ExchangeID: testAccount, Venue: "binance"}
 	if e := ds.Revise(p.ID, []core.Plan{p}, time.Now()); e == nil {
-		t.Fatal("AI revised locked plan")
+		t.Fatal("agent revised locked plan")
 	}
 }
 func TestConcurrentApprovalsReserveTheAccountOnce(t *testing.T) {
@@ -237,7 +259,7 @@ func TestConcurrentApprovalsReserveTheAccountOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, e := c.Approve(context.Background(), "alice", p.ID, p.Hash, "APPROVE LIVE"); e == nil {
+			if _, e := c.Approve(context.Background(), testUser, p.ID, p.Hash, "APPROVE LIVE"); e == nil {
 				approvedCount.Add(1)
 			}
 		}()
@@ -247,7 +269,7 @@ func TestConcurrentApprovalsReserveTheAccountOnce(t *testing.T) {
 		t.Fatalf("approvals = %d, want 1", approvedCount.Load())
 	}
 	var leases int64
-	if e := c.DB.Model(&Lease{}).Count(&leases).Error; e != nil || leases != 1 {
+	if e := c.DB.Model(&store.AccountLease{}).Count(&leases).Error; e != nil || leases != 1 {
 		t.Fatalf("leases = %d, err = %v", leases, e)
 	}
 }
@@ -271,19 +293,19 @@ func TestExecutePreflightFailuresNeverOrder(t *testing.T) {
 			case "market":
 				m.fail = true
 			}
-			if _, e := c.Execute(context.Background(), "alice", v.ID, v.ApprovalHash); e == nil {
+			if _, e := c.Execute(context.Background(), testUser, v.ID, v.ApprovalHash); e == nil {
 				t.Fatal("unsafe preflight accepted")
 			}
 			if len(b.placed) != 0 {
 				t.Fatal("preflight ordered")
 			}
-			stored, err := c.Get("alice", v.ID)
+			stored, err := c.Get(testUser, v.ID)
 			var leases int64
-			c.DB.Model(&Lease{}).Count(&leases)
+			c.DB.Model(&store.AccountLease{}).Count(&leases)
 			if err != nil || stored.State != "cancelled" || leases != 0 || stored.Error == "" {
 				t.Fatalf("failed preflight left an unused account reservation: %+v %v leases=%d", stored.Run, err, leases)
 			}
-			if _, err = c.Execute(context.Background(), "alice", v.ID, v.ApprovalHash); err == nil {
+			if _, err = c.Execute(context.Background(), testUser, v.ID, v.ApprovalHash); err == nil {
 				t.Fatal("retired approval was accepted again")
 			}
 		})
@@ -297,7 +319,7 @@ func TestConcurrentExecutionIsIdempotent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if _, e := c.Execute(context.Background(), "alice", v.ID, v.ApprovalHash); e != nil {
+			if _, e := c.Execute(context.Background(), testUser, v.ID, v.ApprovalHash); e != nil {
 				t.Error(e)
 			}
 		}()
@@ -319,14 +341,14 @@ func TestAmbiguousAcknowledgementNeverResubmits(t *testing.T) {
 	c, b, _, p := setup(t, "limit")
 	v := started(t, c, p)
 	b.errorPlace = errors.New("timeout after accepting order")
-	c.step(context.Background(), "alice", v.ID)
-	got, _ := c.Get("alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
+	got, _ := c.Get(testUser, v.ID)
 	if got.State != "needs_attention" || got.Orders[0].Status != "UNKNOWN" {
 		t.Fatal(got)
 	}
 	b.errorPlace = nil
-	c.step(context.Background(), "alice", v.ID)
-	c.step(context.Background(), "alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
+	c.step(context.Background(), testUser, v.ID)
 	if len(b.placed) != 1 {
 		t.Fatal("resent ambiguous entry")
 	}
@@ -334,13 +356,13 @@ func TestAmbiguousAcknowledgementNeverResubmits(t *testing.T) {
 func TestPartialFillProtectedBeforeRemainingEntry(t *testing.T) {
 	c, b, _, p := setup(t, "twap")
 	v := started(t, c, p)
-	c.step(context.Background(), "alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
 	first := b.orders[v.Orders[0].ClientID]
 	first.Status = "PARTIALLY_FILLED"
 	first.Filled = "0.001"
 	b.orders[first.ClientID] = first
 	b.account.Position = "0.001"
-	c.step(context.Background(), "alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
 	if len(b.placed) != 3 || b.placed[1].Role != "sl" || b.placed[2].Role != "tp" {
 		t.Fatal(b.placed)
 	}
@@ -349,7 +371,7 @@ func TestPartialFillProtectedBeforeRemainingEntry(t *testing.T) {
 			t.Fatal(o)
 		}
 	}
-	c.step(context.Background(), "alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
 	if len(b.placed) != 3 {
 		t.Fatal("duplicate protection or premature TWAP")
 	}
@@ -357,23 +379,23 @@ func TestPartialFillProtectedBeforeRemainingEntry(t *testing.T) {
 func TestUnknownProtectorRetainsAccountLock(t *testing.T) {
 	c, b, _, p := setup(t, "limit")
 	v := started(t, c, p)
-	c.step(context.Background(), "alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
 	first := b.orders[v.Orders[0].ClientID]
 	first.Status = "FILLED"
 	first.Filled = first.Quantity
 	b.orders[first.ClientID] = first
 	b.account.Position = first.Quantity
 	b.errorPlace = errors.New("lost protection ack")
-	c.step(context.Background(), "alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
 	b.lookupErr = true
 	b.account.Position = "0"
-	c.step(context.Background(), "alice", v.ID)
-	got, _ := c.Get("alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
+	got, _ := c.Get(testUser, v.ID)
 	if got.State == "completed" {
 		t.Fatal("unknown protector considered completed")
 	}
 	var leases int64
-	c.DB.Model(&Lease{}).Count(&leases)
+	c.DB.Model(&store.AccountLease{}).Count(&leases)
 	if leases != 1 {
 		t.Fatal("released unresolved account")
 	}
@@ -384,43 +406,47 @@ func TestUnknownProtectorRetainsAccountLock(t *testing.T) {
 func TestRestartAndPersistedTamperDoNotReplay(t *testing.T) {
 	c, b, m, p := setup(t, "limit")
 	v := started(t, c, p)
-	c.step(context.Background(), "alice", v.ID)
-	next, e := New(c.DB, c.Factory, m)
+	c.step(context.Background(), testUser, v.ID)
+	st, e := store.NewMigrated(c.DB)
+	if e != nil {
+		t.Fatal(e)
+	}
+	next, e := New(st, c.Factory, m)
 	if e != nil {
 		t.Fatal(e)
 	}
 	defer next.Shutdown()
-	got, _ := next.Get("alice", v.ID)
+	got, _ := next.Get(testUser, v.ID)
 	if got.State != "needs_attention" {
 		t.Fatal(got.State)
 	}
-	next.step(context.Background(), "alice", v.ID)
+	next.step(context.Background(), testUser, v.ID)
 	if len(b.placed) != 1 {
 		t.Fatal("restart replay")
 	}
-	got, _ = next.Get("alice", v.ID)
-	got.Orders[0].Price = "1"
-	raw, _ := json.Marshal(got.Orders)
-	c.DB.Model(&Run{}).Where("id = ?", v.ID).Update("orders_json", string(raw))
-	if _, e = next.Get("alice", v.ID); e == nil {
+	got, _ = next.Get(testUser, v.ID)
+	if e = c.DB.Model(&runOrder{}).Where("run_id = ? AND seq = ?", v.ID, 0).Update("price", "1").Error; e != nil {
+		t.Fatal(e)
+	}
+	if _, e = next.Get(testUser, v.ID); e == nil {
 		t.Fatal("persisted unapproved intent accepted")
 	}
 }
 func TestCancelledProtectionStopsNewEntries(t *testing.T) {
 	c, b, _, p := setup(t, "twap")
 	v := started(t, c, p)
-	c.step(context.Background(), "alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
 	first := b.orders[v.Orders[0].ClientID]
 	first.Status = "PARTIALLY_FILLED"
 	first.Filled = "0.001"
 	b.orders[first.ClientID] = first
 	b.account.Position = first.Filled
-	c.step(context.Background(), "alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
 	sl := b.orders[b.placed[1].ClientID]
 	sl.Status = "CANCELED"
 	b.orders[sl.ClientID] = sl
-	c.step(context.Background(), "alice", v.ID)
-	got, _ := c.Get("alice", v.ID)
+	c.step(context.Background(), testUser, v.ID)
+	got, _ := c.Get(testUser, v.ID)
 	if got.State != "needs_attention" || got.Orders[1].Status != "CANCELED" {
 		t.Fatal(got)
 	}
@@ -435,7 +461,7 @@ func TestExpiredApprovalCanBeCancelledWithoutOrders(t *testing.T) {
 	if e := c.DB.Model(&Run{}).Where("id = ?", v.ID).Update("state", "expired").Error; e != nil {
 		t.Fatal(e)
 	}
-	out, e := c.Stop("alice", v.ID, v.ApprovalHash)
+	out, e := c.Stop(testUser, v.ID, v.ApprovalHash)
 	if e != nil || out.State != "cancelled" {
 		t.Fatal(out, e)
 	}
@@ -443,7 +469,7 @@ func TestExpiredApprovalCanBeCancelledWithoutOrders(t *testing.T) {
 		t.Fatal("cancel expired approval submitted orders")
 	}
 	var count int64
-	c.DB.Model(&Lease{}).Count(&count)
+	c.DB.Model(&store.AccountLease{}).Count(&count)
 	if count != 0 {
 		t.Fatal("unreleased expired lease")
 	}
@@ -458,7 +484,7 @@ func TestExecutionPersistsBrokerRouteBeforeSubmit(t *testing.T) {
 		return &routedTestBroker{b}, "account", nil
 	}
 	v := approved(t, c, p)
-	got, e := c.Execute(context.Background(), "alice", v.ID, v.ApprovalHash)
+	got, e := c.Execute(context.Background(), testUser, v.ID, v.ApprovalHash)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -466,7 +492,7 @@ func TestExecutionPersistsBrokerRouteBeforeSubmit(t *testing.T) {
 		t.Fatal("route was not included in durable intent")
 	}
 	c.Shutdown()
-	durable, e := c.Get("alice", v.ID)
+	durable, e := c.Get(testUser, v.ID)
 	if e != nil || durable.Orders[0].VenueClientID != got.Orders[0].VenueClientID {
 		t.Fatal("route lost across reload", e)
 	}

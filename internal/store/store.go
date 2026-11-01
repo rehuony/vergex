@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 	"vergex/internal/logger"
+	"vergex/internal/store/database"
 
 	"gorm.io/gorm"
 )
@@ -18,7 +19,7 @@ type Store struct {
 
 	// Sub-stores (lazy initialization)
 	user           *UserStore
-	aiModel        *AIModelStore
+	agentModel     *AgentModelStore
 	exchange       *ExchangeStore
 	trader         *TraderStore
 	decision       *DecisionStore
@@ -26,18 +27,20 @@ type Store struct {
 	strategy       *StrategyStore
 	equity         *EquityStore
 	order          *OrderStore
-	grid           *GridStore
-	aiCharge       *AIChargeStore
+	agentCall      *AgentCallStore
 	telegramConfig TelegramConfigStore
 
 	mu sync.RWMutex
 }
 
 // New connects to PostgreSQL and returns a Store with its tables in place
-func New(cfg DBConfig) (*Store, error) {
-	gdb, err := InitGorm(cfg)
+func New(cfg database.Config) (*Store, error) {
+	gdb, err := database.Open(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+	if err := database.Migrate(gdb); err != nil {
+		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
 	s, err := NewMigrated(gdb)
@@ -49,100 +52,14 @@ func New(cfg DBConfig) (*Store, error) {
 	return s, nil
 }
 
-// NewMigrated creates a Store on an open connection, with its tables and default
-// data in place.
+// NewMigrated creates a Store on a connection whose migrations have run.
 func NewMigrated(gdb *gorm.DB) (*Store, error) {
 	sqlDB, err := gdb.DB()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sql.DB: %w", err)
 	}
 
-	s := &Store{gdb: gdb, db: sqlDB}
-
-	if err := s.initTables(); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("failed to initialize table structure: %w", err)
-	}
-	if err := s.initDefaultData(); err != nil {
-		sqlDB.Close()
-		return nil, fmt.Errorf("failed to initialize default data: %w", err)
-	}
-	return s, nil
-}
-
-// NewFromGorm creates Store from existing GORM connection
-func NewFromGorm(gdb *gorm.DB) (*Store, error) {
-	sqlDB, err := gdb.DB()
-	if err != nil {
-		return nil, err
-	}
 	return &Store{gdb: gdb, db: sqlDB}, nil
-}
-
-// initTables initializes all database tables using GORM AutoMigrate
-func (s *Store) initTables() error {
-	// Create system_config table (GORM handles this via raw SQL for simplicity)
-	if err := s.gdb.Exec(`
-		CREATE TABLE IF NOT EXISTS system_config (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		)
-	`).Error; err != nil {
-		return fmt.Errorf("failed to create system_config table: %w", err)
-	}
-
-	// Initialize sub-store tables
-	if err := s.User().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize user tables: %w", err)
-	}
-	if err := s.AIModel().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize AI model tables: %w", err)
-	}
-	if err := s.Exchange().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize exchange tables: %w", err)
-	}
-	if err := s.Trader().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize trader tables: %w", err)
-	}
-	if err := s.Decision().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize decision log tables: %w", err)
-	}
-	if err := s.Position().InitTables(); err != nil {
-		return fmt.Errorf("failed to initialize position tables: %w", err)
-	}
-	if err := s.Strategy().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize strategy tables: %w", err)
-	}
-	if err := s.Equity().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize equity tables: %w", err)
-	}
-	if err := s.Order().InitTables(); err != nil {
-		return fmt.Errorf("failed to initialize order tables: %w", err)
-	}
-	if err := s.Grid().InitTables(); err != nil {
-		return fmt.Errorf("failed to initialize grid tables: %w", err)
-	}
-	if err := s.TelegramConfig().(*telegramConfigStore).initTables(); err != nil {
-		return fmt.Errorf("failed to initialize telegram config tables: %w", err)
-	}
-	if err := s.AICharge().initTables(); err != nil {
-		return fmt.Errorf("failed to initialize AI charge tables: %w", err)
-	}
-	return nil
-}
-
-// initDefaultData initializes default data
-func (s *Store) initDefaultData() error {
-	if err := s.AIModel().initDefaultData(); err != nil {
-		return err
-	}
-	if err := s.Exchange().initDefaultData(); err != nil {
-		return err
-	}
-	if err := s.Strategy().initDefaultData(); err != nil {
-		return err
-	}
-	return nil
 }
 
 // User gets user storage
@@ -155,14 +72,14 @@ func (s *Store) User() *UserStore {
 	return s.user
 }
 
-// AIModel gets AI model storage
-func (s *Store) AIModel() *AIModelStore {
+// AgentModel gets model storage
+func (s *Store) AgentModel() *AgentModelStore {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.aiModel == nil {
-		s.aiModel = NewAIModelStore(s.gdb)
+	if s.agentModel == nil {
+		s.agentModel = NewAgentModelStore(s.gdb)
 	}
-	return s.aiModel
+	return s.agentModel
 }
 
 // Exchange gets exchange storage
@@ -235,24 +152,29 @@ func (s *Store) Order() *OrderStore {
 	return s.order
 }
 
-// Grid gets grid trading storage
-func (s *Store) Grid() *GridStore {
+// AgentCall gets agent charge storage
+func (s *Store) AgentCall() *AgentCallStore {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.grid == nil {
-		s.grid = NewGridStore(s.gdb)
+	if s.agentCall == nil {
+		s.agentCall = NewAgentCallStore(s.gdb)
 	}
-	return s.grid
+	return s.agentCall
 }
 
-// AICharge gets AI charge storage
-func (s *Store) AICharge() *AIChargeStore {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.aiCharge == nil {
-		s.aiCharge = NewAIChargeStore(s.gdb)
-	}
-	return s.aiCharge
+// AgentConversation gets conversation storage
+func (s *Store) AgentConversation() *AgentConversationStore {
+	return NewAgentConversationStore(s.gdb)
+}
+
+// AccountClose gets manual close storage
+func (s *Store) AccountClose() *AccountCloseStore {
+	return &AccountCloseStore{db: s.gdb}
+}
+
+// Ledger gets the trading ledger
+func (s *Store) Ledger() *LedgerStore {
+	return NewLedgerStore(s.gdb)
 }
 
 // TelegramConfig gets Telegram bot configuration storage
@@ -263,6 +185,16 @@ func (s *Store) TelegramConfig() TelegramConfigStore {
 		s.telegramConfig = NewTelegramConfigStore(s.gdb)
 	}
 	return s.telegramConfig
+}
+
+// LoadSetting reads a module's settings into dst, and reports whether it has any yet.
+func (s *Store) LoadSetting(module string, dst any) (bool, error) {
+	return database.LoadSetting(s.gdb, module, dst)
+}
+
+// PatchSetting merges fields into a module's settings.
+func (s *Store) PatchSetting(module string, fields map[string]any) error {
+	return database.PatchSetting(s.gdb, module, fields)
 }
 
 // Close closes database connection
@@ -278,62 +210,7 @@ func (s *Store) GormDB() *gorm.DB {
 	return s.gdb
 }
 
-// DB gets underlying database connection (for legacy code compatibility)
-// Deprecated: use GormDB() instead
-func (s *Store) DB() *sql.DB {
-	return s.db
-}
-
-// GetSystemConfig gets a system configuration value by key
-func (s *Store) GetSystemConfig(key string) (string, error) {
-	var value string
-	result := s.gdb.Raw("SELECT value FROM system_config WHERE key = ?", key).Scan(&value)
-	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
-			return "", nil
-		}
-		return "", result.Error
-	}
-	if result.RowsAffected == 0 {
-		return "", nil
-	}
-	return value, nil
-}
-
-// SetSystemConfig sets a system configuration value
-func (s *Store) SetSystemConfig(key, value string) error {
-	// Use GORM-compatible upsert
-	return s.gdb.Exec(`
-		INSERT INTO system_config (key, value) VALUES (?, ?)
-		ON CONFLICT(key) DO UPDATE SET value = excluded.value
-	`, key, value).Error
-}
-
-// DeleteSystemConfig removes a system configuration value
-func (s *Store) DeleteSystemConfig(key string) error {
-	return s.gdb.Exec("DELETE FROM system_config WHERE key = ?", key).Error
-}
-
 // Transaction executes transaction with GORM
 func (s *Store) Transaction(fn func(tx *gorm.DB) error) error {
 	return s.gdb.Transaction(fn)
-}
-
-// TransactionSQL executes transaction with sql.Tx (legacy)
-// Deprecated: Use Transaction() instead
-func (s *Store) TransactionSQL(fn func(tx *sql.Tx) error) error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-
-	if err := fn(tx); err != nil {
-		tx.Rollback()
-		return err
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
-	return nil
 }

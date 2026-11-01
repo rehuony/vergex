@@ -5,9 +5,8 @@ import (
 	"errors"
 	"sync"
 	"testing"
-
 	"vergex/internal/market"
-	"vergex/internal/trader/types"
+	"vergex/internal/trading"
 )
 
 // fakeMarks is the live mark prices the monitor sees.
@@ -43,7 +42,7 @@ func (f *fakeMarks) set(symbol string, price float64) {
 // fakeHolder holds one position on an imaginary exchange. Embedding the interface
 // makes any call the monitor should not make panic.
 type fakeHolder struct {
-	types.Trader
+	trading.Trader
 	mark   float64
 	failed bool
 	reads  int

@@ -11,7 +11,7 @@ import (
 )
 
 // apiClient calls this server's own REST API with the bot user's JWT. Skills
-// use it with fixed paths, so the LLM never chooses an endpoint and every
+// use it with fixed paths, so the model never chooses an endpoint and every
 // request goes through the same validation and risk caps as the web UI.
 type apiClient struct {
 	baseURL string

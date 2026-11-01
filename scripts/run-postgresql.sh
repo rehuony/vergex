@@ -15,10 +15,3 @@ services:
     ports:
       - "127.0.0.1:${DB_PORT:-5432}:5432"
 EOF
-
-# The tests run in a database of their own beside the main one.
-docker compose exec -T vergex-postgres sh -c '
-	test_db="${POSTGRES_DB}_test"
-	psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -lqtA | cut -d"|" -f1 | grep -qx "$test_db" ||
-		createdb -U "$POSTGRES_USER" "$test_db"
-'

@@ -11,16 +11,17 @@ import (
 	"vergex/internal/store/storetest"
 )
 
+// trendTrader is the trader every alert test starts with.
+const trendTrader = "00000000-0000-4000-8000-0000000000a1"
+
 func alertFixture(t *testing.T) (*alertWatcher, *store.Store, *[]string, *time.Time) {
 	t.Helper()
 	st := storetest.New(t)
 	t.Cleanup(func() { st.Close() })
-	if err := st.User().Create(&store.User{ID: "alice", Email: "alice@example.com", PasswordHash: "x"}); err != nil {
+	if err := st.User().Create(&store.User{ID: storetest.UserID, Email: "alice@example.com", PasswordHash: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Trader().Create(&store.Trader{ID: "t1", UserID: "alice", Name: "Trend"}); err != nil {
-		t.Fatal(err)
-	}
+	storetest.AddTrader(t, st, &store.Trader{ID: trendTrader, Name: "Trend"})
 	if err := st.TelegramConfig().Save("token", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -40,14 +41,9 @@ func alertFixture(t *testing.T) (*alertWatcher, *store.Store, *[]string, *time.T
 
 func closePosition(t *testing.T, st *store.Store, exit time.Time) {
 	t.Helper()
-	position := &store.TraderPosition{TraderID: "t1", Symbol: "BTCUSDT", Side: "LONG", Status: "CLOSED", ExitTime: exit.UnixMilli(), RealizedPnL: 12.5, EntryTime: exit.Add(-time.Hour).UnixMilli()}
-	if err := st.Position().Create(position); err != nil {
-		t.Fatal(err)
-	}
-	// Create may force the opening status; alerts read what is stored.
-	if err := st.GormDB().Model(position).Updates(map[string]any{"status": "CLOSED", "exit_time": exit.UnixMilli()}).Error; err != nil {
-		t.Fatal(err)
-	}
+	ledger := storetest.NewLedger(t, st)
+	ledger.Open(trendTrader, "BTCUSDT", store.SideLong, 1, 100, exit.Add(-time.Minute))
+	ledger.Close(trendTrader, "BTCUSDT", store.SideLong, 1, 112.5, 12.5, exit)
 }
 
 func TestAlertsSkipHistoryAndReportOnce(t *testing.T) {
@@ -95,11 +91,11 @@ func TestStandingProblemsAlertOnceAndReArm(t *testing.T) {
 	w, _, sent, clock := alertFixture(t)
 	safeMode := true
 	w.sources.TraderStatus = func(string) map[string]any {
-		return map[string]any{"safe_mode": safeMode, "safe_mode_reason": "3 AI failures"}
+		return map[string]any{"safe_mode": safeMode, "safe_mode_reason": "3 model failures"}
 	}
 	w.check(context.Background())
 	w.check(context.Background())
-	if len(*sent) != 1 || !strings.Contains((*sent)[0], "Safe mode: Trend: 3 AI failures") {
+	if len(*sent) != 1 || !strings.Contains((*sent)[0], "Safe mode: Trend: 3 model failures") {
 		t.Fatalf("sent = %v", *sent)
 	}
 

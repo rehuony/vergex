@@ -7,7 +7,7 @@ import { Dialog } from '@/components/common/dialog'
 import { PanelState } from '@/components/common/panel'
 import { SettingsLink } from '@/components/settings/settings-link'
 import { Button } from '@/components/ui/button'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import type { LaunchCheck, LaunchCheckStatus } from '@/types'
 import { cn } from '@/utils/cn'
 
@@ -33,7 +33,7 @@ function CheckRow({
   const { icon: Icon, className } = STATUS_ICON[check.status]
   const needsSettings =
     check.status === 'failed' &&
-    (check.id === 'ai_model' || check.id.startsWith('exchange'))
+    (check.id === 'agent_model' || check.id.startsWith('exchange'))
   return (
     <li className="flex items-start gap-3 py-2.5">
       <Icon
@@ -58,7 +58,7 @@ function CheckRow({
               <>
                 {' '}
                 <SettingsLink
-                  section={check.id === 'ai_model' ? 'models' : 'exchanges'}
+                  section={check.id === 'agent_model' ? 'models' : 'exchanges'}
                   className="text-vergex-brand underline"
                 >
                   {t('startTrader.settings', language)}

@@ -6,9 +6,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"vergex/internal/exchange/binance"
+	"vergex/internal/exchange/okx"
 	"vergex/internal/logger"
-	"vergex/internal/provider/binance"
-	"vergex/internal/provider/okx"
+	"vergex/internal/market/instrument"
 )
 
 // LiveSource supplies candles and prices from the live streams and local history.
@@ -346,7 +347,7 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 
 // GetBoxData fetches 1h klines and calculates box data for a symbol
 func GetBoxData(symbol string) (*BoxData, error) {
-	symbol = Normalize(symbol)
+	symbol = instrument.Normalize(symbol)
 
 	// Fetch 500 1h klines
 	var klines []Kline

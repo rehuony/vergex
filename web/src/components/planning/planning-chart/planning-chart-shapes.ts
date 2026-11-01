@@ -2,7 +2,7 @@ import type { Drawing, Plan } from '@/api/planning'
 import { colors } from '@/components/market-chart/market-chart-surface'
 import { compareColors, type Shape } from './planning-chart-surface'
 
-// What the Frontier chart draws for plans and AI drawings, as price lines and
+// What the Frontier chart draws for plans and agent drawings, as price lines and
 // overlay shapes.
 
 const fmt = (value: number | string) =>
@@ -14,7 +14,7 @@ export function annotationKind(d: Drawing) {
   return 'other'
 }
 
-// selectAnnotations drops AI horizontal lines that duplicate plan levels or
+// selectAnnotations drops agent horizontal lines that duplicate plan levels or
 // each other, then keeps at most four, balanced between support and
 // resistance regardless of model ordering.
 export function selectAnnotations(drawings: Drawing[], levels: number[]) {

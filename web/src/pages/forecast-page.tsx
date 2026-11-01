@@ -35,7 +35,7 @@ import {
 } from '@/components/ui/popover'
 import { buildForecastPath, ROUTES } from '@/constants/route-paths'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { cn } from '@/utils/cn'
 
 const SIGNALS_REFRESH_MS = 15000

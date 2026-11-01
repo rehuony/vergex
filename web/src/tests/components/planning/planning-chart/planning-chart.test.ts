@@ -37,7 +37,7 @@ const line = (label: string, price: string): Drawing => ({
   points: [{ time: 0, price }],
 })
 
-it('drops AI lines that duplicate plan levels or each other', () => {
+it('drops agent lines that duplicate plan levels or each other', () => {
   const picked = selectAnnotations(
     [line('Support', '100'), line('S2', '100.001'), line('R1', '120')],
     [120]

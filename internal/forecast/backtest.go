@@ -30,7 +30,7 @@ type Metrics struct {
 	Misses  int `json:"misses"`
 	// HitRate is hits over directional signals that moved.
 	HitRate *float64 `json:"hit_rate"`
-	// BaselineUp is how often price simply rose over the same samples.
+	// BaselineUp is how often price simply rose, over the samples where it moved.
 	BaselineUp float64 `json:"baseline_up"`
 	Brier      float64 `json:"brier"`
 	// BaselineBrier is the Brier score of always predicting BaselineUp. Lift is the
@@ -75,14 +75,17 @@ type BacktestSource interface {
 }
 
 type accumulator struct {
-	samples, signals, hits, misses, ups, withinMove, withDerivatives int
-	brier, probSum, returnSum                                        float64
+	samples, signals, hits, misses, ups, moved, withinMove, withDerivatives int
+	brier, probSum, returnSum                                               float64
 }
 
 func (a *accumulator) add(sample backtestSample) {
 	a.samples++
 	if sample.up {
 		a.ups++
+	}
+	if sample.movePct != 0 {
+		a.moved++
 	}
 	outcome := 0.0
 	if sample.up {
@@ -123,9 +126,13 @@ func (a *accumulator) metrics() Metrics {
 		return m
 	}
 	n := float64(a.samples)
-	m.BaselineUp = float64(a.ups) / n
+	if a.moved > 0 {
+		m.BaselineUp = float64(a.ups) / float64(a.moved)
+	}
 	m.Brier = a.brier / n
-	m.BaselineBrier = m.BaselineUp * (1 - m.BaselineUp)
+	// A flat sample counts as not up here, as it does in the Brier score itself.
+	rise := float64(a.ups) / n
+	m.BaselineBrier = rise * (1 - rise)
 	if m.BaselineBrier > 0 {
 		m.Lift = 1 - m.Brier/m.BaselineBrier
 	}

@@ -17,14 +17,14 @@ import {
   useExchangeConfigs,
   useModelConfigs,
 } from '@/hooks/use-connections'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import type { CreateTraderRequest, TraderInfo } from '@/types'
 import { pollEvery } from '@/utils/poll'
 
 // Past this many traders the list gets a search box.
 const SEARCH_FROM = 8
 
-// The trader list. AI models and exchange accounts are set up in settings, and
+// The trader list. models and exchange accounts are set up in settings, and
 // each trader is run from its own page.
 export function TradersPage() {
   const { language } = useLanguage()
@@ -67,18 +67,18 @@ export function TradersPage() {
 
   const handleCreateTrader = async (data: CreateTraderRequest) => {
     try {
-      const model = allModels.find((m) => m.id === data.ai_model_id)
+      const model = allModels.find((m) => m.id === data.agent_model_id)
       const exchange = allExchanges.find((e) => e.id === data.exchange_id)
       if (!model?.enabled) {
         toast.error(t('modelNotConfigured', language))
         return
       }
-      if (!exchange?.enabled) {
+      if (!exchange) {
         toast.error(t('exchangeNotConfigured', language))
         return
       }
       await api.createTrader(data)
-      toast.success(t('aiTradersToast.created', language))
+      toast.success(t('agentTradersToast.created', language))
       setCreating(false)
       await mutateTraders()
     } catch {
@@ -176,7 +176,7 @@ export function TradersPage() {
           isOpen
           isEditMode={false}
           availableModels={allModels.filter((m) => m.enabled)}
-          availableExchanges={allExchanges.filter((e) => e.enabled)}
+          availableExchanges={allExchanges}
           onSave={handleCreateTrader}
           onClose={() => setCreating(false)}
         />

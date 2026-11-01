@@ -1,6 +1,6 @@
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { SettingRow } from '@/components/common/setting-row'
-import type { AIStrategyConfig, PromptSectionsConfig } from '@/types'
+import type { AgentStrategyConfig, PromptSectionsConfig } from '@/types'
 import { textAreaClass } from '@/components/common/form-fields'
 
 const SECTIONS: Array<{ key: keyof PromptSectionsConfig; name: string }> = [
@@ -13,13 +13,15 @@ const SECTIONS: Array<{ key: keyof PromptSectionsConfig; name: string }> = [
 // The parts of the system prompt a strategy can rewrite, then the extra
 // instructions appended after them.
 export function PromptSection({
-  ai,
+  agent,
   language,
-  onPatchAI,
+  onPatchAgent,
 }: {
-  ai: AIStrategyConfig
+  agent: AgentStrategyConfig
   language: Language
-  onPatchAI: (patch: (ai: AIStrategyConfig) => AIStrategyConfig) => void
+  onPatchAgent: (
+    patch: (agent: AgentStrategyConfig) => AgentStrategyConfig
+  ) => void
 }) {
   const label = (key: string) => t(`strategy.${key}`, language)
 
@@ -35,9 +37,9 @@ export function PromptSection({
           <textarea
             id={`prompt-${key}`}
             className={textAreaClass}
-            value={ai.prompt_sections?.[key] ?? ''}
+            value={agent.prompt_sections?.[key] ?? ''}
             onChange={(event) =>
-              onPatchAI((current) => ({
+              onPatchAgent((current) => ({
                 ...current,
                 prompt_sections: {
                   ...current.prompt_sections,
@@ -56,9 +58,9 @@ export function PromptSection({
         <textarea
           id="prompt-custom"
           className={textAreaClass}
-          value={ai.custom_prompt ?? ''}
+          value={agent.custom_prompt ?? ''}
           onChange={(event) =>
-            onPatchAI((current) => ({
+            onPatchAgent((current) => ({
               ...current,
               custom_prompt: event.target.value,
             }))

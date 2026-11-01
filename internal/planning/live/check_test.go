@@ -6,6 +6,7 @@ import (
 	"time"
 	"vergex/internal/planning"
 	"vergex/internal/planning/core"
+	"vergex/internal/store"
 )
 
 func TestCheckStatusOnlyReleasesVerifiedClosedTrade(t *testing.T) {
@@ -13,14 +14,14 @@ func TestCheckStatusOnlyReleasesVerifiedClosedTrade(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			c, b, _, p := setup(t, "limit")
 			v := started(t, c, p)
-			c.step(context.Background(), "alice", v.ID)
-			v, _ = c.Get("alice", v.ID)
+			c.step(context.Background(), testUser, v.ID)
+			v, _ = c.Get(testUser, v.ID)
 			entry := b.orders[v.Orders[0].ClientID]
 			entry.Status, entry.Filled = "FILLED", entry.Quantity
 			b.orders[entry.ClientID] = entry
 			b.account.Position = entry.Quantity
-			c.step(context.Background(), "alice", v.ID)
-			v, _ = c.Get("alice", v.ID)
+			c.step(context.Background(), testUser, v.ID)
+			v, _ = c.Get(testUser, v.ID)
 			v.State = "needs_attention"
 			if err := c.save(&v); err != nil {
 				t.Fatal(err)
@@ -32,7 +33,7 @@ func TestCheckStatusOnlyReleasesVerifiedClosedTrade(t *testing.T) {
 				}
 			}
 			b.account.Position = "0"
-			user := "alice"
+			user := testUser
 			switch scenario {
 			case "position":
 				b.account.Position = entry.Quantity
@@ -47,12 +48,12 @@ func TestCheckStatusOnlyReleasesVerifiedClosedTrade(t *testing.T) {
 			case "bad_position":
 				b.account.Position = ""
 			case "other_user":
-				user = "bob"
+				user = testOtherUser
 			}
 			placed, cancelled := len(b.placed), len(b.cancelled)
 			out, err := c.CheckStatus(context.Background(), user, v.ID)
 			var leases int64
-			c.DB.Model(&Lease{}).Count(&leases)
+			c.DB.Model(&store.AccountLease{}).Count(&leases)
 			if scenario == "closed" {
 				if err != nil || out.State != "completed" || leases != 0 {
 					t.Fatalf("not released: %s %v leases=%d", out.State, err, leases)
@@ -70,9 +71,9 @@ func TestCheckStatusOnlyReleasesVerifiedClosedTrade(t *testing.T) {
 func TestCheckStatusKeepsUnusedApproval(t *testing.T) {
 	c, b, _, p := setup(t, "limit")
 	v := approved(t, c, p)
-	out, err := c.CheckStatus(context.Background(), "alice", v.ID)
+	out, err := c.CheckStatus(context.Background(), testUser, v.ID)
 	var leases int64
-	c.DB.Model(&Lease{}).Count(&leases)
+	c.DB.Model(&store.AccountLease{}).Count(&leases)
 	if err != nil || out.State != "approved" || leases != 1 || len(b.placed) != 0 {
 		t.Fatal("unused approval was altered")
 	}
@@ -87,15 +88,15 @@ func TestApproveChecksPreviousTradeBeforeReservingAccount(t *testing.T) {
 				old = approved(t, c, p)
 			} else {
 				old = started(t, c, p)
-				c.step(context.Background(), "alice", old.ID)
-				old, _ = c.Get("alice", old.ID)
+				c.step(context.Background(), testUser, old.ID)
+				old, _ = c.Get(testUser, old.ID)
 				entry := b.orders[old.Orders[0].ClientID]
 				entry.Status, entry.Filled = "FILLED", entry.Quantity
 				b.orders[entry.ClientID] = entry
 				if scenario != "fresh_fill" {
 					b.account.Position = entry.Quantity
 				}
-				c.step(context.Background(), "alice", old.ID)
+				c.step(context.Background(), testUser, old.ID)
 				for id, order := range b.orders {
 					if order.Role != "entry" {
 						order.Status = "CANCELED"
@@ -103,7 +104,7 @@ func TestApproveChecksPreviousTradeBeforeReservingAccount(t *testing.T) {
 					}
 				}
 				b.account.Position = "0"
-				old, _ = c.Get("alice", old.ID)
+				old, _ = c.Get(testUser, old.ID)
 				old.State = "needs_attention"
 				if err := c.save(&old); err != nil {
 					t.Fatal(err)
@@ -123,22 +124,22 @@ func TestApproveChecksPreviousTradeBeforeReservingAccount(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			store := planning.DraftStore{DB: c.DB, UserID: "alice", ExchangeID: "exchange", Venue: "binance"}
-			if err = store.Add([]core.Plan{next}); err != nil {
+			drafts := planning.DraftStore{DB: c.DB, UserID: testUser, ExchangeID: testAccount, Venue: "binance"}
+			if err = drafts.Add([]core.Plan{next}); err != nil {
 				t.Fatal(err)
 			}
 			placed, cancelled := len(b.placed), len(b.cancelled)
-			approved, err := c.Approve(context.Background(), "alice", next.ID, next.Hash, "APPROVE LIVE")
-			var lease Lease
+			approved, err := c.Approve(context.Background(), testUser, next.ID, next.Hash, "APPROVE LIVE")
+			var lease store.AccountLease
 			if e := c.DB.First(&lease).Error; e != nil {
 				t.Fatal(e)
 			}
-			previous, _ := c.Get("alice", old.ID)
+			previous, _ := c.Get(testUser, old.ID)
 			if scenario == "closed" {
-				if err != nil || previous.State != "completed" || approved.State != "approved" || lease.RunID != approved.ID {
+				if err != nil || previous.State != "completed" || approved.State != "approved" || lease.HolderID != approved.ID {
 					t.Fatalf("closed trade not released: %v %s %s", err, previous.State, approved.State)
 				}
-			} else if err == nil || lease.RunID != old.ID || previous.State == "completed" {
+			} else if err == nil || lease.HolderID != old.ID || previous.State == "completed" {
 				t.Fatalf("unresolved trade released: %v %+v", err, lease)
 			}
 			if len(b.placed) != placed || len(b.cancelled) != cancelled || len(c.workers) != 0 {
@@ -153,25 +154,25 @@ func TestManualCloseCleansOnlyConfirmedPlanExits(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			c, b, _, p := setup(t, "limit")
 			v := started(t, c, p)
-			c.step(context.Background(), "alice", v.ID)
-			v, _ = c.Get("alice", v.ID)
+			c.step(context.Background(), testUser, v.ID)
+			v, _ = c.Get(testUser, v.ID)
 			entry := b.orders[v.Orders[0].ClientID]
 			entry.Status, entry.Filled = "FILLED", entry.Quantity
 			b.orders[entry.ClientID] = entry
 			b.account.Position = entry.Quantity
-			c.step(context.Background(), "alice", v.ID)
-			v, _ = c.Get("alice", v.ID)
+			c.step(context.Background(), testUser, v.ID)
+			v, _ = c.Get(testUser, v.ID)
 			v.State = "stopping"
 			c.save(&v)
 			b.account.Position = "0"
-			user := "alice"
+			user := testUser
 			switch scenario {
 			case "position":
 				b.account.Position = entry.Quantity
 			case "unknown":
 				b.lookupErr = true
 			case "other_user":
-				user = "bob"
+				user = testOtherUser
 			case "running":
 				v.State = "running"
 				c.save(&v)

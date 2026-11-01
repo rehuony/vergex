@@ -4,7 +4,7 @@ import type { Overview, OverviewAttention } from '@/api/overview'
 import { SettingsLink } from '@/components/settings/settings-link'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { buildFrontierPath } from '@/constants/route-paths'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { formatRequestError } from '@/utils/request-errors'
 import { traderPath } from './overview-links'
 

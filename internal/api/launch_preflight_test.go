@@ -3,7 +3,7 @@ package api
 import (
 	"testing"
 
-	"vergex/internal/crypto"
+	"vergex/internal/security/crypto"
 	"vergex/internal/store"
 )
 
@@ -21,23 +21,23 @@ func findCheck(t *testing.T, checks []LaunchCheck, id string) LaunchCheck {
 	return LaunchCheck{}
 }
 
-func TestCheckLaunchAIModel(t *testing.T) {
-	if got := checkLaunchAIModel(nil); got.Status != launchCheckStatusFailed || got.Code != "MODEL_NOT_FOUND" {
+func TestCheckLaunchAgentModel(t *testing.T) {
+	if got := checkLaunchAgentModel(nil); got.Status != launchCheckStatusFailed || got.Code != "MODEL_NOT_FOUND" {
 		t.Fatalf("nil model: expected failed/MODEL_NOT_FOUND, got %+v", got)
 	}
 
-	disabled := &store.AIModel{Name: "DeepSeek", Provider: "deepseek", Enabled: false}
-	if got := checkLaunchAIModel(disabled); got.Code != "MODEL_DISABLED" {
+	disabled := &store.AgentModel{Name: "DeepSeek", Provider: "deepseek", Enabled: false}
+	if got := checkLaunchAgentModel(disabled); got.Code != "MODEL_DISABLED" {
 		t.Fatalf("disabled model: expected MODEL_DISABLED, got %+v", got)
 	}
 
-	noKey := &store.AIModel{Name: "DeepSeek", Provider: "deepseek", Enabled: true}
-	if got := checkLaunchAIModel(noKey); got.Code != "MODEL_MISSING_CREDENTIALS" {
+	noKey := &store.AgentModel{Name: "DeepSeek", Provider: "deepseek", Enabled: true}
+	if got := checkLaunchAgentModel(noKey); got.Code != "MODEL_MISSING_CREDENTIALS" {
 		t.Fatalf("missing key: expected MODEL_MISSING_CREDENTIALS, got %+v", got)
 	}
 
-	ready := &store.AIModel{Name: "DeepSeek", Provider: "deepseek", Enabled: true, APIKey: crypto.EncryptedString(testAPIKey)}
-	if got := checkLaunchAIModel(ready); got.Status != launchCheckStatusOK {
+	ready := &store.AgentModel{Name: "DeepSeek", Provider: "deepseek", Enabled: true, APIKey: crypto.EncryptedString(testAPIKey)}
+	if got := checkLaunchAgentModel(ready); got.Status != launchCheckStatusOK {
 		t.Fatalf("ready model: expected ok, got %+v", got)
 	}
 }
@@ -47,12 +47,7 @@ func TestDescribeExchangeConfigIssue(t *testing.T) {
 		t.Fatalf("nil exchange: expected EXCHANGE_NOT_FOUND, got %s", code)
 	}
 
-	disabled := &store.Exchange{ID: "ex", ExchangeType: "binance", Enabled: false}
-	if _, code := describeExchangeConfigIssue(disabled); code != "EXCHANGE_DISABLED" {
-		t.Fatalf("disabled: expected EXCHANGE_DISABLED, got %s", code)
-	}
-
-	missing := &store.Exchange{ID: "ex", ExchangeType: "okx", Enabled: true, APIKey: crypto.EncryptedString(testAPIKey), SecretKey: crypto.EncryptedString(testAPIKey)}
+	missing := &store.Exchange{ID: "ex", ExchangeType: "okx", APIKey: crypto.EncryptedString(testAPIKey), SecretKey: crypto.EncryptedString(testAPIKey)}
 	if _, code := describeExchangeConfigIssue(missing); code != "EXCHANGE_MISSING_FIELDS" {
 		t.Fatalf("missing fields: expected EXCHANGE_MISSING_FIELDS, got %s", code)
 	}
@@ -67,7 +62,6 @@ func readyBinanceExchange() *store.Exchange {
 	return &store.Exchange{
 		ID:           "ex-binance",
 		ExchangeType: "binance",
-		Enabled:      true,
 		APIKey:       crypto.EncryptedString(testAPIKey),
 		SecretKey:    crypto.EncryptedString(testAPIKey),
 	}
@@ -142,7 +136,7 @@ func TestRunLaunchPreflightAggregatesReadiness(t *testing.T) {
 	server := preflightTestServer(t, "user-1", map[string]ExchangeAccountState{
 		exchange.ID: {ExchangeID: exchange.ID, Status: exchangeAccountStatusOK, AvailableBalance: 100, TotalEquity: 100},
 	})
-	model := &store.AIModel{Name: "DeepSeek", Provider: "deepseek", Enabled: true, APIKey: crypto.EncryptedString(testAPIKey)}
+	model := &store.AgentModel{Name: "DeepSeek", Provider: "deepseek", Enabled: true, APIKey: crypto.EncryptedString(testAPIKey)}
 	strategy := &store.Strategy{ID: "strat-1", Name: "Autopilot"}
 
 	result := server.runLaunchPreflight("user-1", model, exchange, strategy, true)
@@ -157,7 +151,7 @@ func TestRunLaunchPreflightAggregatesReadiness(t *testing.T) {
 	model.Enabled = false
 	result = server.runLaunchPreflight("user-1", model, exchange, strategy, true)
 	if result.Ready {
-		t.Fatalf("expected not ready with a disabled AI model, got %+v", result)
+		t.Fatalf("expected not ready with a disabled model, got %+v", result)
 	}
 	if result.Summary() == "" {
 		t.Fatalf("summary should describe the failing check")
@@ -168,7 +162,7 @@ func TestRunLaunchPreflightWarningsDoNotBlock(t *testing.T) {
 	exchange := readyBinanceExchange()
 	// No account state for this exchange → probe result unknown → warning.
 	server := preflightTestServer(t, "user-1", map[string]ExchangeAccountState{})
-	model := &store.AIModel{Name: "DeepSeek", Provider: "deepseek", Enabled: true, APIKey: crypto.EncryptedString(testAPIKey)}
+	model := &store.AgentModel{Name: "DeepSeek", Provider: "deepseek", Enabled: true, APIKey: crypto.EncryptedString(testAPIKey)}
 
 	result := server.runLaunchPreflight("user-1", model, exchange, nil, false)
 	if !result.Ready {

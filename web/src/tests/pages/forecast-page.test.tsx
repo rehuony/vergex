@@ -118,7 +118,7 @@ const show = (entry = '/forecast/BTCUSDT?interval=1h') =>
   )
 
 const signalsOf = (signals: ForecastSignal[]) => ({
-  strategy_id: 1,
+  strategy_id: 'strategy-1',
   interval: '1h',
   signals,
 })
@@ -129,10 +129,10 @@ beforeEach(() => {
   mocks.signals.mockResolvedValue(signalsOf([]))
   mocks.detail.mockResolvedValue(detail())
   mocks.strategies.mockResolvedValue({
-    active_strategy_id: 1,
+    active_strategy_id: 'strategy-1',
     strategies: [
-      { id: 1, name: 'Default' },
-      { id: 2, name: 'Steeper' },
+      { id: 'strategy-1', name: 'Default' },
+      { id: 'strategy-2', name: 'Steeper' },
     ],
   })
 })

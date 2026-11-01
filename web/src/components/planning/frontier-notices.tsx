@@ -2,7 +2,7 @@ import { X } from 'lucide-react'
 import { formatRequestError } from '@/utils/request-errors'
 import { Button } from '@/components/ui/button'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import type { ActivityItem } from './planning-activity'
 
 interface FrontierNoticesProps {

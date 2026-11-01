@@ -8,27 +8,21 @@ import (
 	"testing"
 
 	"vergex/internal/store"
-	"vergex/internal/testdb"
+	"vergex/internal/store/storetest"
 
 	"github.com/gin-gonic/gin"
 )
 
+const editedStrategy = "00000000-0000-4000-8000-0000000000a1"
+
 func strategyServer(t *testing.T) (*store.Store, *gin.Engine) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	db := testdb.Open(t)
-	sql, _ := db.DB()
-	t.Cleanup(func() { sql.Close() })
-	if err := db.AutoMigrate(&store.Strategy{}); err != nil {
-		t.Fatal(err)
-	}
-	st, err := store.NewFromGorm(db)
-	if err != nil {
-		t.Fatal(err)
-	}
+	st := storetest.New(t)
+	storetest.Account(t, st)
 	s := &Server{store: st}
 	r := gin.New()
-	r.Use(func(c *gin.Context) { c.Set("user_id", "alice") })
+	r.Use(func(c *gin.Context) { c.Set("user_id", storetest.UserID) })
 	r.GET("/strategies/default-config", s.handleGetDefaultStrategyConfig)
 	r.PUT("/strategies/:id", s.handleUpdateStrategy)
 	return st, r
@@ -41,16 +35,16 @@ func TestDefaultConfigByStrategyType(t *testing.T) {
 	if code := getJSON(t, r, "/strategies/default-config?type=grid_trading", &grid); code != http.StatusOK {
 		t.Fatalf("status %d", code)
 	}
-	if grid["strategy_type"] != "grid_trading" || grid["grid_config"] == nil || grid["ai_config"] != nil {
+	if grid["strategy_type"] != "grid_trading" || grid["grid_config"] == nil || grid["agent_config"] != nil {
 		t.Fatalf("expected a grid-only config, got %v", grid)
 	}
 
-	var ai map[string]any
-	if code := getJSON(t, r, "/strategies/default-config", &ai); code != http.StatusOK {
+	var agentConfig map[string]any
+	if code := getJSON(t, r, "/strategies/default-config", &agentConfig); code != http.StatusOK {
 		t.Fatalf("status %d", code)
 	}
-	if ai["ai_config"] == nil || ai["grid_config"] != nil {
-		t.Fatalf("expected an AI-only config, got %v", ai)
+	if agentConfig["agent_config"] == nil || agentConfig["grid_config"] != nil {
+		t.Fatalf("expected an agent-only config, got %v", agentConfig)
 	}
 }
 
@@ -61,14 +55,14 @@ func TestUpdateStrategyDescriptionAndGridLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Strategy().Create(&store.Strategy{ID: "s1", UserID: "alice", Name: "Range", Description: "Old note", Config: string(config)}); err != nil {
+	if err := st.Strategy().Create(&store.Strategy{ID: editedStrategy, UserID: storetest.UserID, Name: "Range", Description: "Old note", Config: string(config)}); err != nil {
 		t.Fatal(err)
 	}
 
 	put := func(body string) {
 		t.Helper()
 		w := httptest.NewRecorder()
-		r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/strategies/s1", bytes.NewBufferString(body)))
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodPut, "/strategies/"+editedStrategy, bytes.NewBufferString(body)))
 		if w.Code != http.StatusOK {
 			t.Fatalf("status %d: %s", w.Code, w.Body.String())
 		}
@@ -76,7 +70,7 @@ func TestUpdateStrategyDescriptionAndGridLimits(t *testing.T) {
 
 	// Leaving the description out keeps it, so other callers cannot wipe it.
 	put(`{"name":"Range"}`)
-	saved, err := st.Strategy().Get("alice", "s1")
+	saved, err := st.Strategy().Get(storetest.UserID, editedStrategy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +80,7 @@ func TestUpdateStrategyDescriptionAndGridLimits(t *testing.T) {
 
 	// An empty description clears it, and grid limits are pulled into range.
 	put(`{"description":"","config":{"grid_config":{"grid_count":500,"leverage":99}}}`)
-	saved, err = st.Strategy().Get("alice", "s1")
+	saved, err = st.Strategy().Get(storetest.UserID, editedStrategy)
 	if err != nil {
 		t.Fatal(err)
 	}

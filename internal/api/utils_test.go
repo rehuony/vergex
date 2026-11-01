@@ -87,12 +87,10 @@ func TestSanitizeModelConfigForLog(t *testing.T) {
 func TestSanitizeExchangeConfigForLog(t *testing.T) {
 	exchanges := map[string]ExchangeConfigUpdate{
 		"binance": {
-			Enabled:   true,
 			APIKey:    "binance_api_key_1234567890abcdef",
 			SecretKey: "binance_secret_key_1234567890abcdef",
 		},
 		"okx": {
-			Enabled:    true,
 			APIKey:     "okx_api_key_1234567890abcdef",
 			SecretKey:  "okx_secret_key_1234567890abcdef",
 			Passphrase: "okx_passphrase_supersecret_value",
@@ -151,7 +149,6 @@ func TestSanitizeExchangeConfigForLog_NoPlaintextSecrets(t *testing.T) {
 
 	exchanges := map[string]ExchangeConfigUpdate{
 		"okx": {
-			Enabled:    true,
 			APIKey:     secrets["api_key"],
 			SecretKey:  secrets["secret_key"],
 			Passphrase: secrets["passphrase"],

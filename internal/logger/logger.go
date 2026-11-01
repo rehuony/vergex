@@ -35,7 +35,7 @@ func (f *compactFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 		}
 		// Skip logrus internal and our logger.go
 		if !strings.Contains(file, "logrus") && !strings.HasSuffix(file, "logger/logger.go") {
-			// Get package name from path (e.g., "vergex/internal/manager/trader_manager.go" -> "manager")
+			// Get package name from path (e.g., "vergex/internal/trader/manager/trader_manager.go" -> "manager")
 			dir := filepath.Dir(file)
 			pkg := filepath.Base(dir)
 			caller = fmt.Sprintf("%s/%s:%d", pkg, filepath.Base(file), line)
@@ -131,30 +131,30 @@ func Fatalf(format string, args ...interface{}) {
 }
 
 // ============================================================================
-// LLM logger adapter
+// Agent logger adapter
 // ============================================================================
 
-// LLMLogger adapter that allows the llm package to use the global logger
-// Implements llm.Logger interface
-type LLMLogger struct{}
+// AgentLogger adapter that allows the agent package to use the global logger
+// Implements agent.Logger interface
+type AgentLogger struct{}
 
-// NewLLMLogger creates the llm log adapter
-func NewLLMLogger() *LLMLogger {
-	return &LLMLogger{}
+// NewAgentLogger creates the agent log adapter
+func NewAgentLogger() *AgentLogger {
+	return &AgentLogger{}
 }
 
-func (l *LLMLogger) Debugf(format string, args ...any) {
+func (l *AgentLogger) Debugf(format string, args ...any) {
 	Log.Debugf(format, args...)
 }
 
-func (l *LLMLogger) Infof(format string, args ...any) {
+func (l *AgentLogger) Infof(format string, args ...any) {
 	Log.Infof(format, args...)
 }
 
-func (l *LLMLogger) Warnf(format string, args ...any) {
+func (l *AgentLogger) Warnf(format string, args ...any) {
 	Log.Warnf(format, args...)
 }
 
-func (l *LLMLogger) Errorf(format string, args ...any) {
+func (l *AgentLogger) Errorf(format string, args ...any) {
 	Log.Errorf(format, args...)
 }

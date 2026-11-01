@@ -8,6 +8,8 @@ Rules for both exchanges:
 - Restrict the key to your server's IP. Settings → Exchanges shows it, and `GET /api/server-ip` returns it.
 - Prefer a dedicated sub-account to isolate risk. Some sub-accounts have lower leverage limits.
 - Exchange testnets are not supported, so try new setups with a small balance.
+- One API key can be connected once. Two accounts on one key would trade the same money without knowing of each other.
+- An account with trading history or an unfinished [Frontier](frontier.md) trade cannot be deleted. Changing its key does not release a reservation.
 
 ## Binance
 

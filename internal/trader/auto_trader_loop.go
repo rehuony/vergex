@@ -1,22 +1,21 @@
 package trader
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
-	"vergex/internal/kernel"
 	"vergex/internal/logger"
-	"vergex/internal/market"
+	"vergex/internal/market/instrument"
 	"vergex/internal/store"
+	"vergex/internal/trader/agent"
 )
 
-// runCycle runs one trading cycle (using AI full decision-making)
+// runCycle runs one trading cycle (using agent full decision-making)
 func (at *AutoTrader) runCycle() error {
 	at.callCount++
 
 	logger.Info("\n" + strings.Repeat("=", 70) + "\n")
-	logger.Infof("⏰ %s - AI decision cycle #%d", time.Now().Format("2006-01-02 15:04:05"), at.callCount)
+	logger.Infof("⏰ %s - agent decision cycle #%d", time.Now().Format("2006-01-02 15:04:05"), at.callCount)
 	logger.Info(strings.Repeat("=", 70))
 
 	// 0. Check if trader is stopped (early exit to prevent trades after Stop() is called)
@@ -80,22 +79,23 @@ func (at *AutoTrader) runCycle() error {
 		return fmt.Errorf("failed to build trading context: %w", err)
 	}
 
-	// Save equity snapshot independently (decoupled from AI decision, used for drawing profit curve)
+	// Save equity snapshot independently (decoupled from agent decision, used for drawing profit curve)
 	// NOTE: Must be called BEFORE candidate coins check to ensure equity is always recorded
 	at.saveEquitySnapshot(ctx)
+	record.AccountState = &store.AccountSnapshot{
+		TotalBalance:          ctx.Account.TotalEquity,
+		AvailableBalance:      ctx.Account.AvailableBalance,
+		TotalUnrealizedProfit: ctx.Account.UnrealizedPnL,
+		PositionCount:         ctx.Account.PositionCount,
+		MarginUsedPct:         ctx.Account.MarginUsedPct,
+		InitialBalance:        at.initialBalance,
+	}
 
 	// If no candidate coins available, log but do not error
 	if len(ctx.CandidateCoins) == 0 {
 		at.logInfof("ℹ️ No candidate coins available, skipping this cycle")
 		record.Success = true // Not an error, just no candidate coins
 		record.ExecutionLog = append(record.ExecutionLog, "No candidate coins available, cycle skipped")
-		record.AccountState = store.AccountSnapshot{
-			TotalBalance:          ctx.Account.TotalEquity,
-			AvailableBalance:      ctx.Account.AvailableBalance,
-			TotalUnrealizedProfit: ctx.Account.UnrealizedPnL,
-			PositionCount:         ctx.Account.PositionCount,
-			InitialBalance:        at.initialBalance,
-		}
 		if err := at.saveDecision(record); err != nil {
 			at.logWarnf("⚠ Failed to save decision record: %v", err)
 		}
@@ -110,55 +110,49 @@ func (at *AutoTrader) runCycle() error {
 	at.logInfof("📊 Account equity: %.2f USDT | Available: %.2f USDT | Positions: %d",
 		ctx.Account.TotalEquity, ctx.Account.AvailableBalance, ctx.Account.PositionCount)
 
-	// 5. Use strategy engine to call AI for decision
-	at.logInfof("🤖 Requesting AI analysis and decision... [Strategy Engine]")
-	aiDecision, err := kernel.GetFullDecisionWithStrategy(ctx, at.llmClient, at.strategyEngine, "balanced")
+	// 5. Use strategy engine to call agent for decision
+	at.logInfof("🤖 Requesting agent analysis and decision... [Strategy Engine]")
+	agentDecision, err := agent.GetFullDecisionWithStrategy(ctx, at.agentClient, at.strategyEngine, "balanced", at.openConversation)
+	at.keepConversation(agentDecision)
 
-	if aiDecision != nil && aiDecision.AIRequestDurationMs > 0 {
-		record.AIRequestDurationMs = aiDecision.AIRequestDurationMs
-		at.logInfof("⏱️ AI call duration: %.2f seconds", float64(record.AIRequestDurationMs)/1000)
+	if agentDecision != nil && agentDecision.AgentDurationMs > 0 {
+		record.AgentDurationMs = agentDecision.AgentDurationMs
+		at.logInfof("⏱️ model call duration: %.2f seconds", float64(record.AgentDurationMs)/1000)
 		record.ExecutionLog = append(record.ExecutionLog,
-			fmt.Sprintf("AI call duration: %d ms", record.AIRequestDurationMs))
+			fmt.Sprintf("model call duration: %d ms", record.AgentDurationMs))
 	}
 
-	// Save chain of thought, decisions, and input prompt even if there's an error (for debugging)
-	if aiDecision != nil {
-		record.SystemPrompt = aiDecision.SystemPrompt // Save system prompt
-		record.InputPrompt = aiDecision.UserPrompt
-		record.CoTTrace = aiDecision.CoTTrace
-		record.RawResponse = aiDecision.RawResponse // Save raw AI response for debugging
-		if len(aiDecision.Decisions) > 0 {
-			decisionJSON, _ := json.MarshalIndent(aiDecision.Decisions, "", "  ")
-			record.DecisionJSON = string(decisionJSON)
-		}
+	// The prompts and reply are in the conversation, kept even if there's an error
+	if agentDecision != nil {
+		record.ConversationID = agentDecision.ConversationID
 	}
 
 	if err != nil {
-		at.consecutiveAIFailures++
+		at.consecutiveAgentFailures++
 		record.Success = false
-		record.ErrorMessage = fmt.Sprintf("Failed to get AI decision: %v", err)
+		record.ErrorMessage = fmt.Sprintf("Failed to get agent decision: %v", err)
 
 		// Activate safe mode after 3 consecutive failures
-		if at.consecutiveAIFailures >= 3 && !at.isSafeMode() {
-			at.setSafeMode(true, fmt.Sprintf("AI failed %d consecutive times: %v", at.consecutiveAIFailures, err))
-			at.logErrorf("🛡️ SAFE MODE ACTIVATED — AI failed %d times in a row. No new positions will be opened. Existing positions are protected with current stop-loss settings.", at.consecutiveAIFailures)
+		if at.consecutiveAgentFailures >= 3 && !at.isSafeMode() {
+			at.setSafeMode(true, fmt.Sprintf("Model failed %d consecutive times: %v", at.consecutiveAgentFailures, err))
+			at.logErrorf("🛡️ SAFE MODE ACTIVATED — Model failed %d times in a row. No new positions will be opened. Existing positions are protected with current stop-loss settings.", at.consecutiveAgentFailures)
 			at.logErrorf("🛡️ Reason: %v", err)
-			at.logErrorf("🛡️ Action: Will keep trying AI each cycle. Safe mode auto-deactivates when AI recovers.")
+			at.logErrorf("🛡️ Action: Will keep trying the model each cycle. Safe mode auto-deactivates when the model recovers.")
 		}
 
-		// Print system prompt and AI chain of thought (output even with errors for debugging)
-		if aiDecision != nil {
+		// Print system prompt and agent chain of thought (output even with errors for debugging)
+		if agentDecision != nil {
 			logger.Info("\n" + strings.Repeat("=", 70) + "\n")
 			logger.Infof("📋 System prompt (error case)")
 			logger.Info(strings.Repeat("=", 70))
-			logger.Info(aiDecision.SystemPrompt)
+			logger.Info(agentDecision.SystemPrompt)
 			logger.Info(strings.Repeat("=", 70))
 
-			if aiDecision.CoTTrace != "" {
+			if agentDecision.CoTTrace != "" {
 				logger.Info("\n" + strings.Repeat("-", 70) + "\n")
-				logger.Info("💭 AI chain of thought analysis (error case):")
+				logger.Info("💭 agent chain of thought analysis (error case):")
 				logger.Info(strings.Repeat("-", 70))
-				logger.Info(aiDecision.CoTTrace)
+				logger.Info(agentDecision.CoTTrace)
 				logger.Info(strings.Repeat("-", 70))
 			}
 		}
@@ -173,36 +167,35 @@ func (at *AutoTrader) runCycle() error {
 			return nil
 		}
 
-		return fmt.Errorf("failed to get AI decision: %w", err)
+		return fmt.Errorf("failed to get agent decision: %w", err)
 	}
 
-	// AI succeeded — reset failure counter and deactivate safe mode
-	if at.consecutiveAIFailures > 0 {
-		at.logInfof("✅ AI recovered after %d consecutive failures", at.consecutiveAIFailures)
+	// Agent succeeded — reset failure counter and deactivate safe mode
+	if at.consecutiveAgentFailures > 0 {
+		at.logInfof("✅ Model recovered after %d consecutive failures", at.consecutiveAgentFailures)
 	}
-	at.consecutiveAIFailures = 0
+	at.consecutiveAgentFailures = 0
 	if at.isSafeMode() {
-		at.logInfof("🛡️ SAFE MODE DEACTIVATED — AI is working again. Resuming normal trading.")
+		at.logInfof("🛡️ SAFE MODE DEACTIVATED — the model is working again. Resuming normal trading.")
 		at.setSafeMode(false, "")
 	}
 
 	// // 5. Print system prompt
 	// logger.Infof("\n" + strings.Repeat("=", 70))
-	// logger.Infof("📋 System prompt [template: %s]", at.systemPromptTemplate)
 	// logger.Info(strings.Repeat("=", 70))
 	// logger.Info(decision.SystemPrompt)
 	// logger.Infof(strings.Repeat("=", 70) + "\n")
 
-	// 6. Print AI chain of thought
+	// 6. Print agent chain of thought
 	// logger.Infof("\n" + strings.Repeat("-", 70))
-	// logger.Info("💭 AI chain of thought analysis:")
+	// logger.Info("💭 agent chain of thought analysis:")
 	// logger.Info(strings.Repeat("-", 70))
 	// logger.Info(decision.CoTTrace)
 	// logger.Infof(strings.Repeat("-", 70) + "\n")
 
-	// 7. Print AI decisions
-	// logger.Infof("📋 AI decision list (%d items):\n", len(kernel.Decisions))
-	// for i, d := range kernel.Decisions {
+	// 7. Print agent decisions
+	// logger.Infof("📋 agent decision list (%d items):\n", len(agent.Decisions))
+	// for i, d := range agent.Decisions {
 	//     logger.Infof("  [%d] %s: %s - %s", i+1, d.Symbol, d.Action, d.Reasoning)
 	//     if d.Action == "open_long" || d.Action == "open_short" {
 	//        logger.Infof("      Leverage: %dx | Position: %.2f USDT | Stop loss: %.4f | Take profit: %.4f",
@@ -215,7 +208,7 @@ func (at *AutoTrader) runCycle() error {
 	logger.Info(strings.Repeat("-", 70))
 
 	// 8. Sort decisions: ensure close positions first, then open positions (prevent position stacking overflow)
-	sortedDecisions := sortDecisionsByPriority(aiDecision.Decisions)
+	sortedDecisions := sortDecisionsByPriority(agentDecision.Decisions)
 	sortedDecisions = at.filterDecisionsToStrategyUniverse(sortedDecisions, ctx)
 	sortedDecisions = sortDecisionsByPriority(sortedDecisions)
 
@@ -236,7 +229,7 @@ func (at *AutoTrader) runCycle() error {
 
 	// Safe mode: filter out open positions, only allow close/hold
 	if at.isSafeMode() {
-		filtered := make([]kernel.Decision, 0)
+		filtered := make([]agent.Decision, 0)
 		for _, d := range sortedDecisions {
 			if d.Action == "open_long" || d.Action == "open_short" {
 				at.logWarnf("🛡️ Safe mode: BLOCKED %s %s (no new positions allowed)", d.Action, d.Symbol)
@@ -307,11 +300,11 @@ func (at *AutoTrader) runCycle() error {
 }
 
 func normalizeUniverseSymbol(symbol string) string {
-	return market.Normalize(strings.TrimSpace(symbol))
+	return instrument.Normalize(strings.TrimSpace(symbol))
 }
 
 // universeBaseKey returns the bare base ticker used for fuzzy candidate
-// matching. The AI sometimes echoes a candidate as "BTC", "BTC-USDT" or
+// matching. The agent sometimes echoes a candidate as "BTC", "BTC-USDT" or
 // "BTCUSDC" instead of the canonical "BTCUSDT" we supplied in the prompt, so
 // we accept any of them when the base matches an allowed candidate's base.
 func universeBaseKey(symbol string) string {
@@ -334,7 +327,7 @@ func isOpenDecision(action string) bool {
 	return a == "open_long" || a == "open_short"
 }
 
-func (at *AutoTrader) filterDecisionsToStrategyUniverse(decisions []kernel.Decision, ctx *kernel.Context) []kernel.Decision {
+func (at *AutoTrader) filterDecisionsToStrategyUniverse(decisions []agent.Decision, ctx *agent.Context) []agent.Decision {
 	if ctx == nil || len(decisions) == 0 {
 		return decisions
 	}
@@ -357,7 +350,7 @@ func (at *AutoTrader) filterDecisionsToStrategyUniverse(decisions []kernel.Decis
 		}
 	}
 
-	filtered := make([]kernel.Decision, 0, len(decisions))
+	filtered := make([]agent.Decision, 0, len(decisions))
 	for _, d := range decisions {
 		sym := normalizeUniverseSymbol(d.Symbol)
 		if sym == "" || sym == "ALL" {
@@ -370,7 +363,7 @@ func (at *AutoTrader) filterDecisionsToStrategyUniverse(decisions []kernel.Decis
 			continue
 		}
 
-		// Fall back to base-level match so AI outputs like "QNTUSDC" still
+		// Fall back to base-level match so agent outputs like "QNTUSDC" still
 		// resolve to candidate "QNTUSDT". Rewrite the decision's symbol to
 		// the canonical form so downstream order placement works.
 		if base := universeBaseKey(d.Symbol); base != "" {
@@ -384,18 +377,18 @@ func (at *AutoTrader) filterDecisionsToStrategyUniverse(decisions []kernel.Decis
 		}
 
 		if isOpenDecision(d.Action) {
-			at.logWarnf("🚫 Blocked AI %s for %s: symbol is outside strategy candidate universe", d.Action, d.Symbol)
+			at.logWarnf("🚫 Blocked agent %s for %s: symbol is outside strategy candidate universe", d.Action, d.Symbol)
 		} else {
-			at.logWarnf("🚫 Dropped AI decision for %s: symbol is outside strategy candidate universe", d.Symbol)
+			at.logWarnf("🚫 Dropped agent decision for %s: symbol is outside strategy candidate universe", d.Symbol)
 		}
 	}
 	return filtered
 }
 
 // canonicalUniverseSymbolForBase finds the canonical candidate or position
-// symbol that has the given base. Used to rewrite an AI decision's symbol
+// symbol that has the given base. Used to rewrite an agent decision's symbol
 // (e.g. "QNTUSDC") to the form our order pipeline expects ("QNTUSDT").
-func canonicalUniverseSymbolForBase(ctx *kernel.Context, base string) string {
+func canonicalUniverseSymbolForBase(ctx *agent.Context, base string) string {
 	for _, coin := range ctx.CandidateCoins {
 		if universeBaseKey(coin.Symbol) == base {
 			return coin.Symbol
@@ -410,7 +403,7 @@ func canonicalUniverseSymbolForBase(ctx *kernel.Context, base string) string {
 }
 
 // buildTradingContext builds trading context
-func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
+func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
 	// 1. Get account information
 	balance, err := at.trader.GetBalance()
 	if err != nil {
@@ -447,7 +440,7 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		return nil, fmt.Errorf("failed to get positions: %w", err)
 	}
 
-	var positionInfos []kernel.PositionInfo
+	var positionInfos []agent.PositionInfo
 	totalMarginUsed := 0.0
 
 	// Current position key set (for cleaning up closed position records)
@@ -463,7 +456,7 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 			quantity = -quantity // Short position quantity is negative, convert to positive
 		}
 
-		// Skip closed positions (quantity = 0), prevent "ghost positions" from being passed to AI
+		// Skip closed positions (quantity = 0), prevent "ghost positions" from being passed to agent
 		if quantity == 0 {
 			continue
 		}
@@ -514,7 +507,7 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		peakPnlPct := at.peakPnLCache[posKey]
 		at.peakPnLCacheMutex.RUnlock()
 
-		positionInfos = append(positionInfos, kernel.PositionInfo{
+		positionInfos = append(positionInfos, agent.PositionInfo{
 			Symbol:           symbol,
 			Side:             side,
 			EntryPrice:       entryPrice,
@@ -538,7 +531,7 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 	}
 
 	// 3. Use strategy engine to get candidate coins (must have strategy engine)
-	var candidateCoins []kernel.CandidateCoin
+	var candidateCoins []agent.CandidateCoin
 	if at.strategyEngine == nil {
 		at.logWarnf("⚠️ No strategy engine configured, skipping candidate coins")
 	} else {
@@ -570,13 +563,13 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 	logger.Infof("📋 [%s] Strategy leverage config: BTC/ETH=%dx, Altcoin=%dx", at.name, btcEthLeverage, altcoinLeverage)
 
 	// 6. Build context
-	ctx := &kernel.Context{
+	ctx := &agent.Context{
 		CurrentTime:     time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
 		RuntimeMinutes:  int(time.Since(at.startTime).Minutes()),
 		CallCount:       at.callCount,
 		BTCETHLeverage:  btcEthLeverage,
 		AltcoinLeverage: altcoinLeverage,
-		Account: kernel.AccountInfo{
+		Account: agent.AccountInfo{
 			TotalEquity:      totalEquity,
 			AvailableBalance: availableBalance,
 			UnrealizedPnL:    totalUnrealizedProfit,
@@ -592,14 +585,14 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 
 	// 7. Add recent closed trades (if store is available)
 	if at.store != nil {
-		// Get recent 10 closed trades for AI context
+		// Get recent 10 closed trades for agent context
 		recentTrades, err := at.store.Position().GetRecentTrades(at.id, 10)
 		if err != nil {
 			at.logWarnf("⚠️ Failed to get recent trades: %v", err)
 		} else {
-			logger.Infof("📊 [%s] Found %d recent closed trades for AI context", at.name, len(recentTrades))
+			logger.Infof("📊 [%s] Found %d recent closed trades for agent context", at.name, len(recentTrades))
 			for _, trade := range recentTrades {
-				// Convert Unix timestamps to formatted strings for AI readability
+				// Convert Unix timestamps to formatted strings for agent readability
 				entryTimeStr := ""
 				if trade.EntryTime > 0 {
 					entryTimeStr = time.Unix(trade.EntryTime, 0).UTC().Format("01-02 15:04 UTC")
@@ -609,7 +602,7 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 					exitTimeStr = time.Unix(trade.ExitTime, 0).UTC().Format("01-02 15:04 UTC")
 				}
 
-				ctx.RecentOrders = append(ctx.RecentOrders, kernel.RecentOrder{
+				ctx.RecentOrders = append(ctx.RecentOrders, agent.RecentOrder{
 					Symbol:       trade.Symbol,
 					Side:         trade.Side,
 					EntryPrice:   trade.EntryPrice,
@@ -622,7 +615,7 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 				})
 			}
 		}
-		// Get trading statistics for AI context
+		// Get trading statistics for agent context
 		stats, err := at.store.Position().GetFullStats(at.id, at.initialBalance)
 		if err != nil {
 			at.logWarnf("⚠️ Failed to get trading stats: %v", err)
@@ -631,7 +624,7 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 		} else if stats.TotalTrades == 0 {
 			at.logWarnf("⚠️ GetFullStats returned 0 trades")
 		} else {
-			ctx.TradingStats = &kernel.TradingStats{
+			ctx.TradingStats = &agent.TradingStats{
 				TotalTrades:    stats.TotalTrades,
 				WinRate:        stats.WinRate,
 				ProfitFactor:   stats.ProfitFactor,
@@ -653,7 +646,7 @@ func (at *AutoTrader) buildTradingContext() (*kernel.Context, error) {
 
 // sortDecisionsByPriority sorts decisions: close positions first, then open positions, finally hold/wait
 // This avoids position stacking overflow when changing positions
-func sortDecisionsByPriority(decisions []kernel.Decision) []kernel.Decision {
+func sortDecisionsByPriority(decisions []agent.Decision) []agent.Decision {
 	if len(decisions) <= 1 {
 		return decisions
 	}
@@ -673,7 +666,7 @@ func sortDecisionsByPriority(decisions []kernel.Decision) []kernel.Decision {
 	}
 
 	// Copy decision list
-	sorted := make([]kernel.Decision, len(decisions))
+	sorted := make([]agent.Decision, len(decisions))
 	copy(sorted, decisions)
 
 	// Sort by priority

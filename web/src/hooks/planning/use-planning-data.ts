@@ -13,8 +13,9 @@ export interface PlanningConversation {
   id: string
   symbol: string
   exchange_id: string
-  model_id: string
-  messages: string
+  agent_model_id: string
+  title: string
+  updated_at: string
 }
 
 // usePlanningData keeps the server's planning state (plans, approvals and

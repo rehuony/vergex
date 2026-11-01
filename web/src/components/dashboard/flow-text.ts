@@ -16,7 +16,15 @@ function sentence(text: string) {
   return spaced.charAt(0).toUpperCase() + spaced.slice(1)
 }
 
-/** Fees and AI costs can be fractions of a cent, which fmtUsd would round away. */
+// An action or status the server sent, in words. One with no translation yet still
+// reads as a phrase rather than as its code.
+function named(label: Label, group: 'action' | 'status', value: string) {
+  const key = `flow.${group}.${value}`
+  const text = label(key)
+  return text.endsWith(key) ? sentence(value) : text
+}
+
+/** Fees and agent costs can be fractions of a cent, which fmtUsd would round away. */
 export function smallUsd(value: number) {
   if (value === 0 || value >= 1) return fmtUsd(value)
   return `$${value.toFixed(value >= 0.01 ? 2 : 4)}`
@@ -47,21 +55,21 @@ export function eventTime(event: ActivityEvent) {
 export function eventWhat(event: ActivityEvent, label: Label) {
   const amount = event.amount ?? 0
   switch (event.type) {
-    case 'ai_call':
+    case 'agent_call':
       return [
         event.detail,
         label('flow.tokens', { count: compact(event.tokens ?? 0) }),
       ]
         .filter(Boolean)
         .join(' · ')
-    case 'ai_cost':
+    case 'agent_cost':
       return label('flow.estimated', { amount: smallUsd(amount) })
     case 'decision': {
       if (event.status === 'failed' && !event.action) {
         return label('flow.noDecision')
       }
       if (!event.action) return label('flow.decidedHold')
-      const action = `${sentence(event.action)} ${baseLabel(event.symbol)}`
+      const action = `${named(label, 'action', event.action)} ${baseLabel(event.symbol)}`
       const more = (event.items ?? 1) - 1
       return more > 0 ? label('flow.andMore', { action, more }) : action
     }
@@ -73,7 +81,7 @@ export function eventWhat(event: ActivityEvent, label: Label) {
       })
     case 'order':
     case 'plan_order':
-      return `${sentence(event.action ?? '')} ${baseLabel(event.symbol)} ${(event.quantity ?? 0).toLocaleString('en-US', { maximumFractionDigits: 6 })}`
+      return `${named(label, 'action', event.action ?? '')} ${baseLabel(event.symbol)} ${(event.quantity ?? 0).toLocaleString('en-US', { maximumFractionDigits: 6 })}`
     case 'fee':
       return label('flow.fee', {
         amount:
@@ -92,7 +100,7 @@ export function eventWhat(event: ActivityEvent, label: Label) {
 export function eventStatus(event: ActivityEvent, label: Label) {
   if (!event.status || event.status === 'ok') return ''
   if (event.status === 'failed') return label('flow.failed')
-  return sentence(event.status)
+  return named(label, 'status', event.status)
 }
 
 export function isEventBad(event: ActivityEvent) {
@@ -101,7 +109,11 @@ export function isEventBad(event: ActivityEvent) {
 
 /** The token a line lights up in for this event, also its mark in the list. */
 export function eventColor(event: ActivityEvent) {
-  if (isEventBad(event) || event.type === 'fee' || event.type === 'ai_cost') {
+  if (
+    isEventBad(event) ||
+    event.type === 'fee' ||
+    event.type === 'agent_cost'
+  ) {
     return 'var(--color-vergex-danger)'
   }
   if (event.type === 'realized') {
@@ -109,12 +121,12 @@ export function eventColor(event: ActivityEvent) {
       ? 'var(--color-vergex-success)'
       : 'var(--color-vergex-danger)'
   }
-  if (event.kind === 'ai') return 'var(--brand)'
+  if (event.kind === 'agent') return 'var(--brand)'
   if (event.kind === 'market') return 'var(--muted)'
   return 'var(--ink)'
 }
 
-const AI_ROUTES = [
+const AGENT_ROUTES = [
   'traders>models',
   'frontier>models',
   'telegram>models',
@@ -139,7 +151,7 @@ export function lineSummary(
     if (key.endsWith('>accounts')) {
       return counted(label, 'order', total.count)
     }
-    if (key === 'models>ai_cost') {
+    if (key === 'models>agent_cost') {
       return label('flow.estimated', { amount: smallUsd(total.amount) })
     }
     if (key === 'accounts>fees') return smallUsd(total.amount)
@@ -157,17 +169,17 @@ export function lineSummary(
 
 // The scene's line when nothing is picked: the day across every route.
 export function overallSummary(totals: ActivityTotals, label: Label) {
-  const calls = routeTotal(totals, AI_ROUTES, 'h24').count
+  const calls = routeTotal(totals, AGENT_ROUTES, 'h24').count
   const orders = routeTotal(
     totals,
     ['traders>accounts', 'frontier>accounts'],
     'h24'
   ).count
   return label('flow.overall', {
-    calls: counted(label, 'aiCall', calls),
+    calls: counted(label, 'agentCall', calls),
     orders: counted(label, 'order', orders),
     fees: smallUsd(routeTotal(totals, ['accounts>fees'], 'h24').amount),
-    cost: smallUsd(routeTotal(totals, ['models>ai_cost'], 'h24').amount),
+    cost: smallUsd(routeTotal(totals, ['models>agent_cost'], 'h24').amount),
   })
 }
 

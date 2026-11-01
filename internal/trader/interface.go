@@ -3,18 +3,18 @@ package trader
 import (
 	"fmt"
 	"vergex/internal/logger"
-	"vergex/internal/trader/types"
+	"vergex/internal/trading"
 )
 
 // Re-export types for backward compatibility
 type (
-	ClosedPnLRecord   = types.ClosedPnLRecord
-	TradeRecord       = types.TradeRecord
-	Trader            = types.Trader
-	OpenOrder         = types.OpenOrder
-	LimitOrderRequest = types.LimitOrderRequest
-	LimitOrderResult  = types.LimitOrderResult
-	GridTrader        = types.GridTrader
+	ClosedPnLRecord   = trading.ClosedPnLRecord
+	TradeRecord       = trading.TradeRecord
+	Trader            = trading.Trader
+	OpenOrder         = trading.OpenOrder
+	LimitOrderRequest = trading.LimitOrderRequest
+	LimitOrderResult  = trading.LimitOrderResult
+	GridTrader        = trading.GridTrader
 )
 
 // GridTraderAdapter wraps a basic Trader to provide GridTrader interface

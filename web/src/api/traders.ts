@@ -109,17 +109,6 @@ export const traderApi = {
     return result.data!
   },
 
-  async updateTraderPrompt(
-    traderId: string,
-    customPrompt: string
-  ): Promise<void> {
-    const result = await httpClient.put(
-      `${API_BASE}/traders/${traderId}/prompt`,
-      { custom_prompt: customPrompt }
-    )
-    if (!result.success) throw new Error('Failed to update custom prompt')
-  },
-
   async getGridRiskInfo(traderId: string): Promise<GridRiskInfo> {
     const result = await httpClient.request<GridRiskInfo>(
       `${API_BASE}/traders/${traderId}/grid-risk`,

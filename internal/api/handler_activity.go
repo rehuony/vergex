@@ -72,35 +72,26 @@ func (s *Server) handleActivityStream(c *gin.Context) {
 	}
 }
 
-// PlanRunsChanged gives the activity feed the Frontier runs updated since a time.
-// Until Frontier's services have started, which they do on first use, there is
-// nothing to read: starting them here would run their restart recovery early.
-func (s *Server) PlanRunsChanged(since time.Time, limit int) ([]activity.PlanRun, error) {
-	s.planningMu.RLock()
-	started := s.planning != nil
-	s.planningMu.RUnlock()
-	if !started {
-		return nil, nil
-	}
-	views, err := live.ChangedSince(s.store.GormDB(), since, limit)
+// RefusedPlanOrders gives the activity feed the Frontier orders refused since a time.
+// It only reads the database, so Frontier's services need not have started.
+func (s *Server) RefusedPlanOrders(since time.Time, limit int) ([]activity.RefusedOrder, error) {
+	rows, err := live.RefusedSince(s.store, since, limit)
 	if err != nil {
 		return nil, err
 	}
-	runs := make([]activity.PlanRun, 0, len(views))
-	for _, view := range views {
-		run := activity.PlanRun{ID: view.ID, PlanID: view.PlanID, ExchangeID: view.ExchangeID, Symbol: view.Plan.Snapshot.Symbol, UpdatedAt: view.UpdatedAt}
-		for _, order := range view.Orders {
-			run.Orders = append(run.Orders, activity.PlanOrder{
-				ClientID: order.ClientID,
-				OrderID:  order.OrderID,
-				Role:     order.Role,
-				Symbol:   order.Symbol,
-				Quantity: string(order.Quantity),
-				Status:   order.Status,
-				Error:    order.Error,
-			})
-		}
-		runs = append(runs, run)
+	orders := make([]activity.RefusedOrder, 0, len(rows))
+	for _, row := range rows {
+		orders = append(orders, activity.RefusedOrder{
+			RunID:     row.RunID,
+			PlanID:    row.PlanID,
+			AccountID: row.AccountID,
+			ClientID:  row.ClientID,
+			Role:      row.Role,
+			Symbol:    row.Symbol,
+			Quantity:  row.Quantity,
+			Error:     row.Error,
+			At:        row.UpdatedAt,
+		})
 	}
-	return runs, nil
+	return orders, nil
 }

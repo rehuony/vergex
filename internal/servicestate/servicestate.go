@@ -22,7 +22,7 @@ const (
 const (
 	Telegram       = "telegram"
 	TelegramAlerts = "telegram_alerts"
-	AIPricing      = "ai_pricing"
+	AgentPricing   = "agent_pricing"
 	MarketData     = "market_data"
 	Forecast       = "forecast"
 )

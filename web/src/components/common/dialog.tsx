@@ -1,6 +1,8 @@
 import { Fragment, useEffect, useId, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronLeft, X } from 'lucide-react'
+import { useLanguage } from '@/contexts/language-context'
+import { t } from '@/i18n'
 import { lockPageScroll } from '@/utils/page-scroll'
 import { Button } from '@/components/ui/button'
 
@@ -45,6 +47,7 @@ export function Dialog({
   bodyClassName = 'min-h-0 flex-1 overflow-y-auto px-6 py-5',
   children,
 }: DialogProps) {
+  const { language } = useLanguage()
   const titleId = useId()
   const panel = useRef<HTMLDivElement>(null)
 
@@ -112,7 +115,7 @@ export function Dialog({
               variant="ghost"
               size="icon"
               onClick={onBack}
-              aria-label="Back"
+              aria-label={t('back', language)}
               className="-ml-2 mt-0.5 size-8"
             >
               <ChevronLeft className="h-4 w-4" />

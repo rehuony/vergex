@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	"vergex/internal/provider/binance"
+	"vergex/internal/exchange/binance"
 )
 
 // generateTestKlines generates test K-line data

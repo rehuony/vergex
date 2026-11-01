@@ -8,10 +8,10 @@ import (
 	"sort"
 	"strings"
 
-	"vergex/internal/llm"
+	"vergex/internal/agent"
 )
 
-// Skill-first tool layer (see AGENTS.md). The LLM chooses one of a few
+// Skill-first tool layer (see AGENTS.md). The model chooses one of a few
 // task-level skills; each skill owns its fixed API calls, target resolution,
 // missing-field rules and confirmation gate. There is no generic API tool.
 
@@ -25,7 +25,7 @@ const (
 	skillDiagnose = "diagnose"
 )
 
-// maxResultChars bounds a single tool result fed back to the LLM.
+// maxResultChars bounds a single tool result fed back to the model.
 const maxResultChars = 12000
 
 func object(props map[string]any, required ...string) map[string]any {
@@ -47,11 +47,11 @@ var refSchema = object(map[string]any{
 	"name": str("name as the user said it"),
 })
 
-func tool(name, desc string, params map[string]any) llm.Tool {
-	return llm.Tool{Type: "function", Function: llm.FunctionDef{Name: name, Description: desc, Parameters: params}}
+func tool(name, desc string, params map[string]any) agent.Tool {
+	return agent.Tool{Type: "function", Function: agent.FunctionDef{Name: name, Description: desc, Parameters: params}}
 }
 
-var skillTools = []llm.Tool{
+var skillTools = []agent.Tool{
 	tool(skillTrader, "Create, update, delete, start, stop or query traders (automated trading bots). start/stop/delete and updates of a running trader are held for user confirmation by the system.",
 		object(map[string]any{
 			"action":     enum("what to do", "create", "update", "delete", "start", "stop", "query"),
@@ -59,7 +59,7 @@ var skillTools = []llm.Tool{
 			"slots": object(map[string]any{
 				"name":                  str("trader name (create, or new name on update)"),
 				"exchange":              str("exchange account id or name"),
-				"model":                 str("AI model id or name"),
+				"model":                 str("Model id or name"),
 				"strategy":              str("strategy id or name"),
 				"scan_interval_minutes": map[string]any{"type": "integer", "description": "decision interval in minutes"},
 				"initial_balance":       map[string]any{"type": "number", "description": "initial balance in USDT; omit to read it from the exchange"},
@@ -73,10 +73,10 @@ var skillTools = []llm.Tool{
 			"slots": object(map[string]any{
 				"name":         str("strategy name (create / duplicate / rename)"),
 				"description":  str("strategy description"),
-				"config_patch": map[string]any{"type": "object", "description": "partial strategy config in the nested schema, e.g. {\"ai_config\":{\"risk_control\":{\"max_positions\":2}}}; query the strategy first to see field names"},
+				"config_patch": map[string]any{"type": "object", "description": "partial strategy config in the nested schema, e.g. {\"agent_config\":{\"risk_control\":{\"max_positions\":2}}}; query the strategy first to see field names"},
 			}),
 		}, "action")),
-	tool(skillModel, "Query AI model configurations (provider, enabled, whether a key is set). Keys and endpoints can only be changed in the web UI.",
+	tool(skillModel, "Query model configurations (provider, enabled, whether a key is set). Keys and endpoints can only be changed in the web UI.",
 		object(map[string]any{
 			"action":     enum("only query is available in chat", "query"),
 			"target_ref": refSchema,
@@ -86,9 +86,9 @@ var skillTools = []llm.Tool{
 			"action":     enum("only query is available in chat", "query"),
 			"target_ref": refSchema,
 		}, "action")),
-	tool(skillAccount, "Read trading data of one trader: balance, positions, history, trades, orders, decisions, statistics, AI costs. scope=overview lists all traders.",
+	tool(skillAccount, "Read trading data of one trader: balance, positions, history, trades, orders, decisions, statistics, agent costs. scope=overview lists all traders.",
 		object(map[string]any{
-			"scope":      enum("data to read", "overview", "balance", "positions", "position_history", "trades", "orders", "open_orders", "decisions", "statistics", "ai_costs"),
+			"scope":      enum("data to read", "overview", "balance", "positions", "position_history", "trades", "orders", "open_orders", "decisions", "statistics", "agent_costs"),
 			"trader_ref": refSchema,
 			"symbol":     str("optional symbol filter, e.g. BTCUSDT"),
 			"limit":      map[string]any{"type": "integer", "description": "optional row limit"},
@@ -111,7 +111,7 @@ var skillTools = []llm.Tool{
 type traderInfo struct {
 	TraderID     string  `json:"trader_id"`
 	Name         string  `json:"trader_name"`
-	AIModel      string  `json:"ai_model"`
+	AgentModel   string  `json:"agent_model"`
 	ExchangeID   string  `json:"exchange_id"`
 	StrategyID   string  `json:"strategy_id"`
 	StrategyName string  `json:"strategy_name"`
@@ -133,7 +133,6 @@ type exchangeInfo struct {
 	ID           string `json:"id"`
 	ExchangeType string `json:"exchange_type"`
 	AccountName  string `json:"account_name"`
-	Enabled      bool   `json:"enabled"`
 	HasAPIKey    bool   `json:"has_api_key"`
 	HasSecret    bool   `json:"has_secret_key"`
 	HasPass      bool   `json:"has_passphrase"`
@@ -151,7 +150,6 @@ type strategyInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	IsActive    bool   `json:"is_active"`
-	IsDefault   bool   `json:"is_default"`
 }
 
 func (a *Agent) traders() ([]traderInfo, error) {
@@ -194,12 +192,10 @@ func modelNames(items []modelInfo, enabledOnly bool) []named {
 	return out
 }
 
-func exchangeNames(items []exchangeInfo, enabledOnly bool) []named {
+func exchangeNames(items []exchangeInfo) []named {
 	out := []named{}
 	for _, e := range items {
-		if !enabledOnly || e.Enabled {
-			out = append(out, named{ID: e.ID, Name: e.label()})
-		}
+		out = append(out, named{ID: e.ID, Name: e.label()})
 	}
 	return out
 }
@@ -264,7 +260,7 @@ func rawResult(raw json.RawMessage) any {
 	return v
 }
 
-// runSkill dispatches one tool call and returns the JSON result for the LLM.
+// runSkill dispatches one tool call and returns the JSON result for the model.
 func (a *Agent) runSkill(name, arguments string) string {
 	var result map[string]any
 	switch name {
@@ -422,7 +418,7 @@ func (a *Agent) createTrader(args traderArgs) map[string]any {
 	if rerr != nil {
 		problems["model"] = rerr
 	}
-	exchange, rerr := resolve("exchange", exchangeNames(exchanges, true), refOf(s.Exchange))
+	exchange, rerr := resolve("exchange", exchangeNames(exchanges), refOf(s.Exchange))
 	if rerr != nil {
 		problems["exchange"] = rerr
 	}
@@ -450,7 +446,7 @@ func (a *Agent) createTrader(args traderArgs) map[string]any {
 		}
 		return out
 	}
-	body := map[string]any{"name": s.Name, "ai_model_id": model.ID, "exchange_id": exchange.ID}
+	body := map[string]any{"name": s.Name, "agent_model_id": model.ID, "exchange_id": exchange.ID}
 	if strategyID != "" {
 		body["strategy_id"] = strategyID
 	}
@@ -490,12 +486,12 @@ func (a *Agent) updateTrader(args traderArgs) map[string]any {
 		return errResult(err)
 	}
 	body := map[string]any{
-		"name":        cfg["trader_name"],
-		"ai_model_id": cfg["ai_model"],
-		"exchange_id": cfg["exchange_id"],
-		"strategy_id": cfg["strategy_id"],
+		"name":           cfg["trader_name"],
+		"agent_model_id": cfg["agent_model"],
+		"exchange_id":    cfg["exchange_id"],
+		"strategy_id":    cfg["strategy_id"],
 	}
-	for _, k := range []string{"initial_balance", "scan_interval_minutes", "is_cross_margin", "btc_eth_leverage", "altcoin_leverage", "trading_symbols", "custom_prompt", "override_base_prompt"} {
+	for _, k := range []string{"initial_balance", "scan_interval_minutes", "is_cross_margin"} {
 		if v, ok := cfg[k]; ok {
 			body[k] = v
 		}
@@ -515,7 +511,7 @@ func (a *Agent) updateTrader(args traderArgs) map[string]any {
 		if rerr != nil {
 			return toMap(rerr)
 		}
-		body["ai_model_id"] = m.ID
+		body["agent_model_id"] = m.ID
 		changes = append(changes, "model → "+m.Name)
 	}
 	if s.Exchange != "" {
@@ -523,7 +519,7 @@ func (a *Agent) updateTrader(args traderArgs) map[string]any {
 		if err != nil {
 			return errResult(err)
 		}
-		e, rerr := resolve("exchange", exchangeNames(exchanges, true), refOf(s.Exchange))
+		e, rerr := resolve("exchange", exchangeNames(exchanges), refOf(s.Exchange))
 		if rerr != nil {
 			return toMap(rerr)
 		}
@@ -784,7 +780,7 @@ func (a *Agent) exchangeManagement(arguments string) map[string]any {
 		return errResult(err)
 	}
 	if !args.TargetRef.empty() {
-		e, rerr := resolve("exchange", exchangeNames(list, false), args.TargetRef)
+		e, rerr := resolve("exchange", exchangeNames(list), args.TargetRef)
 		if rerr != nil {
 			return toMap(rerr)
 		}
@@ -825,7 +821,7 @@ var accountPaths = map[string]string{
 	"open_orders":      "/api/open-orders",
 	"decisions":        "/api/decisions/latest",
 	"statistics":       "/api/statistics",
-	"ai_costs":         "/api/ai-costs",
+	"agent_costs":      "/api/agent-costs",
 }
 
 func (a *Agent) accountQuery(arguments string) map[string]any {

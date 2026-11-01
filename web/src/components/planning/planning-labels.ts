@@ -1,4 +1,4 @@
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 
 // Display helpers shared by the Frontier page and its dialogs.
 export const format = (n: string | number) =>

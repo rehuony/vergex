@@ -7,7 +7,7 @@ export type ForecastDirection = 'up' | 'down' | 'neutral'
 
 export interface ForecastRecord {
   id: number
-  strategy_id: number
+  strategy_id: string
   series_id: number
   open_time: number
   symbol: string
@@ -141,7 +141,7 @@ export interface ForecastConfig {
 }
 
 export interface ForecastStrategy {
-  id: number
+  id: string
   name: string
   engine_version: number
   config: ForecastConfig
@@ -149,7 +149,7 @@ export interface ForecastStrategy {
 }
 
 export interface ForecastStrategies {
-  active_strategy_id: number
+  active_strategy_id: string
   strategies: ForecastStrategy[]
   default_config: ForecastConfig
 }
@@ -192,7 +192,7 @@ export interface BacktestReport {
 
 export interface BacktestRun {
   id: number
-  strategy_id: number
+  strategy_id: string
   options: {
     symbols: string[]
     intervals: string[]
@@ -227,7 +227,7 @@ async function read<T>(path: string, failure: string): Promise<T> {
 export const forecastApi = {
   getForecastSignals(interval: ForecastInterval) {
     return read<{
-      strategy_id: number
+      strategy_id: string
       interval: ForecastInterval
       signals: ForecastSignal[]
     }>(
@@ -275,7 +275,7 @@ export const forecastApi = {
     return result.data!
   },
 
-  async activateForecastStrategy(id: number): Promise<void> {
+  async activateForecastStrategy(id: string): Promise<void> {
     const result = await httpClient.post(
       `${API_BASE}/forecast/strategies/${id}/activate`
     )
@@ -283,7 +283,7 @@ export const forecastApi = {
       throw new Error(result.message || 'Failed to use the strategy')
   },
 
-  async deleteForecastStrategy(id: number): Promise<void> {
+  async deleteForecastStrategy(id: string): Promise<void> {
     const result = await httpClient.delete(
       `${API_BASE}/forecast/strategies/${id}`
     )
@@ -292,7 +292,7 @@ export const forecastApi = {
   },
 
   getForecastSettings() {
-    return read<{ active_strategy_id: number; alert_threshold: number }>(
+    return read<{ active_strategy_id: string; alert_threshold: number }>(
       '/forecast/settings',
       'Failed to load forecast settings'
     )
@@ -325,7 +325,7 @@ export const forecastApi = {
   },
 
   async startForecastBacktest(request: {
-    strategy_id: number
+    strategy_id: string
     symbols: string[]
     intervals: string[]
     from: number

@@ -7,7 +7,7 @@ import ReactCrop, {
 import 'react-image-crop/dist/ReactCrop.css'
 import './avatar-crop-dialog.css'
 import { RotateCcwSquare } from 'lucide-react'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import { renderAvatar, rotateLeft } from '@/components/settings/avatar'
 import { Dialog } from '@/components/common/dialog'
 import { Button } from '@/components/ui/button'

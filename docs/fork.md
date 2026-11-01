@@ -6,7 +6,7 @@ vergex is a personal fork of NOFX (github.com/NoFxAiOS/nofx), maintained indepen
 
 | Topic | Decision |
 | :---- | :------- |
-| AI models | Direct calls to each provider with your own key: DeepSeek, OpenAI, Claude, Qwen, Gemini, Grok, Kimi, MiniMax |
+| Models | Direct calls to each provider with your own key: DeepSeek, OpenAI, Claude, Qwen, Gemini, Grok, Kimi, MiniMax |
 | Paid gateway | Claw402 removed: x402 payments, Permit2, USDC wallet, onboarding wallet flow, per-call settlement |
 | Paid data | NofxOS and upstream's paid signal sources removed; rankings are computed from free Binance and OKX public data |
 | Fees and referrals | All removed: builder fee, broker IDs and tags, referral links |
@@ -19,11 +19,11 @@ vergex is a personal fork of NOFX (github.com/NoFxAiOS/nofx), maintained indepen
 | Entry point | The Makefile; no separate `start.sh` |
 | Name | `vergex` everywhere; upstream is credited once in the README's License section, as AGPL requires |
 | Database | PostgreSQL only |
-| AI costs | Estimated locally from token usage and the models.dev price list |
+| Agent costs | Estimated locally from token usage and the models.dev price list |
 
 ## Later changes
 
 - **Compatibility.** There are no old deployments to support, so upstream compatibility paths and data migrations were removed. See the compatibility section of [AGENTS.md](../AGENTS.md).
-- **Layout.** The Go code moved under `cmd/vergex` and `internal/`, and the `mcp` package became `llm`. The frontend moved to responsibility directories with kebab-case paths, and its tests to `web/src/tests/`.
+- **Layout.** The Go code moved under `cmd/vergex` and `internal/`, and the `mcp` package became `agent`. The frontend moved to responsibility directories with kebab-case paths, and its tests to `web/src/tests/`.
 - **Frontend tooling.** npm was replaced by pnpm, and git hooks were removed in favour of CI.
 - **Documentation language.** The original plan kept multi-language docs. Technical docs are now English only and the README is English and Chinese; other languages can return when they can be maintained.

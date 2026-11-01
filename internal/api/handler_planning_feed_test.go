@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"vergex/internal/marketdata"
-	"vergex/internal/planning/harness"
+	"vergex/internal/market/feed"
+	"vergex/internal/market/wsfeed"
+	"vergex/internal/planning/agent"
 	"vergex/internal/planning/market"
-	"vergex/internal/provider/wsfeed"
 )
 
 type fakeChartSource struct {
@@ -33,7 +33,7 @@ func (f *fakeChartSource) callCount() int {
 }
 
 type fakeCharts struct {
-	hub        *marketdata.Hub
+	hub        *feed.Hub
 	up         bool
 	subscribed chan struct{}
 }
@@ -54,7 +54,7 @@ func feedRows(t *testing.T, source market.ChartSource, live liveCharts, pollEver
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	rows := make(chan []market.Candle, 256)
-	write := func(event harness.Event) error {
+	write := func(event agent.Event) error {
 		raw, _ := json.Marshal(event.Data)
 		var data struct {
 			Candles []market.Candle `json:"candles"`
@@ -94,7 +94,7 @@ func nextRows(t *testing.T, rows chan []market.Candle) []market.Candle {
 }
 
 func TestChartFeedSendsHistoryThenStreamWithoutPolling(t *testing.T) {
-	hub := marketdata.NewHub()
+	hub := feed.NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	events := make(chan wsfeed.Event)
@@ -132,7 +132,7 @@ func TestChartFeedSendsHistoryThenStreamWithoutPolling(t *testing.T) {
 
 func TestChartFeedPollsWhileTheStreamIsDown(t *testing.T) {
 	source := &fakeChartSource{rows: []market.Candle{{Time: 3600, Close: "100"}}}
-	charts := &fakeCharts{hub: marketdata.NewHub(), up: false, subscribed: make(chan struct{})}
+	charts := &fakeCharts{hub: feed.NewHub(), up: false, subscribed: make(chan struct{})}
 	rows := feedRows(t, source, charts, 5*time.Millisecond, false)
 	for range 3 {
 		nextRows(t, rows)
@@ -154,7 +154,7 @@ func TestChartFeedPollsForAVenueWithoutAStream(t *testing.T) {
 }
 
 func TestLiveOnlyChartFeedNeverAsksTheExchange(t *testing.T) {
-	hub := marketdata.NewHub()
+	hub := feed.NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	events := make(chan wsfeed.Event)

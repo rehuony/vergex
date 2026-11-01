@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Check, ChevronRight, Menu, X } from 'lucide-react'
-import { t, type Language } from '@/i18n/translations'
-import { LANGUAGE_OPTIONS } from '@/contexts/language-context'
+import { LANGUAGES, t, type Language } from '@/i18n'
 import { THEME_OPTIONS, type ThemePreference } from '@/contexts/theme-context'
 import {
   getCurrentPageForPath,
@@ -200,12 +199,15 @@ export function HeaderBar({
     navigate(tab.path)
   }
   return (
-    <nav className="header-bar vergex-navigation" aria-label="Main navigation">
+    <nav
+      className="header-bar vergex-navigation"
+      aria-label={t('mainNavigation', language)}
+    >
       <div className="vergex-navigation-inner">
         <button
           className="vergex-home"
           onClick={() => navigate(ROUTES.home)}
-          aria-label="Vergex home"
+          aria-label={t('vergexHome', language)}
         >
           <BrandLogo />
         </button>
@@ -228,7 +230,10 @@ export function HeaderBar({
               keeps the far right like on desktop. */}
           <button
             className="vergex-nav-toggle lg:hidden"
-            aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
+            aria-label={t(
+              menuOpen ? 'closeNavigation' : 'openNavigation',
+              language
+            )}
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen(!menuOpen)}
           >
@@ -240,7 +245,9 @@ export function HeaderBar({
                 variant="ghost"
                 size="icon"
                 className="size-10 rounded-full hover:bg-[var(--brand-soft)] aria-expanded:bg-[var(--brand-soft)]"
-                aria-label={`Account menu for ${user.email}`}
+                aria-label={t('accountMenuFor', language, {
+                  email: user.email,
+                })}
                 aria-expanded={userOpen}
                 aria-controls="vergex-user-menu"
                 onClick={() => setUserOpen(!userOpen)}
@@ -302,7 +309,7 @@ export function HeaderBar({
                     <SubmenuRow
                       id="vergex-language-menu"
                       label={t('language', language)}
-                      options={LANGUAGE_OPTIONS.map((option) => ({
+                      options={LANGUAGES.map((option) => ({
                         value: option.code,
                         label: option.label,
                         lang: option.code,

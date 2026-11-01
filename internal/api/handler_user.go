@@ -9,13 +9,12 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"vergex/internal/auth"
 	"vergex/internal/logger"
+	"vergex/internal/security/auth"
 	"vergex/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"gorm.io/gorm"
 )
 
 // handleLogout Add current token to blacklist
@@ -388,7 +387,6 @@ func (s *Server) createDefaultStrategies(userID string, lang string) error {
 			Name:        def.name,
 			Description: def.description,
 			IsActive:    def.isActive,
-			IsDefault:   false,
 		}
 		if err := strategy.SetConfig(&config); err != nil {
 			return fmt.Errorf("failed to set config for strategy %q: %w", def.name, err)
@@ -396,24 +394,12 @@ func (s *Server) createDefaultStrategies(userID string, lang string) error {
 		strategies = append(strategies, strategy)
 	}
 
-	return s.store.Transaction(func(tx *gorm.DB) error {
-		// Seed only an account without strategies. The preset is a starting
-		// point, not something to keep in sync: matching by name would add a
-		// second copy whenever the language differs or the user renamed it.
-		var count int64
-		if err := tx.Model(&store.Strategy{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
-			return fmt.Errorf("failed to count strategies: %w", err)
-		}
-		if count > 0 {
-			return nil
-		}
-
-		for _, strategy := range strategies {
-			if err := tx.Create(strategy).Error; err != nil {
-				return fmt.Errorf("failed to create strategy %q: %w", strategy.Name, err)
-			}
-			logger.Infof("  ✓ Created default strategy: %s (active=%v)", strategy.Name, strategy.IsActive)
-		}
-		return nil
-	})
+	created, err := s.store.Strategy().SeedIfNone(userID, strategies)
+	if err != nil {
+		return err
+	}
+	for _, strategy := range created {
+		logger.Infof("  ✓ Created default strategy: %s (active=%v)", strategy.Name, strategy.IsActive)
+	}
+	return nil
 }

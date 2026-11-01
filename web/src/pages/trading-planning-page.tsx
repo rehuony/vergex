@@ -8,6 +8,7 @@ import {
   type Constraints,
   defaultLimits,
   expired,
+  planningAPI,
 } from '@/api/planning'
 import { FrontierOrderBlocker } from '@/components/planning/frontier-order-blocker'
 import { FrontierAccount } from '@/components/planning/frontier-account'
@@ -51,10 +52,13 @@ import {
   type PlanningConversation,
 } from '@/hooks/planning/use-planning-data'
 import { useFrontierChart } from '@/components/planning/planning-chart'
-import { usePlanningAssistant } from '@/components/planning/use-planning-assistant'
+import {
+  type ChatMessage,
+  usePlanningAssistant,
+} from '@/components/planning/use-planning-assistant'
 import { useFrontierTrades } from '@/hooks/planning/use-frontier-trades'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import './trading-planning-page.css'
 
 type FrontierTab = 'plans' | 'positions' | 'history'
@@ -372,15 +376,21 @@ export function TradingPlanningPage() {
     setError('')
     setOrderNotice('')
   }
-  function openConversation(h: PlanningConversation) {
-    session.current = h.id
-    changeAccount(h.exchange_id)
-    session.current = h.id
-    setSymbol(h.symbol)
-    setModelID(h.model_id)
-    setMessages(JSON.parse(h.messages))
-    setSelected('')
-    resetTurn()
+  async function openConversation(h: PlanningConversation) {
+    try {
+      const { messages } = await planningAPI<{ messages: ChatMessage[] }>(
+        `conversations/${h.id}`
+      )
+      changeAccount(h.exchange_id)
+      session.current = h.id
+      setSymbol(h.symbol)
+      setModelID(h.agent_model_id)
+      setMessages(messages)
+      setSelected('')
+      resetTurn()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    }
   }
   // New plans are what the user asked for, so bring them into view.
   useEffect(() => {

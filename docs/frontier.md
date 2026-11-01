@@ -1,12 +1,12 @@
 # Frontier
 
-Frontier is a user-initiated planning workspace: you discuss a trade with the AI on a live chart, compare entry plans, and approve one plan for live execution. It is not a continuously running strategy (that is a trader) and not a backtester.
+Frontier is a user-initiated planning workspace: you discuss a trade with the agent on a live chart, compare entry plans, and approve one plan for live execution. It is not a continuously running strategy (that is a trader) and not a backtester.
 
 ## Workflow
 
 1. Open **Frontier**.
 2. Pick the market, exchange, account and leverage in the toolbar. Public markets can be browsed without an account; trading needs an enabled Binance or OKX account, added in Settings. Market discovery lists crypto USDT perpetuals only.
-3. Choose the AI model (any model in Settings → AI models) beside the chart and describe the trade. The AI can read market data, draw support/resistance and trend lines, and draft plans. It cannot approve or place orders.
+3. Choose the model (any model in Settings → Models) beside the chart and describe the trade. The agent can read market data, draw support/resistance and trend lines, and draft plans. It cannot approve or place orders.
 4. Compare up to four drafts on the chart. Selecting a plan focuses the chart on its entry, stop and target; **Compare plans** lays them out side by side.
 5. Review prices, quantities, schedule, cost assumptions and account, then click **Confirm and place live order**. Only that click locks and starts the plan.
 
@@ -24,7 +24,7 @@ The chart and the assistant fill the first screen. Below them:
 
 The address says what is open, as `/frontier?venue=&symbol=&account=&plan=&tab=`, so a view can be linked to and survives a reload. `plan` opens that plan's own market and account and fits it on the chart. What the address cannot use is ignored.
 
-A plan's realized P/L comes from the exchange's closed P/L for the account, read only while History is open. A close counts for a plan when it is on the same symbol and within the plan's lifetime, so a manual close between plans counts for none. It looks back 30 days and at the exchange's own record limit (500 on Binance, 100 on OKX); a plan outside that shows a dash.
+A plan's realized P/L comes from the trading ledger: the positions its run opened, once they closed. Reading it asks no exchange and has no time limit. A plan shows a dash until the account's sync has booked its fills, and a position it opened that something else closed still counts for the plan.
 
 ## Entry structures and limits
 
@@ -52,18 +52,26 @@ A plan's realized P/L comes from the exchange's closed P/L for the account, read
 - The approval digest binds the full plan, the owner, the account and the execution policy. Only one unresolved approved plan can lease an account.
 - Each child has a deterministic client order ID, persisted **before** submission. Binance and OKX IDs use the `vergex` prefix. Missing or timed-out acknowledgements become `UNKNOWN`, are queried by client ID and are never blindly resubmitted. Receipts must match the locked intent.
 - After a restart, active runs become `needs_attention` and do not resume entries. Use **Reconcile exchange state** to resume reconciliation and protection monitoring. Exchange-side stop and target orders keep working while the process is down, but protection of new fills can be delayed: check positions and orders at the exchange.
+- What a run intends and what the exchange told it are in `frontier.run_orders`, written only by the run's controller, and only trusted after they match the approved plan. A row is saved before its order is sent, and if it cannot be saved the order is not sent.
+- An order that reaches the exchange is also copied to the ledger (`trading.orders`), which adds up its fills and keeps its position. The copy happens in the background and the controller never reads it, so a failure there is only logged and cannot affect execution: the fills still arrive, and find the run through its position or its lease on the account. The two can disagree for a moment, because the run asks the exchange and the ledger reads trades.
+- A manual close from the account panel is saved in `frontier.account_closes` before it is sent, so a retry can never close twice, and is copied to the ledger the same way.
+- An account can be deleted while nothing has happened on it, which takes its unused approvals along. A run still holding its lease, or any order in the ledger, keeps the account.
 
-## AI harness
+## Agent
 
 - A planning turn has a 180-second limit and each model round 75 seconds; progress and a Stop action stay visible. Streams always end with a terminal event; an unexpected disconnect is shown as an error, not retried.
-- Tool reads are bounded and repeated identical reads are cached. The harness keeps at most five unique drafts per turn.
+- Tool reads are bounded and repeated identical reads are cached. The agent keeps at most five unique drafts per turn.
 - Models without native function calling use a text-tool protocol: tool schemas are given as text, the model returns a bounded JSON envelope, and Go validates the tool name and arguments before dispatching. Approval and execution are never tools.
 - Data plugins: public funding rate and open interest of the selected market (`get_data_plugin`).
 - Entry calculators run in a bounded Starlark runtime with tests and immutable source hashes; they have no network, shell, keys or order access, and their output still goes through the plan compiler and human approval.
 
+## Conversations
+
+Each turn is stored in `agent.messages` as it happens: your words, the workspace and market data sent with them (role `context`), the model's thinking where it returns one, its tool calls and each result. The fixed system prompt and the history the browser resends are not stored again. `GET /api/planning/conversations` lists conversations without their messages, and `GET /api/planning/conversations/:id` opens one with what you and the model said. The browser still sends its recent history with each turn. Stored messages are never cleaned up automatically: [Data and backups](getting-started.md#data-and-backups) gives the expected growth.
+
 ## Chart
 
-The chart (`web/src/components/planning/planning-chart/`, lightweight-charts) loads history from `/api/planning/candles`, streams updates from `/api/planning/feed` (SSE: live candles from the market stream, or polling every 3 seconds while no stream is up), loads older candles when scrolling back and refetches history instead of drawing across gaps. It draws plan levels and risk/reward zones, comparison lanes, and AI drawings (`horizontal_line`, `trend_line`, `rectangle`).
+The chart (`web/src/components/planning/planning-chart/`, lightweight-charts) loads history from `/api/planning/candles`, streams updates from `/api/planning/feed` (SSE: live candles from the market stream, or polling every 3 seconds while no stream is up), loads older candles when scrolling back and refetches history instead of drawing across gaps. It draws plan levels and risk/reward zones, comparison lanes, and agent drawings (`horizontal_line`, `trend_line`, `rectangle`).
 
 The **Forecast** switch on the chart overlays this coin's [forecast](forecast.md) under the strategy in use, off until asked for since this chart is for live trades, and remembered on this browser. It draws the same simulated candles as the Forecast page, with the score, the hit rate and how often price rose anyway above them. An OKX USDT swap shows the Binance coin's forecast and says so, since Forecast reads only Binance. Below 15m, or on any other market, it says why there is nothing to show. A coin that is not tracked starts fetching when the switch is on. Comparing plans hides the overlay, and it never moves plan levels or zones, nor does it reach the assistant.
 
@@ -71,4 +79,4 @@ Frontier reads one read-only endpoint, `/api/forecast/overlay/:symbol`, and choo
 
 ## Verification boundary
 
-Automated tests use local HTTP exchange fixtures and temporary database schemas, never funded accounts or real orders. Passing tests do not prove that an account has trading permission or that a live order succeeds; validate with a small account (exchange testnets are not supported).
+Automated tests use local HTTP exchange fixtures and temporary databases, never funded accounts or real orders. Passing tests do not prove that an account has trading permission or that a live order succeeds; validate with a small account (exchange testnets are not supported).

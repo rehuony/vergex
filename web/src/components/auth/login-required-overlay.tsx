@@ -1,7 +1,7 @@
 import { Check, LogIn } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { Dialog } from '@/components/common/dialog'
 import { Button } from '@/components/ui/button'
 

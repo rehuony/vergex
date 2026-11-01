@@ -10,7 +10,7 @@ const LARGE_HEIGHT = 520
 export const MIN_WIDTH = 640
 export const MIN_HEIGHT = 360
 
-export type SceneBlock = Exclude<ActivityBlock, 'ai_cost' | 'fees' | 'other'>
+export type SceneBlock = Exclude<ActivityBlock, 'agent_cost' | 'fees' | 'other'>
 
 export type LineKey =
   | 'market>traders'
@@ -21,19 +21,19 @@ export type LineKey =
   | 'traders>accounts'
   | 'frontier>accounts'
   | 'accounts>positions'
-  | 'models>ai_cost'
+  | 'models>agent_cost'
   | 'accounts>fees'
 
 export const LINE_KIND: Record<LineKey, ActivityKind> = {
   'market>traders': 'market',
   'market>forecast': 'market',
-  'telegram>models': 'ai',
-  'traders>models': 'ai',
-  'frontier>models': 'ai',
+  'telegram>models': 'agent',
+  'traders>models': 'agent',
+  'frontier>models': 'agent',
   'traders>accounts': 'orders',
   'frontier>accounts': 'orders',
   'accounts>positions': 'funds',
-  'models>ai_cost': 'funds',
+  'models>agent_cost': 'funds',
   'accounts>fees': 'funds',
 }
 
@@ -176,7 +176,7 @@ export function layoutFlow(rawWidth: number, rawHeight: number): FlowLayout {
       [rightOut, accountsY + p],
       [positionsX - p, accountsY + p],
     ]),
-    route('models>ai_cost', [
+    route('models>agent_cost', [
       [rightOut, modelsY + p],
       [positionsX - p, modelsY + p],
     ]),

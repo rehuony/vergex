@@ -41,7 +41,7 @@ it('changes the password only with the current one and a confirmed new one', asy
   fireEvent.change(screen.getByLabelText('Current password'), {
     target: { value: 'old-secret' },
   })
-  fireEvent.change(screen.getByLabelText('New Password'), {
+  fireEvent.change(screen.getByLabelText('New password'), {
     target: { value: 'new-secret-1' },
   })
   const confirm = screen.getByLabelText('Confirm new password')
@@ -79,7 +79,7 @@ it('flags a wrong current password on the field until it is edited', async () =>
   )
   const current = screen.getByLabelText('Current password')
   fireEvent.change(current, { target: { value: 'not-it' } })
-  fireEvent.change(screen.getByLabelText('New Password'), {
+  fireEvent.change(screen.getByLabelText('New password'), {
     target: { value: 'new-secret-1' },
   })
   fireEvent.change(screen.getByLabelText('Confirm new password'), {

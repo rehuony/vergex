@@ -2,11 +2,11 @@
 
 A trader runs a strategy on a schedule: it reads the market, asks the model for decisions and places orders within the strategy's limits. Each has its own page in the top bar: **Traders** and **Strategies**.
 
-A trader binds an AI model, an exchange account and a strategy.
+A trader binds a model, an exchange account and a strategy.
 
-The Traders page lists each trader with its stored equity, return, win rate and drawdown, read from the database. Running traders come first, a column header sorts by that column, and from 8 traders on a search box filters by name. **Stop all** stops every running trader without closing positions. Until both an AI model and an exchange account exist, the page says what is missing and links to it in Settings.
+The Traders page lists each trader with its stored equity, return, win rate and drawdown, read from the database. Running traders come first, a column header sorts by that column, and from 8 traders on a search box filters by name. **Stop all** stops every running trader without closing positions. Until both an model and an exchange account exist, the page says what is missing and links to it in Settings.
 
-A row opens the trader's own page, which is the only place to start, stop, edit or delete it. Its model, account and strategy link to where they are edited:
+A row opens the trader's own page, which is the only place to start, stop, edit or delete it. Deleting one stops it and archives it: it disappears everywhere, while its cycles, equity, conversations and ledger entries stay in the database. Its model, account and strategy link to where they are edited, and cannot be deleted while a trader uses them; an archived trader no longer does:
 
 | Section | Shows |
 | :------ | :---- |
@@ -15,13 +15,13 @@ A row opens the trader's own page, which is the only place to start, stop, edit 
 | Decisions | The latest cycle, and a log of every cycle. Opening one shows its prompts, reasoning and raw response |
 | Orders | Recorded orders and their fills, with CSV export |
 
-Starting a trader opens a confirmation with what will run and the launch checks: AI model, strategy, exchange account, account connection and available balance. It cannot be started while a check has failed.
+Starting a trader opens a confirmation with what will run and the launch checks: model, strategy, exchange account, account connection and available balance. It cannot be started while a check has failed.
 
-The Strategies page edits every strategy. AI strategies have Coins, Risk, Market data and Prompt sections; grid strategies have one form. A strategy's type is set when it is created and cannot change. Saved changes reach running traders on their next cycle, and the form warns about this when any are affected. From 10 strategies on, the list gets a search box.
+The Strategies page edits every strategy. Agent strategies have Coins, Risk, Market data and Prompt sections; grid strategies have one form. A strategy's type is set when it is created and cannot change. Saved changes reach running traders on their next cycle, and the form warns about this when any are affected. From 10 strategies on, the list gets a search box.
 
 **Used by** names the traders on a strategy, each linking to its page. One strategy is the default, preselected when creating a trader, and **Make default** changes which. The default strategy and any strategy a trader uses cannot be deleted.
 
-Test tries an AI strategy as it stands in the form, saved or not, on live public market data. **Preview prompts** only builds the prompts. **Run test** also sends them to a model you choose, on your API key and at your cost. Neither places orders.
+Test tries an agent strategy as it stands in the form, saved or not, on live public market data. **Preview prompts** only builds the prompts. **Run test** also sends them to a model you choose, on your API key and at your cost. Neither places orders.
 
 ## Cycle
 
@@ -29,8 +29,12 @@ Test tries an AI strategy as it stands in the form, saved or not, on live public
 
 1. Check the running state, reload the strategy if it changed, and check risk pauses and safe mode.
 2. Build the context: account, open positions, candidate coins.
-3. Fetch market data, build the prompts, call the model, and parse and validate the decisions (`internal/kernel/`).
-4. Drop decisions outside the strategy's coins, execute closes before opens, and store the decision record, AI usage and an equity snapshot.
+3. Fetch market data, build the prompts, call the model, and parse and validate the decisions (`internal/trader/agent/`).
+4. Drop decisions outside the strategy's coins, execute closes before opens, and store the cycle, agent usage and an equity snapshot.
+
+A cycle is a row in `trader.cycles`, with what the model decided in `trader.decisions`, each pointing at the order it became. What was sent to the model and what it said, with its own thinking where the provider returns it and otherwise the reasoning in its reply, are a conversation in `agent.messages`; a call that failed keeps what was sent.
+
+Keeping these records never costs the loop: opening the conversation waits 3 seconds at most, its messages are written in the background, and saving the cycle waits 5 seconds at most. A failure is only logged, and that record is lost. Nothing cleans them up: see [Data and backups](getting-started.md#data-and-backups).
 
 ## Candidate coins
 
@@ -52,7 +56,7 @@ K-lines come from local history and the live stream, or from the exchange when t
 
 ## Prompts
 
-The system prompt (`internal/kernel/engine_prompt_system.go`) is always English, so model behaviour stays stable. It is assembled in this order:
+The system prompt (`internal/trader/agent/engine_prompt_system.go`) is always English, so model behaviour stays stable. It is assembled in this order:
 
 1. Data dictionary, role definition and trading mode.
 2. Hard constraints from `risk_control`.
@@ -96,16 +100,34 @@ Position count, position value, margin usage and minimum size are enforced in co
 ## Execution and risk control
 
 - **Opens** enforce the limits above, set leverage and margin mode, place the order, then place stop-loss and take-profit. If protection cannot be placed, the position is closed.
-- **Hold times** apply to AI-initiated closes (`auto_trader_throttle.go`). A position is held for at least 90 minutes unless price has moved past -3% or +8%. Between 90 minutes and 3 hours, a close while price is between -2% and +3% also waits.
+- **Hold times** apply to agent-initiated closes (`auto_trader_throttle.go`). A position is held for at least 90 minutes unless price has moved past -3% or +8%. Between 90 minutes and 3 hours, a close while price is between -2% and +3% also waits.
 - **Re-entry** into a just-closed symbol waits 4 hours.
 - **Drawdown monitor** (`auto_trader_risk.go`): once price has moved 5% in the position's favour, it closes the position if it gives back 40% of its peak profit. It reads positions every minute and follows the live mark price between reads ([market-data.md](market-data.md#what-trading-reads)).
-- **Safe mode**: after 3 consecutive AI failures the trader opens no new positions until a call succeeds. Existing positions keep their protection.
+- **Safe mode**: after 3 consecutive model failures the trader opens no new positions until a call succeeds. Existing positions keep their protection.
 
 An exchange account leased by an unresolved [Frontier](frontier.md) plan cannot start a trader.
 
+## Orders, fills and positions
+
+`internal/trading/accountsync` runs one loop per account while something can be trading on it: a running trader, a reserved Frontier trade, or a position still open in the ledger, and for ten minutes after that. Every 30 seconds it reads the account's new trades and books each one in a single transaction (`store.LedgerStore.RecordTrade`), so reporting a trade twice changes nothing.
+
+- **What gets recorded when.** A trader records an agent open or close, and a grid limit order, right after placing it, so its row has the real leverage and client order ID. Its stops, targets, drawdown closes and manual closes are not recorded when placed, because those calls return no order: their row appears when they fill. Orders placed on the exchange by hand appear the same way.
+- **Settling.** While the ledger has an order as working, the loop lists that symbol's open orders, and asks about any it no longer finds, so a cancel or a rejection, which leaves no fill, is recorded too. It only makes these requests when such an order exists, and follows one up for seven days. Frontier's orders are left out: a run follows its own and tells the ledger how they ended.
+- **Owners.** An order nothing knows of goes to whoever holds the position it closes, then to whoever has reserved the account, then to a trader running on it, and otherwise is `external`. So a stop that fires after its trader stopped still lands on that trader's position.
+- **Closes.** A close reduces its own source's position first, then the oldest. Two traders on one account share one exchange position, so which of them a stop belongs to is inferred, and can be wrong in hedge mode.
+- **One-way mode.** A trade reduces what is open against it and opens the rest, so a reversal becomes a close and an open.
+- **Out of order.** A close with no position to reduce waits on its fill (`unmatched_quantity`) for an older open to arrive. One older than every open stays there, because what it closed predates the ledger.
+- **Fees.** The real fee asset is kept on the fill. Only fees in dollar stablecoins add up on the position.
+- **After an outage.** Reading starts from the last known trade however long ago that was, and only moves on once a whole read has worked. Both exchanges keep three months of trades, so anything older cannot be recovered, and the log says so. Binance reads a week at a time and asks about every symbol the ledger still has open, which is how a stop that fired during an outage is found.
+- **A failed read on OKX.** Fills are read across all symbols, newest first, paging back to the start of the read. Their sizes are in contracts, so when a contract's value cannot be read right now, the whole read fails and is tried again, rather than being booked at the wrong size.
+- **A trade that cannot be booked.** When the answer will not change, such as a contract OKX no longer describes, the trade goes to `trading.skipped_fills` and the rest carry on. It is not in the ledger, so a position it closed stays open there. **Needs attention** on the Dashboard names the contract, the trade and the size for 30 days.
+- **Numbers.** Everything is an exact decimal. The exchange's realized P/L wins, and it is only worked out from the entry price when the exchange reports none.
+
+An account with any orders, fills or positions cannot be deleted, so its history stays whole.
+
 ## Grid strategies
 
-`strategy_type: grid_trading` uses `grid_config` and the grid engine (`internal/kernel/grid_engine.go`, `internal/trader/auto_trader_grid*.go`). The model manages grid levels for one symbol, within your budget, leverage and bounds, which can come from ATR.
+`strategy_type: grid_trading` uses `grid_config` and the grid engine (`internal/trader/agent/grid_engine.go`, `internal/trader/auto_trader_grid*.go`). The model manages grid levels for one symbol, within your budget, leverage and bounds, which can come from ATR.
 
 Regime checks use three Donchian boxes on 1h candles: short (72 bars), mid (240) and long (500). A breakout must hold for 3 candles to count:
 

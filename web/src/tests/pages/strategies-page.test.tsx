@@ -39,17 +39,16 @@ vi.mock('@/components/common/notify', () => ({
   confirmToast: mocks.confirm,
 }))
 
-const aiStrategy: Strategy = {
-  id: 'ai',
+const agentStrategy: Strategy = {
+  id: 'agent',
   name: 'Trend',
   description: 'Old note',
   is_active: true,
-  is_default: false,
   created_at: '',
   updated_at: '',
   config: {
-    strategy_type: 'ai_trading',
-    ai_config: {
+    strategy_type: 'agent_trading',
+    agent_config: {
       coin_source: { source_type: 'static', static_coins: ['BTCUSDT'] },
       indicators: {
         klines: {
@@ -82,7 +81,7 @@ const aiStrategy: Strategy = {
 }
 
 const gridStrategy: Strategy = {
-  ...aiStrategy,
+  ...agentStrategy,
   id: 'grid',
   name: 'Range',
   description: '',
@@ -121,7 +120,7 @@ const save = () => screen.getByRole('button', { name: 'Save' })
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.getStrategies.mockResolvedValue([aiStrategy, gridStrategy])
+  mocks.getStrategies.mockResolvedValue([agentStrategy, gridStrategy])
   mocks.updateStrategy.mockResolvedValue({})
   mocks.estimate.mockResolvedValue({ total: 6434, model_limits: [] })
   mocks.getTraders.mockResolvedValue([])
@@ -140,8 +139,8 @@ it('opens the active strategy and saves an edited limit', async () => {
 
   await waitFor(() => expect(mocks.updateStrategy).toHaveBeenCalled())
   const [id, body] = mocks.updateStrategy.mock.calls[0]
-  expect(id).toBe('ai')
-  expect(body.config.ai_config.risk_control.max_positions).toBe(5)
+  expect(id).toBe('agent')
+  expect(body.config.agent_config.risk_control.max_positions).toBe(5)
 })
 
 it('asks before leaving unsaved edits and stays when told to', async () => {
@@ -194,7 +193,7 @@ it('duplicates a saved strategy under a new name, but not unsaved edits', async 
   const duplicate = await screen.findByRole('button', { name: 'Duplicate' })
   fireEvent.click(duplicate)
   await waitFor(() =>
-    expect(mocks.duplicateStrategy).toHaveBeenCalledWith('ai', 'Trend copy')
+    expect(mocks.duplicateStrategy).toHaveBeenCalledWith('agent', 'Trend copy')
   )
   await waitFor(() => expect(mocks.getStrategies).toHaveBeenCalledTimes(2))
 

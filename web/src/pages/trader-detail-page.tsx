@@ -38,7 +38,7 @@ import {
 } from '@/constants/route-paths'
 import { useLanguage } from '@/contexts/language-context'
 import { useExchangeConfigs, useModelConfigs } from '@/hooks/use-connections'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import type { CreateTraderRequest, TraderConfigData, TraderInfo } from '@/types'
 import { cn } from '@/utils/cn'
 import { pollEvery } from '@/utils/poll'
@@ -219,7 +219,7 @@ export function TraderDetailPage() {
     setStopping(true)
     try {
       await api.stopTrader(id)
-      toast.success(t('aiTradersToast.stopped', language))
+      toast.success(t('agentTradersToast.stopped', language))
       await mutate()
     } catch {
       toast.error(t('operationFailed', language))
@@ -238,11 +238,9 @@ export function TraderDetailPage() {
 
   async function saveEdit(data: CreateTraderRequest) {
     const model = models.data?.find(
-      (m) => m.id === data.ai_model_id && m.enabled
+      (m) => m.id === data.agent_model_id && m.enabled
     )
-    const exchange = exchanges.data?.find(
-      (e) => e.id === data.exchange_id && e.enabled
-    )
+    const exchange = exchanges.data?.find((e) => e.id === data.exchange_id)
     if (!model) {
       toast.error(t('modelConfigNotExist', language))
       return
@@ -254,13 +252,13 @@ export function TraderDetailPage() {
     try {
       await api.updateTrader(id, {
         name: data.name,
-        ai_model_id: data.ai_model_id,
+        agent_model_id: data.agent_model_id,
         exchange_id: data.exchange_id,
         strategy_id: data.strategy_id,
         scan_interval_minutes: data.scan_interval_minutes,
         is_cross_margin: data.is_cross_margin,
       })
-      toast.success(t('aiTradersToast.saved', language))
+      toast.success(t('agentTradersToast.saved', language))
       setEditing(null)
       const next = await mutate()
       const renamed = next?.find((item) => item.trader_id === id)
@@ -278,7 +276,7 @@ export function TraderDetailPage() {
     if (!ok) return
     try {
       await api.deleteTrader(id)
-      toast.success(t('aiTradersToast.deleted', language))
+      toast.success(t('agentTradersToast.deleted', language))
       await mutate()
       navigate(ROUTES.traders)
     } catch {
@@ -286,7 +284,7 @@ export function TraderDetailPage() {
     }
   }
 
-  const modelLabel = getTraderModelLabel(trader.ai_model, models.data ?? [])
+  const modelLabel = getTraderModelLabel(trader.agent_model, models.data ?? [])
   const accountLabel = getExchangeDisplayName(
     trader.exchange_id,
     exchanges.data ?? []
@@ -383,7 +381,7 @@ export function TraderDetailPage() {
           onClose={() => setStarting(false)}
           onStarted={() => {
             setStarting(false)
-            toast.success(t('aiTradersToast.started', language))
+            toast.success(t('agentTradersToast.started', language))
             void mutate()
           }}
         />
@@ -394,7 +392,7 @@ export function TraderDetailPage() {
           isEditMode
           traderData={editing}
           availableModels={(models.data ?? []).filter((m) => m.enabled)}
-          availableExchanges={(exchanges.data ?? []).filter((e) => e.enabled)}
+          availableExchanges={exchanges.data ?? []}
           onSave={saveEdit}
           onClose={() => setEditing(null)}
         />

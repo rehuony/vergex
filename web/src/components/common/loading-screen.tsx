@@ -1,5 +1,5 @@
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 
 export function LoadingScreen() {
   const { language } = useLanguage()

@@ -16,6 +16,7 @@ import (
 	"gorm.io/gorm"
 	"vergex/internal/planning"
 	"vergex/internal/planning/core"
+	"vergex/internal/store"
 )
 
 type Market interface {
@@ -30,12 +31,11 @@ type Controller struct {
 	stopped  bool
 	runLocks sync.Map
 	workerWG sync.WaitGroup
+	ledgerWG sync.WaitGroup
 }
 
-func New(db *gorm.DB, f Factory, m Market) (*Controller, error) {
-	if e := db.AutoMigrate(&planning.Draft{}, &Run{}, &Lease{}); e != nil {
-		return nil, e
-	}
+func New(st *store.Store, f Factory, m Market) (*Controller, error) {
+	db := st.GormDB()
 	c := &Controller{DB: db, Factory: f, Market: m, workers: map[string]context.CancelFunc{}}
 	// Restart never silently releases overdue TWAP slices or repeats submissions.
 	if e := db.Model(&Run{}).Where("state IN ?", []string{"starting", "running", "stopping", "position_open"}).Updates(map[string]any{"state": "needs_attention", "error": "Service restarted: reconcile submitted orders only; no automatic replay or new entries", "updated_at": time.Now().UTC()}).Error; e != nil {
@@ -48,10 +48,9 @@ func digest(p core.Plan, user, exchange, account string) string {
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:])
 }
-func decode(r Run) (View, error) {
+func decode(r Run, planBody string, orders []Order) (View, error) {
 	var p core.Plan
-	var orders []Order
-	if json.Unmarshal([]byte(r.PlanJSON), &p) != nil || json.Unmarshal([]byte(r.OrdersJSON), &orders) != nil {
+	if json.Unmarshal([]byte(planBody), &p) != nil {
 		return View{}, errors.New("invalid persisted live plan")
 	}
 	if p.Hash != r.PlanHash || p.Digest() != p.Hash || digest(p, r.UserID, r.ExchangeID, r.AccountKey) != r.ApprovalHash {
@@ -61,15 +60,19 @@ func decode(r Run) (View, error) {
 	if e := validateIntent(view); e != nil {
 		return View{}, e
 	}
+	view.remember()
 	return view, nil
 }
 func (c *Controller) Get(user, id string) (View, error) {
+	if uuid.Validate(id) != nil {
+		return View{}, errors.New("execution not found or not owned")
+	}
 	var r Run
 	e := c.DB.Where("user_id = ? AND id = ?", user, id).First(&r).Error
 	if e != nil {
 		return View{}, errors.New("execution not found or not owned")
 	}
-	return decode(r)
+	return loadRun(c.DB, r)
 }
 func (c *Controller) List(user string) ([]View, error) {
 	return c.ListContext(context.Background(), user)
@@ -80,9 +83,13 @@ func (c *Controller) ListContext(ctx context.Context, user string) ([]View, erro
 	if e := c.DB.Where("user_id = ?", user).Order("approved_at desc").Limit(100).Find(&rows).Error; e != nil {
 		return nil, e
 	}
+	loaded, e := loadRuns(c.DB, rows)
+	if e != nil {
+		return nil, e
+	}
 	out := []View{}
-	for _, r := range rows {
-		v, e := decode(r)
+	for _, run := range loaded {
+		v, e := run.view, run.err
 		if e != nil {
 			return nil, e
 		}
@@ -134,33 +141,31 @@ func (c *Controller) ApproveReplacing(ctx context.Context, user, planID, hash, p
 	}
 	// Resolve a previously closed trade using exchange reads before acquiring a
 	// new lease. The transaction below still arbitrates concurrent approvals.
-	var previousLease Lease
-	if err := c.DB.Where("account_key = ?", account).First(&previousLease).Error; err == nil {
-		if previousLease.UserID == user {
-			if _, err = c.CheckStatus(ctx, user, previousLease.RunID); err != nil {
-				return View{}, err
-			}
-			lock := c.runLock(previousLease.RunID)
-			if err = lock.LockContext(ctx); err != nil {
-				return View{}, err
-			}
-			defer lock.Unlock()
+	var previousLease store.AccountLease
+	if err := c.DB.Where("account_id = ?", d.ExchangeID).First(&previousLease).Error; err == nil {
+		if _, err = c.CheckStatus(ctx, user, previousLease.HolderID); err != nil {
+			return View{}, err
 		}
+		lock := c.runLock(previousLease.HolderID)
+		if err = lock.LockContext(ctx); err != nil {
+			return View{}, err
+		}
+		defer lock.Unlock()
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return View{}, err
 	}
 	now := time.Now().UTC()
-	r := Run{ID: uuid.NewString(), UserID: user, ExchangeID: d.ExchangeID, AccountKey: account, PlanID: p.ID, PlanHash: p.Hash, ApprovalHash: digest(p, user, d.ExchangeID, account), State: "approved", PlanJSON: d.Body, OrdersJSON: "[]", ApprovedAt: now, UpdatedAt: now}
+	r := Run{ID: uuid.NewString(), UserID: user, ExchangeID: d.ExchangeID, AccountKey: account, PlanID: p.ID, PlanHash: p.Hash, ApprovalHash: digest(p, user, d.ExchangeID, account), State: "approved", ApprovedAt: now, UpdatedAt: now}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e = c.DB.Transaction(func(tx *gorm.DB) error {
-		var lease Lease
-		if err := tx.Where("account_key = ?", account).First(&lease).Error; err == nil {
+		var lease store.AccountLease
+		if err := tx.Where("account_id = ?", d.ExchangeID).First(&lease).Error; err == nil {
 			var previous Run
-			if lease.RunID != previousLease.RunID || lease.UserID != user || tx.Where("id = ? AND user_id = ?", lease.RunID, user).First(&previous).Error != nil {
+			if lease.HolderID != previousLease.HolderID || tx.Where("id = ? AND user_id = ?", lease.HolderID, user).First(&previous).Error != nil {
 				return errors.New("Account approval changed. Refresh and review the order again.")
 			}
-			v, er := decode(previous)
+			v, er := loadRun(tx, previous)
 			if er != nil {
 				return er
 			}
@@ -180,7 +185,7 @@ func (c *Controller) ApproveReplacing(ctx context.Context, user, planID, hash, p
 		if res.RowsAffected != 1 {
 			return errors.New("only an unchanged draft can be approved")
 		}
-		if er := tx.Create(&Lease{AccountKey: account, RunID: r.ID, UserID: user, ExchangeID: d.ExchangeID}).Error; er != nil {
+		if er := tx.Create(&store.AccountLease{AccountID: d.ExchangeID, Holder: store.LeaseHolderFrontier, HolderID: r.ID}).Error; er != nil {
 			return errors.New("An earlier trade is reserving this account. Open Positions & orders to check its status or cancel its unused approval.")
 		}
 		return tx.Create(&r).Error
@@ -188,7 +193,7 @@ func (c *Controller) ApproveReplacing(ctx context.Context, user, planID, hash, p
 	if e != nil {
 		return View{}, e
 	}
-	return decode(r)
+	return decode(r, d.Body, []Order{})
 }
 func decimal(d core.Decimal) (*big.Rat, error) {
 	if !nativeDecimal.MatchString(string(d)) {
@@ -226,14 +231,19 @@ func cid(run string, index int, role, quantity string) string {
 	h := sha256.Sum256([]byte(fmt.Sprintf("%s/%d/%s/%s", run, index, role, quantity)))
 	return hex.EncodeToString(h[:16])
 }
+
+// save makes the run durable. It writes nothing when nothing changed, so updated_at
+// says when something last did.
 func (c *Controller) save(v *View) error {
-	raw, e := json.Marshal(v.Orders)
-	if e != nil {
+	if !v.changed() {
+		return nil
+	}
+	if e := c.DB.Transaction(func(tx *gorm.DB) error { return writeRun(tx, v) }); e != nil {
 		return e
 	}
-	v.OrdersJSON = string(raw)
-	v.UpdatedAt = time.Now().UTC()
-	return c.DB.Model(&Run{}).Where("id = ? AND user_id = ?", v.ID, v.UserID).Updates(map[string]any{"state": v.State, "orders_json": v.OrdersJSON, "started_at": v.StartedAt, "deadline": v.Deadline, "updated_at": v.UpdatedAt, "error": v.Error}).Error
+	c.keepInLedger(v)
+	v.remember()
+	return nil
 }
 
 type runMutex struct{ token chan struct{} }
@@ -461,7 +471,7 @@ func (c *Controller) StopContext(ctx context.Context, user, id, hash string) (Vi
 			if e := tx.Model(&Run{}).Where("id = ? AND user_id = ?", v.ID, user).Updates(map[string]any{"state": "cancelled", "updated_at": time.Now().UTC()}).Error; e != nil {
 				return e
 			}
-			if e := tx.Where("run_id = ?", v.ID).Delete(&Lease{}).Error; e != nil {
+			if e := releaseLease(tx, v.ID); e != nil {
 				return e
 			}
 			return tx.Model(&planning.Draft{}).Where("user_id = ? AND id = ?", user, v.PlanID).Update("status", "cancelled").Error
@@ -486,6 +496,7 @@ func (c *Controller) Shutdown() {
 	}
 	c.mu.Unlock()
 	c.workerWG.Wait()
+	c.ledgerWG.Wait()
 }
 
 // step serializes durable intent before every external side effect. Unknown
@@ -760,18 +771,17 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 			v.Error = ""
 			e = c.DB.Transaction(func(tx *gorm.DB) error {
 				// Keep all durable lifecycle writes on the same transaction.
-				raw, err := json.Marshal(v.Orders)
-				if err != nil {
+				if err := writeRun(tx, &v); err != nil {
 					return err
 				}
-				if err = tx.Model(&Run{}).Where("id = ? AND user_id = ?", v.ID, user).Updates(map[string]any{"state": "completed", "orders_json": string(raw), "error": "", "updated_at": time.Now().UTC()}).Error; err != nil {
-					return err
-				}
-				if err = tx.Where("run_id = ?", v.ID).Delete(&Lease{}).Error; err != nil {
+				if err := releaseLease(tx, v.ID); err != nil {
 					return err
 				}
 				return tx.Model(&planning.Draft{}).Where("user_id = ? AND id = ?", user, v.PlanID).Update("status", "completed").Error
 			})
+			if e == nil {
+				c.keepInLedger(&v)
+			}
 			return true
 		}
 	}

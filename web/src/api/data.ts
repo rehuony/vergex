@@ -14,9 +14,9 @@ import type {
 } from '@/types'
 import { API_BASE, httpClient } from './helpers'
 
-export type AICostPeriod = 'today' | 'week' | 'month' | 'all'
+export type AgentCostPeriod = 'today' | 'week' | 'month' | 'all'
 
-export interface AICostTotals {
+export interface AgentCostTotals {
   total: number
   count: number
   unpriced_count: number
@@ -24,8 +24,8 @@ export interface AICostTotals {
   completion_tokens: number
 }
 
-export interface AICostSummary extends AICostTotals {
-  by_model: Record<string, AICostTotals>
+export interface AgentCostSummary extends AgentCostTotals {
+  by_model: Record<string, AgentCostTotals>
 }
 
 // The exchange adapters return their own field names (positionAmt, entryPrice,
@@ -249,17 +249,17 @@ export const dataApi = {
     return result.data?.positions ?? []
   },
 
-  async getAICostSummary(
-    period: AICostPeriod = 'today',
+  async getAgentCostSummary(
+    period: AgentCostPeriod = 'today',
     silent?: boolean,
     traderId?: string
-  ): Promise<AICostSummary> {
+  ): Promise<AgentCostSummary> {
     const trader = traderId ? `&trader_id=${traderId}` : ''
-    const result = await httpClient.request<AICostSummary>(
-      `${API_BASE}/ai-costs/summary?period=${period}${trader}`,
+    const result = await httpClient.request<AgentCostSummary>(
+      `${API_BASE}/agent-costs/summary?period=${period}${trader}`,
       { silent }
     )
-    if (!result.success) throw new Error('Failed to fetch AI costs')
+    if (!result.success) throw new Error('Failed to fetch agent costs')
     return result.data!
   },
 }

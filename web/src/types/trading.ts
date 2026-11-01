@@ -1,7 +1,7 @@
 export interface SystemStatus {
   trader_id: string
   trader_name: string
-  ai_model: string
+  agent_model: string
   is_running: boolean
   start_time: string
   runtime_minutes: number
@@ -10,10 +10,10 @@ export interface SystemStatus {
   scan_interval: string
   stop_until: string
   last_reset_time: string
-  ai_provider: string
-  strategy_type?: 'ai_trading' | 'grid_trading'
+  agent_provider: string
+  strategy_type?: 'agent_trading' | 'grid_trading'
   grid_symbol?: string
-  /** Runtime health: true when AI failed repeatedly and no new positions open. */
+  /** Runtime health: true when the model failed repeatedly and no new positions open. */
   safe_mode?: boolean
   safe_mode_reason?: string
   trading_blocked?: boolean
@@ -56,7 +56,7 @@ export interface DecisionAction {
   price: number
   stop_loss?: number // Stop loss price
   take_profit?: number // Take profit price
-  confidence?: number // AI confidence (0-100)
+  confidence?: number // agent confidence (0-100)
   reasoning?: string // Brief reasoning
   order_id: number
   timestamp: string
@@ -79,10 +79,8 @@ export interface DecisionRecord {
   system_prompt: string
   input_prompt: string
   cot_trace: string
-  decision_json: string
   raw_response?: string
-  account_state: AccountSnapshot
-  positions: any[]
+  account_state: AccountSnapshot | null
   candidate_coins: string[]
   decisions: DecisionAction[]
   execution_log: string[]
@@ -171,7 +169,7 @@ export interface Statistics {
 }
 
 // Full trade-quality metrics from GET /api/statistics/full (store.TraderStats).
-// Derived from CLOSED positions — the same numbers the AI sees each cycle.
+// Derived from CLOSED positions — the same numbers the agent sees each cycle.
 export interface TraderFullStats {
   total_trades: number
   win_trades: number
@@ -187,26 +185,23 @@ export interface TraderFullStats {
   max_drawdown_pct: number
 }
 
-// AI Trading related types
+// Agent trading related types
 export interface TraderInfo {
   trader_id: string
   trader_name: string
-  ai_model: string
+  agent_model: string
   exchange_id?: string
   is_running?: boolean
   startup_warning?: string
   strategy_id?: string
   strategy_name?: string
-  custom_prompt?: string
-  use_oi_top?: boolean
-  system_prompt_template?: string
 }
 
 // Trader Configuration Data for View Modal
 export interface TraderConfigData {
   trader_id?: string
   trader_name: string
-  ai_model: string
+  agent_model: string
   exchange_id: string
   strategy_id?: string // Strategy ID
   strategy_name?: string // Strategy name
@@ -214,14 +209,6 @@ export interface TraderConfigData {
   scan_interval_minutes: number
   initial_balance: number
   is_running: boolean
-  // Legacy fields below (kept for backward compatibility)
-  btc_eth_leverage?: number
-  altcoin_leverage?: number
-  trading_symbols?: string
-  custom_prompt?: string
-  override_base_prompt?: boolean
-  system_prompt_template?: string
-  use_oi_top?: boolean
 }
 
 // Position History Types
@@ -235,11 +222,9 @@ export interface HistoricalPosition {
   quantity: number
   entry_quantity: number
   entry_price: number
-  entry_order_id: string
   /** Epoch milliseconds. */
   entry_time: number
   exit_price: number
-  exit_order_id: string
   /** Epoch milliseconds. */
   exit_time: number
   realized_pnl: number
@@ -247,8 +232,7 @@ export interface HistoricalPosition {
   leverage: number
   status: string
   close_reason: string
-  created_at: string
-  updated_at: string
+  updated_at: number
 }
 
 // Matches Go TraderStats struct exactly

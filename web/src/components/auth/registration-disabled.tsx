@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { Button } from '@/components/ui/button'
 
 export function RegistrationDisabled() {

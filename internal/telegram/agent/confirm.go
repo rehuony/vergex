@@ -12,7 +12,7 @@ const pendingTTL = 5 * time.Minute
 
 // pendingAction is a high-risk skill step (delete, start, stop, close, key
 // risk changes) held back until the user explicitly confirms. Confirmation is
-// decided here in Go from the user's next message, never by the LLM, so prompt
+// decided here in Go from the user's next message, never by the model, so prompt
 // injection cannot approve an action on the user's behalf.
 type pendingAction struct {
 	summary string
@@ -46,7 +46,7 @@ func (a *Agent) takePending() *pendingAction {
 }
 
 // hold registers a high-risk action and returns the tool result that tells the
-// LLM to ask the user for confirmation.
+// model to ask the user for confirmation.
 func (a *Agent) hold(summary string, run func() (string, error)) map[string]any {
 	a.pending = &pendingAction{summary: summary, run: run, expires: time.Now().Add(pendingTTL)}
 	return map[string]any{

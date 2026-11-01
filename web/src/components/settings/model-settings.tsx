@@ -1,8 +1,8 @@
 import { useId, useState, type FormEvent } from 'react'
 import { Brain, ExternalLink, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import type { AIModel, ModelTest, TraderInfo } from '@/types'
-import { t, type Language } from '@/i18n/translations'
+import type { AgentModel, ModelTest, TraderInfo } from '@/types'
+import { t, type Language } from '@/i18n'
 import { api } from '@/api'
 import { cn } from '@/utils/cn'
 import { confirmToast } from '@/components/common/notify'
@@ -14,7 +14,7 @@ import {
 } from '@/hooks/use-connections'
 import { dialogInputClass } from '@/components/common/dialog'
 import { getModelIcon } from '@/components/common/model-icons'
-import { AI_PROVIDER_CONFIG } from '@/constants/model-providers'
+import { AGENT_PROVIDER_CONFIG } from '@/constants/model-providers'
 import { Button } from '@/components/ui/button'
 import { AppSelect } from '@/components/ui/select'
 import {
@@ -29,15 +29,15 @@ import {
 
 const inputClass = cn(dialogInputClass, 'h-9')
 
-const modelIcon = (model: AIModel) =>
+const modelIcon = (model: AgentModel) =>
   getModelIcon(model.provider || model.id, { width: 20, height: 20 }) || (
     <Brain className="size-5" />
   )
 
-const defaultModel = (model: AIModel) =>
-  AI_PROVIDER_CONFIG[model.provider]?.defaultModel || model.provider
+const defaultModel = (model: AgentModel) =>
+  AGENT_PROVIDER_CONFIG[model.provider]?.defaultModel || model.provider
 
-/** The AI models Frontier, traders and Telegram call, with their keys. */
+/** The models Frontier, traders and Telegram call, with their keys. */
 export function ModelSettings({ language }: { language: Language }) {
   // null shows the list, '' a new connection, an id that connection.
   const [editing, setEditing] = useState<string | null>(null)
@@ -128,8 +128,8 @@ function ModelForm({
   language,
   onDone,
 }: {
-  existing?: AIModel
-  choices: AIModel[]
+  existing?: AgentModel
+  choices: AgentModel[]
   language: Language
   onDone: () => void
 }) {
@@ -147,7 +147,7 @@ function ModelForm({
   const [test, setTest] = useState<ModelTest | 'running' | null>(null)
   const keySaved = Boolean(existing?.has_api_key)
   const ready = Boolean(model) && (apiKey.trim() !== '' || keySaved)
-  const keyLink = model && AI_PROVIDER_CONFIG[model.provider]?.apiUrl
+  const keyLink = model && AGENT_PROVIDER_CONFIG[model.provider]?.apiUrl
 
   const write = async (
     fields: {
@@ -186,7 +186,7 @@ function ModelForm({
     try {
       setTest(
         await api.testModelConfig({
-          model_id: model.id,
+          agent_model_id: model.id,
           api_key: apiKey.trim(),
           custom_api_url: baseUrl.trim(),
           custom_model_name: modelName.trim(),
@@ -234,7 +234,7 @@ function ModelForm({
         custom_api_url: baseUrl.trim(),
         custom_model_name: modelName.trim(),
       },
-      'aiTradersToast.modelConfigUpdated',
+      'agentTradersToast.modelConfigUpdated',
       'saveConfigFailed'
     )
   }
@@ -244,7 +244,7 @@ function ModelForm({
   const remove = async () => {
     if (!existing) return
     const users = (traders ?? []).filter(
-      (tr: TraderInfo) => tr.ai_model === existing.id
+      (tr: TraderInfo) => tr.agent_model === existing.id
     )
     if (users.length > 0) {
       setMessage(
@@ -267,7 +267,7 @@ function ModelForm({
         custom_api_url: '',
         custom_model_name: '',
       },
-      'aiTradersToast.configUpdated',
+      'agentTradersToast.configUpdated',
       'deleteConfigFailed'
     )
   }

@@ -3,10 +3,9 @@ package api
 import (
 	"net/http"
 	"strconv"
-
 	"vergex/internal/logger"
-	"vergex/internal/market"
-	"vergex/internal/trader/types"
+	"vergex/internal/market/instrument"
+	"vergex/internal/trading"
 
 	"github.com/gin-gonic/gin"
 )
@@ -39,12 +38,11 @@ func (s *Server) handleTraderList(c *gin.Context) {
 			}
 		}
 
-		// Return complete AIModelID (e.g. "admin_deepseek"), don't truncate
-		// Frontend needs complete ID to verify model exists (consistent with handleGetTraderConfig)
+		// The frontend needs the model's ID to verify it exists (consistent with handleGetTraderConfig)
 		result = append(result, map[string]interface{}{
 			"trader_id":       trader.ID,
 			"trader_name":     trader.Name,
-			"ai_model":        trader.AIModelID, // Use complete ID
+			"agent_model":     trader.AgentModelID, // Use complete ID
 			"exchange_id":     trader.ExchangeID,
 			"is_running":      isRunning,
 			"initial_balance": trader.InitialBalance,
@@ -83,23 +81,17 @@ func (s *Server) handleGetTraderConfig(c *gin.Context) {
 	}
 
 	// Return complete model ID without conversion, consistent with frontend model list
-	aiModelID := traderConfig.AIModelID
+	agentModelID := traderConfig.AgentModelID
 
 	result := map[string]interface{}{
 		"trader_id":             traderConfig.ID,
 		"trader_name":           traderConfig.Name,
-		"ai_model":              aiModelID,
+		"agent_model":           agentModelID,
 		"exchange_id":           traderConfig.ExchangeID,
 		"strategy_id":           traderConfig.StrategyID,
 		"initial_balance":       traderConfig.InitialBalance,
 		"scan_interval_minutes": traderConfig.ScanIntervalMinutes,
-		"btc_eth_leverage":      traderConfig.BTCETHLeverage,
-		"altcoin_leverage":      traderConfig.AltcoinLeverage,
-		"trading_symbols":       traderConfig.TradingSymbols,
-		"custom_prompt":         traderConfig.CustomPrompt,
-		"override_base_prompt":  traderConfig.OverrideBasePrompt,
-		"is_cross_margin":       traderConfig.IsCrossMargin,
-		"use_oi_top":            traderConfig.UseOITop,
+		"is_cross_margin":       traderConfig.IsCrossMargin(),
 		"is_running":            isRunning,
 	}
 
@@ -202,15 +194,10 @@ func (s *Server) handlePositionHistory(c *gin.Context) {
 
 	// Refresh from the exchange when the trader is loaded; the closed positions
 	// already in the database are returned either way.
-	if at, loadErr := s.traderManager.GetTrader(trader.ID); loadErr == nil {
+	if _, loadErr := s.traderManager.GetTrader(trader.ID); loadErr == nil {
 		userID := c.GetString("user_id")
 		if fullCfg, cfgErr := s.store.Trader().GetFullConfig(userID, trader.ID); cfgErr == nil && fullCfg.Exchange != nil {
-			if syncErr := s.syncOrdersFromExchange(
-				at.GetUnderlyingTrader(),
-				at.GetID(),
-				fullCfg.Exchange.ID,
-				fullCfg.Exchange.ExchangeType,
-			); syncErr != nil {
+			if syncErr := s.syncAccount(fullCfg.Exchange.ID); syncErr != nil {
 				logger.Infof("⚠️ Position history refresh sync skipped: %v", syncErr)
 			}
 		}
@@ -258,7 +245,7 @@ func (s *Server) handleTrades(c *gin.Context) {
 
 	// Normalize symbol (add USDT suffix if not present)
 	if symbol != "" {
-		symbol = market.Normalize(symbol)
+		symbol = instrument.Normalize(symbol)
 	}
 
 	allTrades, err := s.store.Position().GetRecentTrades(trader.ID, limit)
@@ -301,7 +288,7 @@ func (s *Server) handleOrders(c *gin.Context) {
 
 	// Normalize symbol (add USDT suffix if not present)
 	if symbol != "" {
-		symbol = market.Normalize(symbol)
+		symbol = instrument.Normalize(symbol)
 	}
 
 	// Get orders with filters applied at database level
@@ -355,7 +342,7 @@ func (s *Server) handleOpenOrders(c *gin.Context) {
 	}
 
 	// Normalize symbol
-	symbol = market.Normalize(symbol)
+	symbol = instrument.Normalize(symbol)
 
 	// Get open orders from exchange
 	openOrders, err := trader.GetOpenOrders(symbol)
@@ -365,7 +352,7 @@ func (s *Server) handleOpenOrders(c *gin.Context) {
 	}
 
 	if openOrders == nil {
-		openOrders = make([]types.OpenOrder, 0)
+		openOrders = make([]trading.OpenOrder, 0)
 	}
 	c.JSON(http.StatusOK, openOrders)
 }

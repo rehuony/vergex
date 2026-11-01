@@ -1,7 +1,7 @@
 import { SettingsLink } from '@/components/settings/settings-link'
 import { AppSelect } from '@/components/ui/select'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import type { Exchange } from '@/types'
 import { accountLabel } from '@/utils/planning/frontier-accounts'
 import type { AccountCheck } from '@/utils/planning/frontier-workspace'

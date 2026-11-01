@@ -11,13 +11,14 @@ import (
 	"sync"
 	"time"
 	"vergex/internal/activity"
-	"vergex/internal/auth"
-	"vergex/internal/crypto"
 	"vergex/internal/forecast"
 	"vergex/internal/logger"
-	"vergex/internal/manager"
-	"vergex/internal/marketdata"
+	"vergex/internal/market/feed"
+	"vergex/internal/security/auth"
+	"vergex/internal/security/crypto"
 	"vergex/internal/store"
+	"vergex/internal/trader/manager"
+	"vergex/internal/trading/accountsync"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -38,7 +39,8 @@ type Server struct {
 	httpServer                *http.Server
 	port                      int
 	telegramReloadCh          chan<- struct{} // signal Telegram bot to reload
-	marketData                *marketdata.Service
+	marketData                *feed.Service
+	accountSync               *accountsync.Service
 	forecast                  *forecast.Engine
 	activity                  *activity.Feed
 	authLimiter               *ipRateLimiter // per-IP throttle for login/register
@@ -154,7 +156,7 @@ func (s *Server) setupRoutes() {
 		// Admin login (used in admin mode, public)
 
 		// System supported models and exchanges (no authentication required)
-		s.route(api, "GET", "/supported-models", "List supported AI model providers", s.handleGetSupportedModels)
+		s.route(api, "GET", "/supported-models", "List supported model providers", s.handleGetSupportedModels)
 		s.route(api, "GET", "/supported-exchanges", "List supported exchange types", s.handleGetSupportedExchanges)
 
 		// System config (no authentication required, for frontend to determine admin mode/registration status)
@@ -211,11 +213,11 @@ func (s *Server) setupRoutes() {
 			// Server IP query (requires authentication, for whitelist configuration)
 			s.route(protected, "GET", "/server-ip", "Get server public IP (for exchange whitelist)", s.handleGetServerIP)
 
-			// AI trader management
+			// trader management
 			s.routeWithSchema(protected, "GET", "/overview", "Read-only overview of accounts, traders, services and positions",
 				`Returns accounts, models and their hosts, traders, active Frontier plans, services, what market data follows, the forecast strategy in use, whether Telegram is bound, positions (normalized), realized P/L today (UTC) and what needs attention. Cached for 15 seconds, because it reads from the exchanges.`,
 				s.handleOverview)
-			s.routeWithSchema(protected, "GET", "/activity/stream", "Stream of AI calls, orders, money and market reads",
+			s.routeWithSchema(protected, "GET", "/activity/stream", "Stream of model calls, orders, money and market reads",
 				`Server-sent events. The first message has type "snapshot" with the recent events; then "events" with new ones, and "totals" every 20 seconds. Each carries {"seq","at","events":[...],"totals":{"<from>><to>":{"h1":{...},"h24":{...}}}}. Reads the database only.`,
 				s.handleActivityStream)
 			s.routeWithSchema(protected, "GET", "/my-traders/metrics", "Stored equity and trade totals of each trader",
@@ -228,36 +230,33 @@ NOTE: The id field is "trader_id" (NOT "id"). Always read trader_id from this en
 			s.routeWithSchema(protected, "GET", "/traders/:id/config", "Get full trader configuration",
 				`:id = trader_id from GET /api/my-traders`,
 				s.handleGetTraderConfig)
-			s.routeWithSchema(protected, "POST", "/traders", "Create a new AI trader",
-				`Body: {"name":"<string, required>","ai_model_id":"<EXACT id field from GET /api/models — e.g. 'abc123_deepseek', NOT the provider name 'deepseek'>","exchange_id":"<EXACT id field from GET /api/exchanges — e.g. '05785d3b-841e-...', NOT the type name>","strategy_id":"<EXACT id field from GET /api/strategies>","scan_interval_minutes":<int, default 15, minimum 3>}
-IMPORTANT: ai_model_id and exchange_id must be the full "id" value from the Account State, not the provider/type name.`,
+			s.routeWithSchema(protected, "POST", "/traders", "Create a new trader",
+				`Body: {"name":"<string, required>","agent_model_id":"<EXACT id field from GET /api/models — e.g. 'abc123_deepseek', NOT the provider name 'deepseek'>","exchange_id":"<EXACT id field from GET /api/exchanges — e.g. '05785d3b-841e-...', NOT the type name>","strategy_id":"<EXACT id field from GET /api/strategies>","scan_interval_minutes":<int, default 15, minimum 3>}
+IMPORTANT: agent_model_id and exchange_id must be the full "id" value from the Account State, not the provider/type name.`,
 				s.handleCreateTrader)
 			s.routeWithSchema(protected, "PUT", "/traders/:id", "Update trader configuration",
 				`:id = trader_id from GET /api/my-traders
-Body: {"name":"<string>","ai_model_id":"<EXACT id from GET /api/models>","exchange_id":"<EXACT id from GET /api/exchanges>","strategy_id":"<EXACT id from GET /api/strategies>","scan_interval_minutes":<int, min 3>,"is_cross_margin":<bool>}
+Body: {"name":"<string>","agent_model_id":"<EXACT id from GET /api/models>","exchange_id":"<EXACT id from GET /api/exchanges>","strategy_id":"<EXACT id from GET /api/strategies>","scan_interval_minutes":<int, min 3>,"is_cross_margin":<bool>}
 Only include fields you want to change.`,
 				s.handleUpdateTrader)
 			s.routeWithSchema(protected, "DELETE", "/traders/:id", "Delete trader",
 				`:id = trader_id from GET /api/my-traders. Stops and permanently removes the trader and all its data.`,
 				s.handleDeleteTrader)
 			s.routeWithSchema(protected, "POST", "/traders/:id/start", "Start trader — begins live trading",
-				`:id = trader_id from GET /api/my-traders. No request body needed. The trader must have a valid exchange and AI model configured.
+				`:id = trader_id from GET /api/my-traders. No request body needed. The trader must have a valid exchange and model configured.
 Runs launch preflight first and returns 400 with {"error_key":"trader.start.preflight_failed","preflight":{...}} when checks fail. Append ?force=true to skip balance gates.`,
 				s.handleStartTrader)
 			s.routeWithSchema(protected, "GET", "/traders/:id/preflight", "Run launch readiness checks for a trader",
 				`:id = trader_id from GET /api/my-traders.
-Returns: {"ready":<bool>,"checks":[{"id":"ai_model|strategy|exchange_config|exchange_account|exchange_funds","status":"ok|failed|warning|skipped","code":"<string>","message":"<string>","required":<number>,"actual":<number>,"asset":"<string>","address":"<string>"}],"min_trading_usdc":<number>}`,
+Returns: {"ready":<bool>,"checks":[{"id":"agent_model|strategy|exchange_config|exchange_account|exchange_funds","status":"ok|failed|warning|skipped","code":"<string>","message":"<string>","required":<number>,"actual":<number>,"asset":"<string>","address":"<string>"}],"min_trading_usdc":<number>}`,
 				s.handleTraderPreflight)
 			s.routeWithSchema(protected, "POST", "/launch/preflight", "Run launch readiness checks before creating a trader",
-				`Body: {"ai_model_id":"<EXACT id from GET /api/models>","exchange_id":"<EXACT id from GET /api/exchanges>","strategy_id":"<optional, EXACT id from GET /api/strategies>"}
+				`Body: {"agent_model_id":"<EXACT id from GET /api/models>","exchange_id":"<EXACT id from GET /api/exchanges>","strategy_id":"<optional, EXACT id from GET /api/strategies>"}
 Returns the same shape as GET /api/traders/:id/preflight. Use this before POST /api/traders to surface every missing prerequisite at once.`,
 				s.handleLaunchPreflight)
 			s.routeWithSchema(protected, "POST", "/traders/:id/stop", "Stop trader — halts live trading",
 				`:id = trader_id from GET /api/my-traders. No request body needed. Gracefully stops the trading loop.`,
 				s.handleStopTrader)
-			s.routeWithSchema(protected, "PUT", "/traders/:id/prompt", "Override the trader's AI system prompt",
-				`Body: {"prompt":"<string — the full custom prompt text>"}`,
-				s.handleUpdateTraderPrompt)
 			s.routeWithSchema(protected, "POST", "/traders/:id/sync-balance", "Sync account balance from exchange",
 				`:id = trader_id from GET /api/my-traders. No request body needed. Refreshes initial_balance from the exchange.`,
 				s.handleSyncBalance)
@@ -269,22 +268,22 @@ Body: {"symbol":"<string, e.g. BTCUSDT — must match an open position symbol fr
 				`:id = trader_id from GET /api/my-traders.`,
 				s.handleGetGridRiskInfo)
 
-			// AI cost tracking
-			s.route(protected, "GET", "/ai-costs", "Get AI call costs for a trader (?trader_id=xxx&period=today)", s.handleGetAICosts)
-			s.route(protected, "GET", "/ai-costs/summary", "Get AI cost summary (?period=today, optional &trader_id=xxx)", s.handleGetAICostsSummary)
+			// Agent cost tracking
+			s.route(protected, "GET", "/agent-costs", "Get model call costs for a trader (?trader_id=xxx&period=today)", s.handleGetAgentCosts)
+			s.route(protected, "GET", "/agent-costs/summary", "Get agent cost summary (?period=today, optional &trader_id=xxx)", s.handleGetAgentCostsSummary)
 
-			// AI model configuration
-			s.routeWithSchema(protected, "GET", "/models", "List AI model configs",
-				`Returns: [{"id":"<EXACT id — use this as ai_model_id when creating/updating a trader>","name":"<display name>","provider":"<short provider name — NOT a valid id>","enabled":<bool>}]
-CRITICAL: The "id" field (e.g. "abc123_deepseek") is what you must use for ai_model_id. The "provider" field ("deepseek") is NOT valid as an id.`,
+			// model configuration
+			s.routeWithSchema(protected, "GET", "/models", "List model configs",
+				`Returns: [{"id":"<EXACT id — use this as agent_model_id when creating/updating a trader>","name":"<display name>","provider":"<short provider name — NOT a valid id>","enabled":<bool>}]
+CRITICAL: The "id" field (a UUID) is what you must use for agent_model_id. The "provider" field ("deepseek") is NOT valid as an id.`,
 				s.handleGetModelConfigs)
-			s.routeWithSchema(protected, "PUT", "/models", "Configure an AI model provider",
+			s.routeWithSchema(protected, "PUT", "/models", "Configure a model provider",
 				`Body: {"models":{"<model_id>":{"enabled":<bool>,"api_key":"<string>","custom_api_url":"<string, leave empty to use provider default>","custom_model_name":"<string, leave empty to use provider default>"}}}
 model_id values: "openai","deepseek","qwen","kimi","grok","gemini","claude"
 Defaults when custom fields empty: openai→api.openai.com/v1, deepseek→api.deepseek.com, qwen→dashscope.aliyuncs.com/compatible-mode/v1, kimi→api.moonshot.ai/v1, grok→api.x.ai/v1, gemini→generativelanguage.googleapis.com/v1beta/openai, claude→api.anthropic.com/v1`,
 				s.handleUpdateModelConfigs)
-			s.routeWithSchema(protected, "POST", "/models/test", "Check that an AI model answers with the given settings",
-				`Body: {"model_id":"<id from GET /api/models, or a provider id for a new model>","api_key":"<string, blank uses the saved key>","custom_api_url":"<string>","custom_model_name":"<string>"}
+			s.routeWithSchema(protected, "POST", "/models/test", "Check that a model answers with the given settings",
+				`Body: {"agent_model_id":"<id from GET /api/models, or a provider id for a new model>","api_key":"<string, blank uses the saved key>","custom_api_url":"<string>","custom_model_name":"<string>"}
 Returns: {"ok":<bool>,"model":"<model name>","latency_ms":<number, when ok>,"error":"<provider message, when not ok>"}. Sends one short prompt; nothing is saved.`,
 				s.handleTestModelConfig)
 
@@ -294,7 +293,7 @@ Returns: {"ok":<bool>,"model":"<model name>","latency_ms":<number, when ok>,"err
 CRITICAL: Always use the "id" field for exchange_id. Do not use "exchange_type" as an id.`,
 				s.handleGetExchangeConfigs)
 			s.routeWithSchema(protected, "GET", "/exchanges/account-state", "Get connection and balance state for each exchange account",
-				`Returns: {"states":{"<exchange_id>":{"status":"ok|disabled|missing_credentials|invalid_credentials|permission_denied|unavailable","display_balance":"<string>","total_equity":<number>,"available_balance":<number>,"asset":"USDT","checked_at":"<RFC3339>","error_code":"<string>","error_message":"<string>"}}}
+				`Returns: {"states":{"<exchange_id>":{"status":"ok|missing_credentials|invalid_credentials|permission_denied|unavailable","display_balance":"<string>","total_equity":<number>,"available_balance":<number>,"asset":"USDT","checked_at":"<RFC3339>","error_code":"<string>","error_message":"<string>"}}}
 Use this endpoint to show balance and health in the exchange list without depending on traders.`,
 				s.handleGetExchangeAccountStates)
 			s.routeWithSchema(protected, "POST", "/exchanges/:id/verify", "Check one exchange account now",
@@ -317,14 +316,14 @@ Use this to enable/disable an exchange or update API credentials. The "id" field
 
 			// Telegram bot configuration
 			s.routeWithSchema(protected, "GET", "/telegram", "Get Telegram bot configuration",
-				`Returns: {"bot_token":"<string>","model_id":"<EXACT id of configured AI model>","chat_id":"<bound Telegram chat id, empty if not bound>"}`,
+				`Returns: {"bot_token":"<string>","agent_model_id":"<EXACT id of configured model>","chat_id":"<bound Telegram chat id, empty if not bound>"}`,
 				s.handleGetTelegramConfig)
-			s.routeWithSchema(protected, "POST", "/telegram", "Set Telegram bot token and AI model",
-				`Body: {"bot_token":"<string — Telegram BotFather token>","model_id":"<EXACT id from GET /api/models>"}
+			s.routeWithSchema(protected, "POST", "/telegram", "Set Telegram bot token and model",
+				`Body: {"bot_token":"<string — Telegram BotFather token>","agent_model_id":"<EXACT id from GET /api/models>"}
 Both fields are required. After saving, the user must send /start in Telegram to bind their account.`,
 				s.handleUpdateTelegramConfig)
-			s.routeWithSchema(protected, "POST", "/telegram/model", "Update Telegram bot AI model only",
-				`Body: {"model_id":"<EXACT id from GET /api/models>"}`,
+			s.routeWithSchema(protected, "POST", "/telegram/model", "Update Telegram bot model only",
+				`Body: {"agent_model_id":"<EXACT id from GET /api/models>"}`,
 				s.handleUpdateTelegramModel)
 			// Local market data
 			s.route(protected, "GET", "/market-data/status", "Get market data collection status", s.handleMarketDataStatus)
@@ -363,8 +362,8 @@ CRITICAL: Always use the "id" field for strategy_id.`,
 			s.routeWithSchema(protected, "GET", "/strategies/default-config", "Get default strategy config with all fields and sensible values — use as reference for building configs",
 				`No parameters needed. Returns a complete StrategyConfig object with all fields populated with recommended defaults. Read this before building a custom config.`,
 				s.handleGetDefaultStrategyConfig)
-			s.route(protected, "POST", "/strategies/preview-prompt", "Preview the AI prompt that will be generated from a config", s.handlePreviewPrompt)
-			s.route(protected, "POST", "/strategies/test-run", "Test-run strategy AI analysis", s.handleStrategyTestRun)
+			s.route(protected, "POST", "/strategies/preview-prompt", "Preview the agent prompt that will be generated from a config", s.handlePreviewPrompt)
+			s.route(protected, "POST", "/strategies/test-run", "Test-run strategy agent analysis", s.handleStrategyTestRun)
 			s.route(protected, "GET", "/strategies/:id", "Get strategy by ID", s.handleGetStrategy)
 			s.routeWithSchema(protected, "POST", "/strategies", "Create a new trading strategy",
 				`Body: {"name":"<string, required>","description":"<string, optional>","lang":"zh|en","config":<StrategyConfig object, OPTIONAL — if omitted the system applies complete working defaults automatically (static BTC/ETH/SOL coin pool, standard indicators, standard risk control)>}
@@ -405,8 +404,8 @@ StrategyConfig fields:
   risk_control.max_margin_usage: 0.5-0.95 (default 0.9 = use up to 90% margin)
   risk_control.min_position_size: minimum USDT per trade (default 12)
   risk_control.min_risk_reward_ratio: minimum profit/loss ratio required (default 3 = 3:1)
-  risk_control.min_confidence: minimum AI confidence to open position (default 75, range 60-90)
-  prompt_sections.role_definition: describe the AI's trading persona and goal
+  risk_control.min_confidence: minimum agent confidence to open position (default 75, range 60-90)
+  prompt_sections.role_definition: describe the agent's trading persona and goal
   prompt_sections.trading_frequency: guidelines on how often to trade
   prompt_sections.entry_standards: conditions that must align before entering a position
   prompt_sections.decision_process: step-by-step decision-making framework`,
@@ -457,13 +456,13 @@ Returns: [{"symbol":"<string>","side":"long|short","size":<float>,"entry_price":
 			s.routeWithSchema(protected, "GET", "/open-orders", "Open orders currently on exchange",
 				`Query: ?trader_id=<EXACT trader_id from GET /api/my-traders>`,
 				s.handleOpenOrders)
-			s.routeWithSchema(protected, "GET", "/decisions", "AI trading decisions (decision records)",
+			s.routeWithSchema(protected, "GET", "/decisions", "Agent trading decisions (decision records)",
 				`Query: ?trader_id=<EXACT trader_id from GET /api/my-traders>&limit=<int, default 20>
 Returns: [{"id":"<string>","symbol":"<string>","action":"open_long|open_short|close_long|close_short|hold","confidence":<int>,"reasoning":"<string>","created_at":"<timestamp>"}]`,
 				s.handleDecisions)
-			s.routeWithSchema(protected, "GET", "/decisions/latest", "Latest AI decisions (most recent scan results)",
+			s.routeWithSchema(protected, "GET", "/decisions/latest", "Latest agent decisions (most recent scan results)",
 				`Query: ?trader_id=<EXACT trader_id from GET /api/my-traders>
-Returns the most recent AI decision for each symbol analyzed in the last scan cycle.`,
+Returns the most recent agent decision for each symbol analyzed in the last scan cycle.`,
 				s.handleLatestDecisions)
 			s.routeWithSchema(protected, "GET", "/decisions/summary", "Decisions without prompts and raw responses, newest first",
 				`Query: ?trader_id=<EXACT trader_id from GET /api/my-traders>&limit=<int, default 50, max 100>&before=<decision id, for older pages>`,
@@ -500,9 +499,7 @@ func (s *Server) handleHealth(c *gin.Context) {
 func (s *Server) handleGetSystemConfig(c *gin.Context) {
 	userCount, _ := s.store.User().Count()
 	c.JSON(http.StatusOK, gin.H{
-		"initialized":      userCount > 0,
-		"btc_eth_leverage": 10,
-		"altcoin_leverage": 5,
+		"initialized": userCount > 0,
 	})
 }
 
@@ -665,7 +662,7 @@ func (s *Server) getTraderFromQuery(c *gin.Context) (*manager.TraderManager, str
 // (TraderManager holds every account's traders): returning an entry from it for
 // a trader the caller does not own is a cross-tenant data leak (IDOR) — a
 // freshly-registered user with no traders of their own could otherwise pass any
-// other account's trader_id and read its balance, positions and AI decisions.
+// other account's trader_id and read its balance, positions and agent decisions.
 func (s *Server) ownedTrader(c *gin.Context) (*store.Trader, error) {
 	userID := c.GetString("user_id")
 	traderID := c.Query("trader_id")
@@ -758,12 +755,12 @@ func (s *Server) Start() error {
 	logger.Infof("🌐 API server starting at http://localhost%s", addr)
 	logger.Infof("📊 API Documentation:")
 	logger.Infof("  • GET  /api/health           - Health check")
-	logger.Infof("  • POST /api/traders          - Create new AI trader")
-	logger.Infof("  • DELETE /api/traders/:id    - Delete AI trader")
-	logger.Infof("  • POST /api/traders/:id/start - Start AI trader")
-	logger.Infof("  • POST /api/traders/:id/stop  - Stop AI trader")
-	logger.Infof("  • GET  /api/models           - Get AI model config")
-	logger.Infof("  • PUT  /api/models           - Update AI model config")
+	logger.Infof("  • POST /api/traders          - Create new trader")
+	logger.Infof("  • DELETE /api/traders/:id    - Delete trader")
+	logger.Infof("  • POST /api/traders/:id/start - Start trader")
+	logger.Infof("  • POST /api/traders/:id/stop  - Stop trader")
+	logger.Infof("  • GET  /api/models           - Get model config")
+	logger.Infof("  • PUT  /api/models           - Update model config")
 	logger.Infof("  • GET  /api/exchanges        - Get exchange config")
 	logger.Infof("  • PUT  /api/exchanges        - Update exchange config")
 	logger.Infof("  • GET  /api/status?trader_id=xxx     - Specified trader's system status")
@@ -772,7 +769,7 @@ func (s *Server) Start() error {
 	logger.Infof("  • GET  /api/decisions?trader_id=xxx  - Specified trader's decision log")
 	logger.Infof("  • GET  /api/decisions/latest?trader_id=xxx - Specified trader's latest decisions")
 	logger.Infof("  • GET  /api/statistics?trader_id=xxx - Specified trader's statistics")
-	logger.Infof("  • GET  /api/performance?trader_id=xxx - Specified trader's AI learning performance analysis")
+	logger.Infof("  • GET  /api/performance?trader_id=xxx - Specified trader's agent learning performance analysis")
 	logger.Info()
 
 	s.httpServer = &http.Server{
@@ -801,7 +798,7 @@ func (s *Server) Shutdown() error {
 
 // SetMarketData attaches local market data; without it those endpoints report
 // that it is unavailable.
-func (s *Server) SetMarketData(service *marketdata.Service) {
+func (s *Server) SetMarketData(service *feed.Service) {
 	s.marketData = service
 }
 
@@ -809,6 +806,11 @@ func (s *Server) SetMarketData(service *marketdata.Service) {
 // that it is unavailable.
 func (s *Server) SetForecast(engine *forecast.Engine) {
 	s.forecast = engine
+}
+
+// SetAccountSync attaches what keeps the trading ledger up to date.
+func (s *Server) SetAccountSync(service *accountsync.Service) {
+	s.accountSync = service
 }
 
 // SetActivity attaches the Dashboard's event feed.

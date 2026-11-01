@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
+	"vergex/internal/agent"
 	"vergex/internal/forecast"
-	"vergex/internal/llm"
 	"vergex/internal/logger"
-	"vergex/internal/marketdata"
+	"vergex/internal/market/feed"
 	"vergex/internal/store"
 )
 
@@ -17,33 +17,26 @@ const (
 	readBatch = 500
 	// timedBatch is larger because each read repeats the rows in overlap.
 	timedBatch = 2000
-	// overlap re-reads rows by their time. Order sync stamps a row with the exchange's
-	// trade time, which can be older than rows already read.
-	overlap = 2 * time.Minute
-	// namesEvery bounds how often names are read, as listing them decrypts keys.
+	// overlap re-reads rows by the time they were written, for a write that was under way
+	// during the last read and finished after it.
+	overlap = 10 * time.Second
+	// namesEvery bounds how often names are read.
 	namesEvery = 30 * time.Second
 	detailMax  = 200
 )
 
-// PlanOrder is a Frontier order as the feed needs it.
-type PlanOrder struct {
-	ClientID string
-	OrderID  string
-	Role     string
-	Symbol   string
-	Quantity string
-	Status   string
-	Error    string
-}
-
-// PlanRun is a Frontier run as the feed needs it.
-type PlanRun struct {
-	ID         string
-	PlanID     string
-	ExchangeID string
-	Symbol     string
-	UpdatedAt  time.Time
-	Orders     []PlanOrder
+// RefusedOrder is a Frontier order refused before it reached the exchange, so the
+// ledger never hears of it.
+type RefusedOrder struct {
+	RunID     string
+	PlanID    string
+	AccountID string
+	ClientID  string
+	Role      string
+	Symbol    string
+	Quantity  string
+	Error     string
+	At        time.Time
 }
 
 // Sources is what the feed reads.
@@ -51,9 +44,9 @@ type Sources struct {
 	Store *store.Store
 	// Forecasts is nil when Forecast is unavailable.
 	Forecasts *forecast.Store
-	// PlanRuns returns the Frontier runs updated at or after a time. It must read
-	// only the database. Nil when Frontier is unavailable.
-	PlanRuns func(since time.Time, limit int) ([]PlanRun, error)
+	// RefusedOrders returns the orders refused at or after a time, oldest first. It must
+	// read only the database. Nil when Frontier is unavailable.
+	RefusedOrders func(since time.Time, limit int) ([]RefusedOrder, error)
 }
 
 type reader struct {
@@ -63,9 +56,9 @@ type reader struct {
 
 	// Where each table was read to. Tables with an append-only ID use it; the others
 	// use a row's update time.
-	charges, cycles, fills, records int64
-	orders, positions               int64
-	plans                           time.Time
+	calls, cycles, fills, records int64
+	orders, positions             int64
+	refused                       time.Time
 
 	namesAt   time.Time
 	traders   map[string]*store.Trader
@@ -81,7 +74,7 @@ func newReader(sources Sources, now func() time.Time) *reader {
 		started:   started,
 		orders:    started.UnixMilli(),
 		positions: started.UnixMilli(),
-		plans:     started,
+		refused:   started,
 	}
 }
 
@@ -92,7 +85,7 @@ func (r *reader) read() ([]Event, bool) {
 	}
 	var events []Event
 	more := false
-	for _, source := range []func() ([]Event, bool, error){r.readCharges, r.readCycles, r.readOrders, r.readFills, r.readPositions, r.readPlans, r.readForecasts} {
+	for _, source := range []func() ([]Event, bool, error){r.readCalls, r.readCycles, r.readOrders, r.readFills, r.readPositions, r.readRefused, r.readForecasts} {
 		rows, full, err := source()
 		if err != nil {
 			logger.Warnf("Activity: %v", err)
@@ -124,12 +117,12 @@ func (r *reader) loadNames(force bool) bool {
 		logger.Warnf("Activity: read traders: %v", err)
 		return r.traders != nil
 	}
-	exchanges, err := r.sources.Store.Exchange().List(user)
+	exchanges, err := r.sources.Store.Exchange().ListNames(user)
 	if err != nil {
 		logger.Warnf("Activity: read exchanges: %v", err)
 		return r.traders != nil
 	}
-	models, err := r.sources.Store.AIModel().List(user)
+	models, err := r.sources.Store.AgentModel().ListEndpoints(user)
 	if err != nil {
 		logger.Warnf("Activity: read models: %v", err)
 		return r.traders != nil
@@ -143,13 +136,13 @@ func (r *reader) loadNames(force bool) bool {
 	for _, exchange := range exchanges {
 		name := exchange.AccountName
 		if name == "" {
-			name = exchange.Name
+			name = exchange.VenueName()
 		}
 		r.exchanges[exchange.ID] = name
 	}
 	r.hosts = make(map[string]string, len(models))
 	for _, model := range models {
-		r.hosts[model.ID] = llm.ProviderHost(model.Provider, model.CustomAPIURL)
+		r.hosts[model.ID] = agent.ProviderHost(model.Provider, model.CustomAPIURL)
 	}
 	return true
 }
@@ -172,6 +165,17 @@ func (r *reader) traderEnd(id string) Endpoint {
 	return end
 }
 
+// sourceEnd is who an order in the ledger belongs to.
+func (r *reader) sourceEnd(source, id string) Endpoint {
+	switch source {
+	case store.SourceTrader:
+		return r.traderEnd(id)
+	case store.SourceFrontier:
+		return Endpoint{Block: BlockFrontier}
+	}
+	return Endpoint{Block: BlockOther, ID: source}
+}
+
 func (r *reader) accountEnd(id string) Endpoint {
 	return Endpoint{Block: BlockAccounts, ID: id, Name: r.exchanges[id]}
 }
@@ -180,57 +184,66 @@ func modelEnd(host string) Endpoint {
 	return Endpoint{Block: BlockModels, ID: host, Name: host}
 }
 
-func (r *reader) owner(id string) Endpoint {
-	switch id {
-	case llm.OwnerFrontier:
+func (r *reader) caller(call store.AgentCall) Endpoint {
+	switch call.Feature {
+	case agent.FeatureFrontier:
 		return Endpoint{Block: BlockFrontier}
-	case llm.OwnerTelegram:
+	case agent.FeatureTelegram:
 		return Endpoint{Block: BlockTelegram}
+	case agent.FeatureTrader:
+		if r.trader(call.SourceID) != nil {
+			return r.traderEnd(call.SourceID)
+		}
+		return Endpoint{Block: BlockOther, ID: call.SourceID}
 	}
-	if r.trader(id) != nil {
-		return r.traderEnd(id)
-	}
-	return Endpoint{Block: BlockOther, ID: id}
+	return Endpoint{Block: BlockOther, ID: call.Feature}
 }
 
-func (r *reader) readCharges() ([]Event, bool, error) {
-	rows, err := r.sources.Store.AICharge().After(r.charges, r.started, readBatch)
+func (r *reader) readCalls() ([]Event, bool, error) {
+	rows, err := r.sources.Store.AgentCall().After(r.calls, r.started, readBatch)
 	if err != nil {
-		return nil, false, fmt.Errorf("read AI calls: %w", err)
+		return nil, false, fmt.Errorf("read model calls: %w", err)
 	}
 	var events []Event
 	for _, row := range rows {
-		r.charges = row.ID
+		r.calls = row.ID
 		host := row.Host
 		if host == "" {
 			host = row.Provider
 		}
 		at := row.CreatedAt.UnixMilli()
 		events = append(events, Event{
-			ID:     fmt.Sprintf("ai:%d", row.ID),
+			ID:     fmt.Sprintf("agent:%d", row.ID),
 			At:     at,
-			Kind:   KindAI,
-			Type:   TypeAICall,
-			From:   r.owner(row.TraderID),
+			Kind:   KindAgent,
+			Type:   TypeAgentCall,
+			From:   r.caller(row),
 			To:     modelEnd(host),
 			Tokens: row.PromptTokens + row.CompletionTokens,
 			Detail: row.Model,
-			Status: StatusOK,
+			Status: callStatus(row),
 		})
 		if !row.Unpriced && row.CostUSD > 0 {
 			events = append(events, Event{
 				ID:     fmt.Sprintf("cost:%d", row.ID),
 				At:     at,
 				Kind:   KindFunds,
-				Type:   TypeAICost,
+				Type:   TypeAgentCost,
 				From:   modelEnd(host),
-				To:     Endpoint{Block: BlockAICost},
+				To:     Endpoint{Block: BlockAgentCost},
 				Amount: row.CostUSD,
 				Status: StatusOK,
 			})
 		}
 	}
 	return events, len(rows) == readBatch, nil
+}
+
+func callStatus(call store.AgentCall) string {
+	if call.Status == store.CallFailed {
+		return StatusFailed
+	}
+	return StatusOK
 }
 
 func (r *reader) readCycles() ([]Event, bool, error) {
@@ -270,7 +283,7 @@ func (r *reader) cycleEvents(row *store.DecisionRecord) []Event {
 	if coins := len(row.CandidateCoins); coins > 0 {
 		events = append(events, Event{
 			ID:       fmt.Sprintf("read:%d", row.ID),
-			At:       decided.UnixMilli() - row.AIRequestDurationMs - 1,
+			At:       decided.UnixMilli() - row.AgentDurationMs - 1,
 			Kind:     KindMarket,
 			Type:     TypeMarketRead,
 			From:     Endpoint{Block: BlockMarket},
@@ -286,12 +299,12 @@ func (r *reader) cycleEvents(row *store.DecisionRecord) []Event {
 	}
 	host := ""
 	if known := r.trader(row.TraderID); known != nil {
-		host = r.hosts[known.AIModelID]
+		host = r.hosts[known.AgentModelID]
 	}
 	return append(events, Event{
 		ID:       fmt.Sprintf("decision:%d", row.ID),
 		At:       decided.UnixMilli(),
-		Kind:     KindAI,
+		Kind:     KindAgent,
 		Type:     TypeDecision,
 		From:     modelEnd(host),
 		To:       trader,
@@ -321,10 +334,10 @@ func (r *reader) readOrders() ([]Event, bool, error) {
 		}
 		events = append(events, Event{
 			ID:       fmt.Sprintf("order:%d:%s", row.ID, row.Status),
-			At:       row.UpdatedAt,
+			At:       orderTime(row),
 			Kind:     KindOrders,
 			Type:     TypeOrder,
-			From:     r.traderEnd(row.TraderID),
+			From:     r.sourceEnd(row.Source, row.TraderID),
 			To:       r.accountEnd(row.ExchangeID),
 			Symbol:   row.Symbol,
 			Action:   action,
@@ -334,6 +347,18 @@ func (r *reader) readOrders() ([]Event, bool, error) {
 		})
 	}
 	return events, len(rows) == timedBatch, nil
+}
+
+// orderTime is when an order got to its status, not when the ledger heard: a sync
+// catching up after an outage writes trades long after they happened.
+func orderTime(order *store.TraderOrder) int64 {
+	switch {
+	case order.FilledAt > 0:
+		return order.FilledAt
+	case order.Status == store.OrderNew:
+		return order.CreatedAt
+	}
+	return order.UpdatedAt
 }
 
 func (r *reader) readFills() ([]Event, bool, error) {
@@ -385,10 +410,6 @@ func (r *reader) readPositions() ([]Event, bool, error) {
 			ID:    row.ExchangeID + ":" + row.Symbol + ":" + side,
 			Name:  row.Symbol + " " + side,
 		}
-		quantity := row.EntryQuantity
-		if quantity == 0 {
-			quantity = row.Quantity
-		}
 		if row.Leverage > 0 && row.EntryPrice > 0 && row.EntryTime > 0 {
 			events = append(events, Event{
 				ID:       fmt.Sprintf("margin:%d", row.ID),
@@ -398,7 +419,7 @@ func (r *reader) readPositions() ([]Event, bool, error) {
 				From:     account,
 				To:       position,
 				Symbol:   row.Symbol,
-				Amount:   quantity * row.EntryPrice / float64(row.Leverage),
+				Amount:   row.EntryQuantity * row.EntryPrice / float64(row.Leverage),
 				Status:   StatusOK,
 				TraderID: row.TraderID,
 			})
@@ -421,47 +442,38 @@ func (r *reader) readPositions() ([]Event, bool, error) {
 	return events, len(rows) == timedBatch, nil
 }
 
-// readPlans reports Frontier orders once they reach the exchange. They have no time
-// of their own, so they take the run's.
-func (r *reader) readPlans() ([]Event, bool, error) {
-	if r.sources.PlanRuns == nil {
+// readRefused reports Frontier orders refused before they reached the exchange. Any
+// other order is in the ledger, and readOrders reports it.
+func (r *reader) readRefused() ([]Event, bool, error) {
+	if r.sources.RefusedOrders == nil {
 		return nil, false, nil
 	}
-	runs, err := r.sources.PlanRuns(r.plans, timedBatch)
+	orders, err := r.sources.RefusedOrders(r.refused, timedBatch)
 	if err != nil {
-		return nil, false, fmt.Errorf("read Frontier runs: %w", err)
+		return nil, false, fmt.Errorf("read refused Frontier orders: %w", err)
 	}
 	var events []Event
-	for _, run := range runs {
-		if run.UpdatedAt.After(r.plans) {
-			r.plans = run.UpdatedAt
+	for _, order := range orders {
+		if order.At.After(r.refused) {
+			r.refused = order.At
 		}
-		for _, order := range run.Orders {
-			if order.OrderID == "" && order.Error == "" {
-				continue
-			}
-			quantity, _ := strconv.ParseFloat(order.Quantity, 64)
-			status := order.Status
-			if order.Error != "" {
-				status = StatusFailed
-			}
-			events = append(events, Event{
-				ID:       "plan:" + run.ID + ":" + order.ClientID + ":" + status,
-				At:       run.UpdatedAt.UnixMilli(),
-				Kind:     KindOrders,
-				Type:     TypePlanOrder,
-				From:     Endpoint{Block: BlockFrontier, ID: run.ID, Name: run.Symbol},
-				To:       r.accountEnd(run.ExchangeID),
-				Symbol:   order.Symbol,
-				Action:   strings.ToLower(order.Role),
-				Quantity: quantity,
-				Status:   status,
-				Detail:   shorten(order.Error),
-				Ref:      run.PlanID,
-			})
-		}
+		quantity, _ := strconv.ParseFloat(order.Quantity, 64)
+		events = append(events, Event{
+			ID:       "plan:" + order.RunID + ":" + order.ClientID + ":" + StatusFailed,
+			At:       order.At.UnixMilli(),
+			Kind:     KindOrders,
+			Type:     TypePlanOrder,
+			From:     Endpoint{Block: BlockFrontier, ID: order.RunID, Name: order.Symbol},
+			To:       r.accountEnd(order.AccountID),
+			Symbol:   order.Symbol,
+			Action:   strings.ToLower(order.Role),
+			Quantity: quantity,
+			Status:   StatusFailed,
+			Detail:   shorten(order.Error),
+			Ref:      order.PlanID,
+		})
 	}
-	return events, len(runs) == timedBatch, nil
+	return events, len(orders) == timedBatch, nil
 }
 
 // readForecasts reports new forecasts per interval rather than per coin, since a
@@ -470,7 +482,7 @@ func (r *reader) readForecasts() ([]Event, bool, error) {
 	if r.sources.Forecasts == nil {
 		return nil, false, nil
 	}
-	rows, err := r.sources.Forecasts.RecordsAfter(r.records, r.started.UnixMilli(), readBatch)
+	rows, err := r.sources.Forecasts.SignalsAfter(r.records, r.started.UnixMilli(), readBatch)
 	if err != nil {
 		return nil, false, fmt.Errorf("read forecasts: %w", err)
 	}
@@ -478,7 +490,7 @@ func (r *reader) readForecasts() ([]Event, bool, error) {
 	var order []string
 	for _, row := range rows {
 		r.records = row.ID
-		at := row.OpenTime + marketdata.IntervalMillis(row.Interval)
+		at := row.OpenTime + feed.IntervalMillis(row.Interval)
 		group := groups[row.Interval]
 		if group == nil {
 			group = &Event{

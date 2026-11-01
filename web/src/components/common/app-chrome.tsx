@@ -10,10 +10,7 @@ import {
 import { useOpenSettings } from '@/components/settings/use-open-settings'
 import { SETTINGS_PARAM, type Page } from '@/constants/route-paths'
 import { useAuth } from '@/contexts/auth-context'
-import {
-  LANGUAGE_CHOICE_ENABLED,
-  useLanguage,
-} from '@/contexts/language-context'
+import { useLanguage } from '@/contexts/language-context'
 import { useTheme } from '@/contexts/theme-context'
 import { useProfile } from '@/hooks/use-profile'
 
@@ -71,7 +68,7 @@ export function AppChrome({
         isLoggedIn={!!user}
         currentPage={currentPage}
         language={language}
-        onLanguageChange={LANGUAGE_CHOICE_ENABLED ? setLanguage : undefined}
+        onLanguageChange={setLanguage}
         themePreference={themePreference}
         onThemeChange={setThemePreference}
         user={

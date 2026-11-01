@@ -1,6 +1,6 @@
 import type { ForecastFactor } from '@/api/forecast'
 import { Panel } from '@/components/common/panel'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 
 // The factors behind a forecast, biggest influence first. Each bar runs from a
 // centre line: left argues for down, right for up.

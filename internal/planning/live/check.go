@@ -2,7 +2,6 @@ package live
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -148,20 +147,22 @@ func (c *Controller) complete(v *View) error {
 			v.Orders[i].Status = "CANCELED"
 		}
 	}
-	v.State, v.Error, v.UpdatedAt = "completed", "", time.Now().UTC()
-	raw, err := json.Marshal(v.Orders)
-	if err != nil {
-		return err
-	}
-	return c.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&Run{}).Where("id = ? AND user_id = ?", v.ID, v.UserID).Updates(map[string]any{"state": v.State, "orders_json": string(raw), "error": "", "updated_at": v.UpdatedAt}).Error; err != nil {
+	v.State, v.Error = "completed", ""
+	err := c.DB.Transaction(func(tx *gorm.DB) error {
+		if err := writeRun(tx, v); err != nil {
 			return err
 		}
-		if err := tx.Where("run_id = ? AND user_id = ?", v.ID, v.UserID).Delete(&Lease{}).Error; err != nil {
+		if err := releaseLease(tx, v.ID); err != nil {
 			return err
 		}
 		return tx.Model(&planning.Draft{}).Where("user_id = ? AND id = ?", v.UserID, v.PlanID).Update("status", "completed").Error
 	})
+	if err != nil {
+		return err
+	}
+	c.keepInLedger(v)
+	v.remember()
+	return nil
 }
 
 // confirmedClosedTrade is shared by background monitoring and manual checks.

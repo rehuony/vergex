@@ -5,7 +5,7 @@ import { cn } from '@/utils/cn'
 export interface SelectOption {
   value: string | number
   label: string
-  /** Language of the label when it differs from the page, e.g. "zh". */
+  /** Language of the label when it differs from the page, e.g. "zh-CN". */
   lang?: string
 }
 

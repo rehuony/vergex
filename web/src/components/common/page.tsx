@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
+import { useLanguage } from '@/contexts/language-context'
+import { t } from '@/i18n'
 
 export interface PageTab {
   to: string
@@ -33,8 +35,9 @@ interface PageProps {
 
 function PageTabs({ tabs }: { tabs: PageTab[] }) {
   const { pathname } = useLocation()
+  const { language } = useLanguage()
   return (
-    <nav className="vergex-page-tabs" aria-label="Sections">
+    <nav className="vergex-page-tabs" aria-label={t('pageSections', language)}>
       {tabs.map((tab) =>
         tab.isActive ? (
           <Link

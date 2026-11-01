@@ -8,7 +8,7 @@ import {
   useSupportedExchanges,
   useSupportedModels,
 } from '@/hooks/use-connections'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { ROUTES } from '@/constants/route-paths'
 import { AuthSurface } from '@/components/auth/auth-surface'
@@ -255,7 +255,7 @@ export function LoginPage() {
                     aria-hidden="true"
                     className="size-1.5 rounded-full bg-vergex-brand"
                   />
-                  Local workspace
+                  {t('localWorkspace', language)}
                 </span>
                 <Button
                   variant="link"

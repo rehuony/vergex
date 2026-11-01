@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { t, type Language } from '@/i18n/translations'
+import { t, type Language } from '@/i18n'
 import {
   Dialog,
   DialogField,
@@ -22,7 +22,7 @@ export function NewStrategyDialog({
 }) {
   const label = (key: string) => t(`strategy.${key}`, language)
   const [name, setName] = useState(label('newStrategy'))
-  const [type, setType] = useState<StrategyType>('ai_trading')
+  const [type, setType] = useState<StrategyType>('agent_trading')
   const [creating, setCreating] = useState(false)
 
   const create = async () => {
@@ -70,7 +70,7 @@ export function NewStrategyDialog({
             id="new-strategy-type"
             value={type}
             options={[
-              { value: 'ai_trading', label: label('typeAi') },
+              { value: 'agent_trading', label: label('typeAgent') },
               { value: 'grid_trading', label: label('typeGrid') },
             ]}
             onChange={(next) => setType(next as StrategyType)}

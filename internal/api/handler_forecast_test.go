@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"vergex/internal/forecast"
-	"vergex/internal/marketdata"
-	"vergex/internal/testdb"
+	"vergex/internal/market/feed"
+	"vergex/internal/store/database/testdb"
 
 	"github.com/gin-gonic/gin"
 )
@@ -16,15 +16,9 @@ import (
 func forecastServer(t *testing.T) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
-	marketStore, err := marketdata.NewStore(testdb.Open(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	store, err := forecast.NewStore(marketStore.DB())
-	if err != nil {
-		t.Fatal(err)
-	}
-	service := marketdata.NewService(marketStore)
+	marketStore := feed.NewStore(testdb.Open(t))
+	store := forecast.NewStore(marketStore.DB())
+	service := feed.NewService(marketStore)
 	s := &Server{marketData: service, forecast: forecast.NewEngine(store, service, nil)}
 	r := gin.New()
 	r.GET("/versions", s.handleForecastStrategies)
@@ -57,7 +51,7 @@ func TestForecastEndpointsAreUnavailableWithoutTheEngine(t *testing.T) {
 
 func TestForecastVersionsAreValidated(t *testing.T) {
 	r := forecastServer(t)
-	if w := send(r, http.MethodGet, "/versions", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"active_strategy_id":1`) {
+	if w := send(r, http.MethodGet, "/versions", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"active_strategy_id":"`) {
 		t.Fatalf("versions: %d %s", w.Code, w.Body.String())
 	}
 	bad := `{"config":{"scorer":"weighted","factors":{},"adx_threshold":25,"slope":3,"direction_threshold":0.05,"horizons":{"15m":4,"1h":4,"4h":4,"1d":4}}}`

@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 	"vergex/internal/logger"
+	"vergex/internal/market/instrument"
 )
 
 // FundingRateCache is the funding rate cache structure
@@ -35,7 +36,7 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 	var klines3m, klines4h []Kline
 	var err error
 	// Normalize symbol
-	symbol = Normalize(symbol)
+	symbol = instrument.Normalize(symbol)
 
 	// Get 3-minute K-line data with exchange-specific data
 	klines3m, err = getKlines(symbol, "3m", exchange, 100)
@@ -124,7 +125,7 @@ func GetWithExchange(symbol, exchange string) (*Data, error) {
 // primaryTimeframe: primary timeframe (used for calculating current indicators), defaults to timeframes[0]
 // count: number of K-lines for each timeframe
 func GetWithTimeframes(symbol string, timeframes []string, primaryTimeframe string, count int) (*Data, error) {
-	symbol = Normalize(symbol)
+	symbol = instrument.Normalize(symbol)
 
 	if len(timeframes) == 0 {
 		return nil, fmt.Errorf("at least one timeframe is required")
@@ -495,29 +496,13 @@ func formatFloatSlice(values []float64) string {
 	return "[" + strings.Join(strValues, ", ") + "]"
 }
 
-// Normalize normalizes symbol, ensuring it's a USDT trading pair
-func Normalize(symbol string) string {
-	symbol = strings.ToUpper(symbol)
-
-	// Remove exchange-specific separators (Gate uses BTC_USDT, OKX uses BTC-USDT-SWAP)
-	symbol = strings.ReplaceAll(symbol, "_", "")
-	symbol = strings.ReplaceAll(symbol, "-SWAP", "")
-	symbol = strings.ReplaceAll(symbol, "-", "")
-
-	// For regular crypto assets
-	if strings.HasSuffix(symbol, "USDT") {
-		return symbol
-	}
-	return symbol + "USDT"
-}
-
 // BuildDataFromKlines constructs market data snapshot from preloaded K-line series.
 func BuildDataFromKlines(symbol string, primary []Kline, longer []Kline) (*Data, error) {
 	if len(primary) == 0 {
 		return nil, fmt.Errorf("primary series is empty")
 	}
 
-	symbol = Normalize(symbol)
+	symbol = instrument.Normalize(symbol)
 	current := primary[len(primary)-1]
 	currentPrice := current.Close
 

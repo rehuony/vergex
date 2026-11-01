@@ -8,7 +8,7 @@ import type { PlanningChart } from '@/api/planning'
 import { Switch } from '@/components/ui/switch'
 import { buildForecastPath } from '@/constants/route-paths'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { t } from '@/i18n'
 import { cn } from '@/utils/cn'
 
 const STORAGE_KEY = 'vergex.frontier.forecast'

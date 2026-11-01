@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Hard limits to prevent token explosion in AI requests
+// Hard limits to prevent token explosion in agent requests
 const (
 	MaxCandidateCoins = 10
 	MaxOIPoolSize     = 100
@@ -153,7 +153,7 @@ func (c *StrategyConfig) ClampLimits() {
 }
 
 // NormalizeProductSchema keeps saved strategy JSON aligned with the product
-// editor schema. LLMs may emit user-facing labels such as "OI Top"; persistence
+// editor schema. models may emit user-facing labels such as "OI Top"; persistence
 // must use the exact frontend/backend enum values.
 func (c *StrategyConfig) NormalizeProductSchema() {
 	c.StrategyType = normalizeStrategyType(c.StrategyType)
@@ -210,8 +210,8 @@ func normalizeStrategyType(value string) string {
 	switch value {
 	case "grid", "grid_strategy", "grid-trading", "grid trading", "grid_trading", "grid strategy":
 		return "grid_trading"
-	case "", "ai", "ai_strategy", "ai-trading", "ai trading", "ai_trading", "ai strategy", "ai smart strategy":
-		return "ai_trading"
+	case "", "agent", "agent_trading", "agent trading", "agent strategy":
+		return "agent_trading"
 	default:
 		return value
 	}
@@ -424,23 +424,23 @@ func normalizeStrategyConfigPatch(patch map[string]any) {
 		}
 	}
 
-	aiKeys := []string{"coin_source", "indicators", "risk_control", "prompt_sections", "custom_prompt"}
-	for _, key := range aiKeys {
+	agentKeys := []string{"coin_source", "indicators", "risk_control", "prompt_sections", "custom_prompt"}
+	for _, key := range agentKeys {
 		value, ok := patch[key]
 		if !ok {
 			continue
 		}
-		aiConfig, _ := patch["ai_config"].(map[string]any)
-		if aiConfig == nil {
-			aiConfig = map[string]any{}
-			patch["ai_config"] = aiConfig
+		agentConfig, _ := patch["agent_config"].(map[string]any)
+		if agentConfig == nil {
+			agentConfig = map[string]any{}
+			patch["agent_config"] = agentConfig
 		}
-		aiConfig[key] = value
+		agentConfig[key] = value
 		delete(patch, key)
 	}
 
 	if fmt.Sprint(patch["strategy_type"]) == "grid_trading" {
-		delete(patch, "ai_config")
+		delete(patch, "agent_config")
 	}
 
 	if _, hasType := patch["strategy_type"]; hasType {

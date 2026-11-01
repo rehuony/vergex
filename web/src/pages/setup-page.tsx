@@ -3,46 +3,8 @@ import { Eye, EyeOff } from 'lucide-react'
 import { useAuth } from '@/contexts/auth-context'
 import { invalidateSystemConfig } from '@/api/system-config'
 import { useLanguage } from '@/contexts/language-context'
+import { t } from '@/i18n'
 import { Button } from '@/components/ui/button'
-
-const labels = {
-  zh: {
-    welcome: 'Welcome to Vergex',
-    subtitle: 'Create your account to get started',
-    email: 'Email',
-    emailPlaceholder: 'you@example.com',
-    password: 'Password',
-    passwordPlaceholder: 'At least 8 characters',
-    passwordError: 'Password must be at least 8 characters',
-    submit: 'Get Started',
-    submitting: 'Creating account...',
-    setupFailed: 'Setup failed, please try again',
-  },
-  en: {
-    welcome: 'Welcome to Vergex',
-    subtitle: 'Create your account to get started',
-    email: 'Email',
-    emailPlaceholder: 'you@example.com',
-    password: 'Password',
-    passwordPlaceholder: 'At least 8 characters',
-    passwordError: 'Password must be at least 8 characters',
-    submit: 'Get Started',
-    submitting: 'Creating account...',
-    setupFailed: 'Setup failed, please try again',
-  },
-  id: {
-    welcome: 'Selamat Datang di Vergex',
-    subtitle: 'Buat akun untuk memulai',
-    email: 'Email',
-    emailPlaceholder: 'you@example.com',
-    password: 'Kata Sandi',
-    passwordPlaceholder: 'Minimal 8 karakter',
-    passwordError: 'Kata sandi minimal 8 karakter',
-    submit: 'Mulai',
-    submitting: 'Membuat akun...',
-    setupFailed: 'Gagal membuat akun, coba lagi',
-  },
-} as const
 
 export function SetupPage() {
   const { language } = useLanguage()
@@ -60,13 +22,11 @@ export function SetupPage() {
     localStorage.removeItem('user_id')
   }, [])
 
-  const l = labels[language as keyof typeof labels] || labels.en
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
     if (password.length < 8) {
-      setError(l.passwordError)
+      setError(t('setup.passwordError', language))
       return
     }
     setLoading(true)
@@ -75,7 +35,7 @@ export function SetupPage() {
     if (result.success) {
       invalidateSystemConfig()
     } else {
-      setError(result.message || l.setupFailed)
+      setError(result.message || t('setup.failed', language))
     }
   }
 
@@ -144,9 +104,11 @@ export function SetupPage() {
               </div>
             </div>
             <h1 className="text-2xl font-bold text-vergex-text mb-1.5">
-              {l.welcome}
+              {t('setup.welcome', language)}
             </h1>
-            <p className="text-vergex-text-muted text-sm">{l.subtitle}</p>
+            <p className="text-vergex-text-muted text-sm">
+              {t('setup.subtitle', language)}
+            </p>
           </div>
 
           {/* Card */}
@@ -155,14 +117,14 @@ export function SetupPage() {
               {/* Email */}
               <div>
                 <label className="block text-xs font-medium text-vergex-text-muted mb-2">
-                  {l.email}
+                  {t('email', language)}
                 </label>
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full bg-vergex-bg-deeper border border-[var(--line)] rounded-xl px-4 py-3 text-sm text-vergex-text placeholder-vergex-text-muted focus:outline-hidden focus:border-vergex-brand/60 focus:ring-1 focus:ring-vergex-brand/30 transition-all"
-                  placeholder={l.emailPlaceholder}
+                  placeholder={t('setup.emailPlaceholder', language)}
                   required
                   autoFocus
                 />
@@ -171,7 +133,7 @@ export function SetupPage() {
               {/* Password */}
               <div>
                 <label className="block text-xs font-medium text-vergex-text-muted mb-2">
-                  {l.password}
+                  {t('password', language)}
                 </label>
                 <div className="relative">
                   <input
@@ -179,7 +141,7 @@ export function SetupPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="w-full bg-vergex-bg-deeper border border-[var(--line)] rounded-xl px-4 py-3 pr-11 text-sm text-vergex-text placeholder-vergex-text-muted focus:outline-hidden focus:border-vergex-brand/60 focus:ring-1 focus:ring-vergex-brand/30 transition-all"
-                    placeholder={l.passwordPlaceholder}
+                    placeholder={t('setup.passwordPlaceholder', language)}
                     required
                   />
                   <Button
@@ -209,7 +171,9 @@ export function SetupPage() {
                 type="submit"
                 disabled={loading}
               >
-                {loading ? l.submitting : l.submit}
+                {loading
+                  ? t('setup.submitting', language)
+                  : t('setup.submit', language)}
               </Button>
             </form>
           </div>

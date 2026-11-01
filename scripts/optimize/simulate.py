@@ -1,4 +1,4 @@
-"""Replay recorded AI decisions under alternative risk/throttle parameters.
+"""Replay recorded agent decisions under alternative risk/throttle parameters.
 
 Mirrors the live semantics of internal/trader/auto_trader_throttle.go:
   - throttle thresholds compare PRICE-basis PnL% (leverage-independent),
@@ -9,7 +9,7 @@ Mirrors the live semantics of internal/trader/auto_trader_throttle.go:
     max positions and available margin
 
 Known limitation: decisions are replayed as recorded. Parameters that would have
-changed WHAT the AI decided (prompt wording, candidate pool) are out of scope;
+changed WHAT the agent decided (prompt wording, candidate pool) are out of scope;
 parameters that gate/size/exit those decisions are faithfully simulated.
 """
 
@@ -39,11 +39,11 @@ class Params:
     max_positions: int = 2
     leverage: float = 10.0
     ratio: float = 5.0                # per-position notional = ratio x equity
-    sl_bypass: float = -5.0           # price-PnL% allowing early AI close
+    sl_bypass: float = -5.0           # price-PnL% allowing early agent close
     tp_bypass: float = 12.0
     noise_floor: float = -4.0         # price-PnL% band blocking flat closes
     noise_ceiling: float = 6.0
-    sl_mult: float = 1.0              # scale AI stop distance from entry
+    sl_mult: float = 1.0              # scale agent stop distance from entry
     tp_mult: float = 1.0
     margin_cap: float = 1.0
 
@@ -212,7 +212,7 @@ class Simulator:
             if equity <= 0:
                 return self._metrics(equity, trades, curve, bankrupt=True)
 
-            # 2. Replay this cycle's AI intents
+            # 2. Replay this cycle's agent intents
             opens_this_cycle = 0
             for d in self.decisions.get(cycle_id, []):
                 sym, act = d["symbol"], d["action"]
@@ -233,7 +233,7 @@ class Simulator:
                     else:
                         allowed = pnl_pct <= p.sl_bypass or pnl_pct >= p.tp_bypass
                     if allowed:
-                        close_position(pos, price, ts, "ai_close")
+                        close_position(pos, price, ts, "agent_close")
 
                 elif act in ("open_long", "open_short"):
                     if d["confidence"] < p.min_confidence:

@@ -1,7 +1,7 @@
 import type { Plan } from '@/api/planning'
 import { PanelState } from '@/components/common/panel'
 import { useLanguage } from '@/contexts/language-context'
-import { t } from '@/i18n/translations'
+import { activeLanguage, t } from '@/i18n'
 import type { PlanBatch } from '@/utils/planning/frontier-workspace'
 import { PlanStructures } from './plan-structures'
 import type { PlanCheck } from '@/utils/planning/frontier-plans'
@@ -86,12 +86,15 @@ export function FrontierPlanDeck({
               ? label('waitingHint')
               : batch
                 ? label('generatedAt', {
-                    time: new Date(batch.created).toLocaleString('en-US', {
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    }),
+                    time: new Date(batch.created).toLocaleString(
+                      activeLanguage(),
+                      {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      }
+                    ),
                   })
                 : label('reviewHint')}
           </p>
