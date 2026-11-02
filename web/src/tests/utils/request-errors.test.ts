@@ -4,7 +4,11 @@ import {
   haltReasonText,
   safeModeReasonText,
 } from '@/components/trader/halt-reason'
-import { codedText, formatRequestError } from '@/utils/request-errors'
+import {
+  codedText,
+  formatRequestError,
+  eventErrorText,
+} from '@/utils/request-errors'
 
 const protocolError =
   'failed to build trading context: request failed: Get "https://api.example.test/v1?secret=hidden": net/http: HTTP/1.x transport connection broken: malformed HTTP response "\\x00\\x00\\x12\\x04"'
@@ -33,7 +37,7 @@ describe('readable request errors', () => {
       501
     )
     expect(formatRequestError(null)).toBe(
-      'Request failed. Check the service status.'
+      'Request failed. Check the service status'
     )
     expect(formatRequestError('bad\u0000response')).toBe('bad response')
   })
@@ -43,7 +47,7 @@ describe('wording from the server', () => {
   it("uses the wording for a code, and the server's words without one", () => {
     expect(
       codedText('accountError', 'INVALID_CREDENTIALS', 'raw', 'zh-CN')
-    ).toBe('账户密钥无效。')
+    ).toBe('账户密钥无效')
     expect(
       codedText('accountError', 'EXCHANGE_UNAVAILABLE', 'raw', 'zh-CN')
     ).toBe('raw')
@@ -61,7 +65,7 @@ describe('wording from the server', () => {
       { status: 400 }
     )
     await expect(handleJSONResponse(refusal)).rejects.toThrow(
-      '扣除手续费和滑点后，净盈亏比 0.5 低于最低要求 1。'
+      '扣除手续费和滑点后，净盈亏比 0.5 低于最低要求 1'
     )
     // A key with no wording keeps what the server said.
     const unknown = new Response(
@@ -77,14 +81,42 @@ describe('wording from the server', () => {
 
   it('reads why a trader stopped in the language of the page', () => {
     expect(haltReasonText('max drawdown exceeded: 12.30%', 'zh-CN')).toBe(
-      '权益从峰值回撤 12.30%，超过上限。'
+      '权益从峰值回撤 12.30%，超过上限'
     )
     expect(haltReasonText('daily loss limit exceeded: 5.00%', 'en')).toBe(
-      'Lost 5.00% today, past the limit.'
+      'Lost 5.00% today, past the limit'
     )
     expect(haltReasonText('something else', 'zh-CN')).toBe('something else')
     expect(
       safeModeReasonText('Model failed 3 consecutive times: timeout', 'zh-CN')
     ).toBe('模型连续 3 次失败：timeout')
+  })
+})
+
+describe('eventErrorText', () => {
+  it('words a coded failure in the language in use, with the provider line after it', () => {
+    const data = {
+      message: 'The provider does not offer this model.',
+      error_key: 'agentError.model_not_found',
+      detail: 'HTTP 400: you passed x',
+    }
+    expect(eventErrorText(data, 'zh-CN')).toBe(
+      '服务商没有这个模型。请在 设置 → Agent 模型 检查名称 (HTTP 400: you passed x)'
+    )
+    expect(eventErrorText({ ...data, detail: '' }, 'en')).toBe(
+      'The provider does not offer this model. Check its name in Settings → Agent models'
+    )
+  })
+
+  it("keeps the server's words where it gave no code it has wording for", () => {
+    expect(
+      eventErrorText({ message: 'Planning ran out of time' }, 'zh-CN')
+    ).toBe('Planning ran out of time')
+    expect(
+      eventErrorText(
+        { message: 'Other', error_key: 'agentError.unknown' },
+        'en'
+      )
+    ).toBe('Other')
   })
 })

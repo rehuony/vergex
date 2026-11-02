@@ -6,12 +6,14 @@ import {
   useState,
   type ComponentProps,
   type FormEvent,
+  type ReactNode,
 } from 'react'
 import { toast } from 'sonner'
 import {
   Brain,
   Eye,
   EyeOff,
+  KeyRound,
   Landmark,
   Receipt,
   Send,
@@ -31,7 +33,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { AvatarEditor } from './avatar-editor'
 import { AccountSettings } from './account-settings'
 import { ModelSettings } from './model-settings'
-import { SettingActions, SettingRow } from '@/components/common/setting-row'
+import { SettingList, SettingRow } from '@/components/common/setting-row'
 import { TelegramSettings } from './telegram-settings'
 
 // In the order the tabs are shown.
@@ -83,15 +85,19 @@ const PasswordInput = forwardRef<
 // A change-password form as password managers expect it: the account name in
 // a hidden username field, then the current and the new password with their
 // autocomplete roles, each with a real label. Problems show in the action bar,
-// not under the fields.
+// not under the fields. The bar is the window's, so what the window holds besides
+// comes in as children, and its button names the form it submits.
 function PasswordSettings({
   language,
   email,
+  children,
 }: {
   language: Language
   email: string
+  children: ReactNode
 }) {
   const id = useId()
+  const formId = `${id}-form`
   const messageId = `${id}-message`
   const currentRef = useRef<HTMLInputElement>(null)
   const [current, setCurrent] = useState('')
@@ -138,80 +144,92 @@ function PasswordSettings({
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} aria-label={t('password', language)}>
-      <input
-        type="email"
-        name="username"
-        autoComplete="username"
-        value={email}
-        readOnly
-        hidden
-      />
-      <SettingRow
-        label={t('currentPassword', language)}
-        htmlFor={`${id}-current`}
-      >
-        <PasswordInput
-          ref={currentRef}
-          id={`${id}-current`}
-          name="current-password"
-          autoComplete="current-password"
-          required
-          value={current}
-          onChange={(e) => {
-            setCurrent(e.target.value)
-            setWrongCurrent(false)
-          }}
-          aria-invalid={wrongCurrent}
-          aria-describedby={wrongCurrent ? messageId : undefined}
-          placeholder={t('currentPasswordPlaceholder', language)}
-          language={language}
-        />
-      </SettingRow>
-      <SettingRow label={t('newPassword', language)} htmlFor={`${id}-new`}>
-        <PasswordInput
-          id={`${id}-new`}
-          name="new-password"
-          autoComplete="new-password"
-          required
-          minLength={8}
-          value={next}
-          onChange={(e) => setNext(e.target.value)}
-          placeholder={t('newPasswordPlaceholder', language)}
-          language={language}
-        />
-      </SettingRow>
-      <SettingRow
-        label={t('confirmNewPassword', language)}
-        htmlFor={`${id}-confirm`}
-      >
-        <PasswordInput
-          id={`${id}-confirm`}
-          name="confirm-password"
-          autoComplete="new-password"
-          required
-          minLength={8}
-          value={confirm}
-          onChange={(e) => setConfirm(e.target.value)}
-          aria-invalid={mismatch}
-          aria-describedby={mismatch ? messageId : undefined}
-          placeholder={t('confirmPasswordPlaceholder', language)}
-          language={language}
-        />
-      </SettingRow>
-      <SettingActions message={message} messageId={messageId}>
+    <SettingList
+      message={message}
+      messageId={messageId}
+      actions={
         <Button
           type="submit"
+          form={formId}
           variant="primary"
           size="sm"
           disabled={!ready || saving}
         >
+          <KeyRound className="size-4" />
           {saving
             ? t('updatingPassword', language)
             : t('updatePassword', language)}
         </Button>
-      </SettingActions>
-    </form>
+      }
+    >
+      {children}
+      <form
+        id={formId}
+        onSubmit={(e) => void submit(e)}
+        aria-label={t('password', language)}
+      >
+        <input
+          type="email"
+          name="username"
+          autoComplete="username"
+          value={email}
+          readOnly
+          hidden
+        />
+        <SettingRow
+          label={t('currentPassword', language)}
+          htmlFor={`${id}-current`}
+        >
+          <PasswordInput
+            ref={currentRef}
+            id={`${id}-current`}
+            name="current-password"
+            autoComplete="current-password"
+            required
+            value={current}
+            onChange={(e) => {
+              setCurrent(e.target.value)
+              setWrongCurrent(false)
+            }}
+            aria-invalid={wrongCurrent}
+            aria-describedby={wrongCurrent ? messageId : undefined}
+            placeholder={t('currentPasswordPlaceholder', language)}
+            language={language}
+          />
+        </SettingRow>
+        <SettingRow label={t('newPassword', language)} htmlFor={`${id}-new`}>
+          <PasswordInput
+            id={`${id}-new`}
+            name="new-password"
+            autoComplete="new-password"
+            required
+            minLength={8}
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            placeholder={t('newPasswordPlaceholder', language)}
+            language={language}
+          />
+        </SettingRow>
+        <SettingRow
+          label={t('confirmNewPassword', language)}
+          htmlFor={`${id}-confirm`}
+        >
+          <PasswordInput
+            id={`${id}-confirm`}
+            name="confirm-password"
+            autoComplete="new-password"
+            required
+            minLength={8}
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+            aria-invalid={mismatch}
+            aria-describedby={mismatch ? messageId : undefined}
+            placeholder={t('confirmPasswordPlaceholder', language)}
+            language={language}
+          />
+        </SettingRow>
+      </form>
+    </SettingList>
   )
 }
 
@@ -272,7 +290,7 @@ function DisplayNameSettings({ language }: { language: Language }) {
 function ProfileSettings({ language }: { language: Language }) {
   const { user } = useAuth()
   return (
-    <>
+    <PasswordSettings language={language} email={user?.email ?? ''}>
       <SettingRow label={t('avatar', language)}>
         <AvatarEditor language={language} />
       </SettingRow>
@@ -280,8 +298,7 @@ function ProfileSettings({ language }: { language: Language }) {
         <p className="truncate text-sm text-vergex-ink">{user?.email}</p>
       </SettingRow>
       <DisplayNameSettings language={language} />
-      <PasswordSettings language={language} email={user?.email ?? ''} />
-    </>
+    </PasswordSettings>
   )
 }
 
@@ -339,11 +356,7 @@ export function SettingsDialog({
         {section === 'models' && <ModelSettings language={language} />}
         {section === 'accounts' && <AccountSettings language={language} />}
         {section === 'telegram' && <TelegramSettings language={language} />}
-        {section === 'costs' && (
-          <div className="flex min-h-full flex-col py-4">
-            <AgentCostPanel />
-          </div>
-        )}
+        {section === 'costs' && <AgentCostPanel />}
       </ScrollArea>
     </Dialog>
   )

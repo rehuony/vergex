@@ -14,7 +14,7 @@ import {
   type FuturesState,
   streamFutures,
 } from '@/api/futures'
-import { formatRequestError } from '@/utils/request-errors'
+import { eventErrorText, formatRequestError } from '@/utils/request-errors'
 import { readBatch, type PlanBatch } from '@/utils/futures/futures-workspace'
 import {
   deferredEntries,
@@ -27,7 +27,7 @@ import { recordActivity, type ActivityItem } from './futures-activity'
 import type { PlanCheck } from '@/utils/futures/futures-plans'
 
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'error'
+  role: 'user' | 'assistant'
   content: string
 }
 
@@ -88,6 +88,8 @@ export function useFuturesAssistant({
     [instruction, setInstruction] = useState(''),
     [futuresBusy, setFuturesBusy] = useState(false)
   const [trace, setTrace] = useState<ActivityItem[]>([])
+  // The reply as the model writes it, until it is finished.
+  const [streaming, setStreaming] = useState('')
   const [checks, setChecks] = useState<PlanCheck[]>([])
   const [turnPlanIDs, setTurnPlanIDs] = useState<string[]>([])
   const abort = useRef<AbortController | null>(null),
@@ -115,9 +117,7 @@ export function useFuturesAssistant({
     const separateDraft = Boolean(current && current.state !== 'draft')
     const revisionID =
       !compareStructures && current?.state === 'draft' ? selected : undefined
-    const historyMessages = separateDraft
-      ? []
-      : messages.filter((m) => m.role !== 'error').slice(-16)
+    const historyMessages = separateDraft ? [] : messages.slice(-16)
     if (separateDraft) {
       session.current = crypto.randomUUID()
       setSelected('')
@@ -149,6 +149,11 @@ export function useFuturesAssistant({
     let streamStarted = false
     let waiting = false
     let preferredPlan: Plan | undefined
+    let partial = ''
+    const setPartial = (text: string) => {
+      partial = text
+      setStreaming(text)
+    }
     try {
       await streamFutures(
         {
@@ -175,17 +180,23 @@ export function useFuturesAssistant({
         (event) => {
           streamStarted = true
           setTrace((items) => recordActivity(items, event, undefined, language))
+          if (event.type === 'assistant_delta')
+            setPartial(partial + String(event.data.text))
+          // What a round wrote before moving on to a tool is not its answer.
+          if (
+            event.type === 'iteration' ||
+            event.type === 'tool_start' ||
+            event.type === 'assistant' ||
+            event.type === 'error'
+          )
+            setPartial('')
           if (event.type === 'assistant')
             setMessages((m) => [
               ...m,
               { role: 'assistant', content: String(event.data.message) },
             ])
           if (event.type === 'error') {
-            const message = formatRequestError(
-              String(event.data.message),
-              language
-            )
-            setError(message)
+            setError(eventErrorText(event.data, language))
           }
           if (
             event.type === 'outcome' &&
@@ -268,6 +279,12 @@ export function useFuturesAssistant({
         )
       }
     } finally {
+      // Stopping keeps what was written so far.
+      if (partial) {
+        const kept = partial
+        setMessages((m) => [...m, { role: 'assistant', content: kept }])
+      }
+      setPartial('')
       if (controller.signal.aborted)
         setTrace((items) =>
           recordActivity(
@@ -290,6 +307,7 @@ export function useFuturesAssistant({
     setInstruction,
     futuresBusy,
     trace,
+    streaming,
     setTrace,
     checks,
     turnPlanIDs,

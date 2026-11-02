@@ -8,6 +8,7 @@ afterEach(cleanup)
 const metrics = (patch: Partial<BacktestMetrics> = {}): BacktestMetrics => ({
   samples: 100,
   signals: 80,
+  moments: 50,
   hits: 40,
   misses: 40,
   hit_rate: 0.5,
@@ -37,15 +38,15 @@ const report = (overall: BacktestMetrics): BacktestReport => ({
   last_time: 2,
 })
 
-it('shows a missing hit rate as 0', () => {
+it('shows a missing hit rate as unknown, not as every call wrong', () => {
   render(
     <BacktestReportView
       report={report(metrics({ lift: -0.1, hit_rate: null }))}
       language="en"
     />
   )
-  expect(screen.getAllByText('0.0%').length).toBeGreaterThan(0)
-  expect(screen.queryByText('—')).toBeNull()
+  expect(screen.getByTitle('Hit rate')).toHaveTextContent('—')
+  expect(screen.getByTitle('Above chance')).toHaveTextContent('—')
 })
 
 it('shows no return where no call was made', () => {
@@ -56,4 +57,43 @@ it('shows no return where no call was made', () => {
     />
   )
   expect(screen.queryByText('-0.10%')).toBeNull()
+})
+
+it('shows no moments for a report from before they were counted, and greys none of it', () => {
+  render(
+    <BacktestReportView
+      report={report(metrics({ moments: undefined }))}
+      language="en"
+    />
+  )
+  expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+  expect(screen.queryByText(/separate stretches/)).toBeNull()
+})
+
+it('takes the colour off a gain from a handful of moments', () => {
+  render(
+    <BacktestReportView
+      report={report(metrics({ moments: 1, avg_return_after_fee_pct: 0.25 }))}
+      language="en"
+    />
+  )
+  for (const figure of screen.getAllByText('+0.25%')) {
+    expect(figure.className).not.toContain('text-vergex-success')
+  }
+  expect(screen.getByText(/separate stretches/)).toBeVisible()
+})
+
+it('words the reasons a series was skipped, and passes on any other', () => {
+  render(
+    <BacktestReportView
+      report={{
+        ...report(metrics()),
+        skipped: ['BTCUSDT 1h: not enough history', 'ETHUSDT 4h: disk on fire'],
+      }}
+      language="zh-CN"
+    />
+  )
+  expect(
+    screen.getByText(/BTCUSDT 1h: 历史数据不够; ETHUSDT 4h: disk on fire/)
+  ).toBeVisible()
 })

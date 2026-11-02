@@ -1,6 +1,14 @@
 import { useEffect, useId, useState, type FormEvent } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Brain, ExternalLink, Plus, Trash2 } from 'lucide-react'
+import {
+  Brain,
+  Check,
+  ExternalLink,
+  Pencil,
+  Plus,
+  Trash2,
+  Zap,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import type { AgentModel, ModelTest, TraderInfo } from '@/types'
 import { t, type Language } from '@/i18n'
@@ -22,7 +30,6 @@ import { Button } from '@/components/ui/button'
 import { AppSelect } from '@/components/ui/select'
 import { ModelField } from './model-field'
 import {
-  SettingActions,
   SettingBack,
   SettingBadge,
   SettingItem,
@@ -38,8 +45,7 @@ const modelIcon = (model: AgentModel) =>
     <Brain className="size-5" />
   )
 
-const defaultModel = (model: AgentModel) =>
-  AGENT_PROVIDER_CONFIG[model.provider]?.defaultModel || model.provider
+const defaultModel = (model: AgentModel) => model.defaultModel || model.provider
 
 /** The models Futures, traders and Telegram call, with their keys. */
 export function ModelSettings({ language }: { language: Language }) {
@@ -115,6 +121,7 @@ export function ModelSettings({ language }: { language: Language }) {
               aria-label={`${t('connections.edit', language)} ${model.name}`}
               onClick={() => setEditing(model.id)}
             >
+              <Pencil className="size-4" />
               {t('connections.edit', language)}
             </Button>
           </SettingItem>
@@ -294,10 +301,10 @@ function ModelForm({
     )
   }
 
-  // There is no delete for models: removing one disables it and clears its
-  // endpoint and model name.
+  // Deleting takes the key with it. A trader in use still needs its model: the server is
+  // what refuses, and this says so sooner with the names it already has.
   const remove = async () => {
-    if (!existing) return
+    if (!existing || busy) return
     const users = (traders ?? []).filter(
       (tr: TraderInfo) => tr.agent_model === existing.id
     )
@@ -310,135 +317,164 @@ function ModelForm({
       return
     }
     if (
-      !(await confirmToast(t('confirmDeleteModel', language), {
-        tone: 'danger',
-      }))
+      !(await confirmToast(
+        t('confirmDeleteModel', language, { name: existing.name }),
+        {
+          title: t('deleteModelTitle', language),
+          okText: t('delete', language),
+          tone: 'danger',
+        }
+      ))
     )
       return
-    await write(
-      {
-        enabled: false,
-        api_key: '',
-        custom_api_url: '',
-        custom_model_name: '',
-      },
-      'agentTradersToast.configUpdated',
-      'deleteConfigFailed'
-    )
+    setBusy(true)
+    setMessage('')
+    try {
+      await api.deleteModel(existing.id)
+      await refetch()
+      void client.invalidateQueries({ queryKey: [MODEL_CATALOG_KEY] })
+      toast.success(t('agentTradersToast.configUpdated', language))
+      onDone()
+    } catch (err) {
+      setMessage(
+        err instanceof Error && err.message
+          ? err.message
+          : t('deleteConfigFailed', language)
+      )
+    } finally {
+      setBusy(false)
+    }
   }
 
   return (
-    <form onSubmit={save} aria-label={t('modelsTab', language)}>
-      <SettingBack
-        onBack={onDone}
-        backLabel={t('back', language)}
-        icon={model && modelIcon(model)}
-        title={existing ? existing.name : t('connections.addModel', language)}
+    <form
+      onSubmit={save}
+      aria-label={t('modelsTab', language)}
+      className="h-full"
+    >
+      <SettingList
+        head={
+          <SettingBack
+            onBack={onDone}
+            backLabel={t('back', language)}
+            icon={model && modelIcon(model)}
+            title={
+              existing ? existing.name : t('connections.addModel', language)
+            }
+          >
+            {keyLink && (
+              <Button asChild variant="link" size="sm" className="text-[13px]">
+                <a href={keyLink} target="_blank" rel="noopener noreferrer">
+                  {t('modelConfig.getApiKey', language)}
+                  <ExternalLink className="size-3.5" />
+                </a>
+              </Button>
+            )}
+          </SettingBack>
+        }
+        message={status.text}
+        messageTone={status.tone}
+        actions={
+          <>
+            {existing && (
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                disabled={busy}
+                onClick={() => void remove()}
+              >
+                <Trash2 className="size-4" />
+                {t('delete', language)}
+              </Button>
+            )}
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={!ready || busy || test === 'running'}
+              onClick={() => void runTest()}
+            >
+              <Zap className="size-4" />
+              {test === 'running'
+                ? t('connections.testing', language)
+                : t('connections.test', language)}
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              variant="primary"
+              disabled={!ready || busy}
+            >
+              <Check className="size-4" />
+              {busy ? t('saving', language) : t('saveConfig', language)}
+            </Button>
+          </>
+        }
       >
-        {keyLink && (
-          <Button asChild variant="link" size="sm" className="text-[13px]">
-            <a href={keyLink} target="_blank" rel="noopener noreferrer">
-              {t('modelConfig.getApiKey', language)}
-              <ExternalLink className="size-3.5" />
-            </a>
-          </Button>
+        {!existing && (
+          <SettingRow
+            label={t('connections.provider', language)}
+            htmlFor={`${id}-provider`}
+          >
+            <AppSelect
+              id={`${id}-provider`}
+              value={provider}
+              onChange={(next) => {
+                edit(setProvider)(next)
+                // What was filled in was for the provider before.
+                setBaseUrl(null)
+                setModelName(null)
+              }}
+              options={choices.map((m) => ({ value: m.id, label: m.name }))}
+              className="h-9"
+            />
+          </SettingRow>
         )}
-      </SettingBack>
-      {!existing && (
-        <SettingRow
-          label={t('connections.provider', language)}
-          htmlFor={`${id}-provider`}
-        >
-          <AppSelect
-            id={`${id}-provider`}
-            value={provider}
-            onChange={(next) => {
-              edit(setProvider)(next)
-              // What was filled in was for the provider before.
-              setBaseUrl(null)
-              setModelName(null)
-            }}
-            options={choices.map((m) => ({ value: m.id, label: m.name }))}
-            className="h-9"
+        <SettingRow label="API Key" htmlFor={`${id}-key`}>
+          <input
+            id={`${id}-key`}
+            type="password"
+            autoComplete="off"
+            required={!keySaved}
+            value={apiKey}
+            onChange={(e) => edit(setApiKey)(e.target.value)}
+            placeholder={t(
+              keySaved ? 'connections.keySaved' : 'enterAPIKey',
+              language
+            )}
+            className={inputClass}
           />
         </SettingRow>
-      )}
-      <SettingRow label="API Key" htmlFor={`${id}-key`}>
-        <input
-          id={`${id}-key`}
-          type="password"
-          autoComplete="off"
-          required={!keySaved}
-          value={apiKey}
-          onChange={(e) => edit(setApiKey)(e.target.value)}
-          placeholder={t(
-            keySaved ? 'connections.keySaved' : 'enterAPIKey',
-            language
-          )}
-          className={inputClass}
-        />
-      </SettingRow>
-      <SettingRow
-        label={t('connections.baseUrl', language)}
-        htmlFor={`${id}-url`}
-      >
-        <input
-          id={`${id}-url`}
-          type="url"
-          value={shownUrl}
-          onChange={(e) => edit(setBaseUrl)(e.target.value)}
-          placeholder={officialUrl}
-          className={inputClass}
-        />
-      </SettingRow>
-      <SettingRow
-        label={t('connections.modelName', language)}
-        htmlFor={`${id}-model`}
-      >
-        <ModelField
-          id={`${id}-model`}
-          value={shownModel}
-          placeholder={officialModel}
-          names={modelNames}
-          listing={listing}
-          className={inputClass}
-          language={language}
-          onChange={edit(setModelName)}
-        />
-      </SettingRow>
-      <SettingActions message={status.text} messageTone={status.tone}>
-        {existing && (
-          <Button
-            type="button"
-            size="sm"
-            variant="danger"
-            disabled={busy}
-            onClick={() => void remove()}
-          >
-            <Trash2 className="size-4" />
-            {t('delete', language)}
-          </Button>
-        )}
-        <Button
-          type="button"
-          size="sm"
-          variant="secondary"
-          disabled={!ready || busy || test === 'running'}
-          onClick={() => void runTest()}
+        <SettingRow
+          label={t('connections.baseUrl', language)}
+          htmlFor={`${id}-url`}
         >
-          {test === 'running'
-            ? t('connections.testing', language)
-            : t('connections.test', language)}
-        </Button>
-        <Button
-          type="submit"
-          size="sm"
-          variant="primary"
-          disabled={!ready || busy}
+          <input
+            id={`${id}-url`}
+            type="url"
+            value={shownUrl}
+            onChange={(e) => edit(setBaseUrl)(e.target.value)}
+            placeholder={officialUrl}
+            className={inputClass}
+          />
+        </SettingRow>
+        <SettingRow
+          label={t('connections.modelName', language)}
+          htmlFor={`${id}-model`}
         >
-          {busy ? t('saving', language) : t('saveConfig', language)}
-        </Button>
-      </SettingActions>
+          <ModelField
+            id={`${id}-model`}
+            value={shownModel}
+            placeholder={officialModel}
+            names={modelNames}
+            listing={listing}
+            className={inputClass}
+            language={language}
+            onChange={edit(setModelName)}
+          />
+        </SettingRow>
+      </SettingList>
     </form>
   )
 }

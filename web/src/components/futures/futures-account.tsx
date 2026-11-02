@@ -17,7 +17,7 @@ import {
   nativeMarket,
   type AccountPosition,
 } from '@/utils/futures/futures-account'
-import { accountLabel } from '@/utils/futures/futures-accounts'
+import { accountName } from '@/utils/futures/futures-accounts'
 import { pollEvery } from '@/utils/poll'
 import { Dialog } from '@/components/common/dialog'
 import {
@@ -361,7 +361,7 @@ export function FuturesAccount({
     >
       <Panel
         className="flex flex-1 flex-col overflow-hidden"
-        title={accountLabel(account, accounts)}
+        title={accountName(account, accounts)}
         meta={[
           venueName(venue),
           read
@@ -756,7 +756,7 @@ export function FuturesAccount({
             ),
           })}
           description={label('closeDescription', {
-            account: account ? accountLabel(account, accounts) : '',
+            account: account ? accountName(account, accounts) : '',
             venue,
             quantity: format(confirm.quantity),
           })}

@@ -233,6 +233,7 @@ func (s *Server) setupRoutes() {
 			// model configuration
 			protected.GET("/agent/models", s.handleGetModelConfigs)
 			protected.PUT("/agent/models", s.handleUpdateModelConfigs)
+			protected.DELETE("/agent/models/:id", s.handleDeleteModel)
 			protected.POST("/agent/models/test", s.handleTestModelConfig)
 			protected.POST("/agent/models/available", s.handleModelFormList)
 			protected.GET("/agent/models/:id/available", s.handleSavedModelList)
@@ -255,7 +256,10 @@ func (s *Server) setupRoutes() {
 			// Telegram bot configuration
 			protected.GET("/telegram", s.handleGetTelegramConfig)
 			protected.POST("/telegram", s.handleUpdateTelegramConfig)
+			protected.DELETE("/telegram/token", s.handleClearTelegramToken)
 			protected.POST("/telegram/model", s.handleUpdateTelegramModel)
+			protected.POST("/telegram/bind-code", s.handleTelegramBindCode)
+			protected.GET("/telegram/visitors", s.handleTelegramVisitors)
 			// Local market data
 			protected.GET("/market/status", s.handleMarketDataStatus)
 			protected.GET("/market/settings", s.handleGetMarketDataSettings)

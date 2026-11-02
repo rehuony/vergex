@@ -11,13 +11,24 @@ export type AgentCostPeriod = 'today' | 'week' | 'month' | 'all'
 export interface AgentCostTotals {
   total: number
   count: number
+  failed_count: number
   unpriced_count: number
   prompt_tokens: number
   completion_tokens: number
 }
 
+export interface AgentCallFailure {
+  id: number
+  feature: string
+  model: string
+  error: string
+  created_at: string
+}
+
 export interface AgentCostSummary extends AgentCostTotals {
   by_model: Record<string, AgentCostTotals>
+  by_feature: Record<string, AgentCostTotals>
+  recent_errors: AgentCallFailure[]
 }
 
 export const agentApi = {
@@ -44,6 +55,14 @@ export const agentApi = {
       await sealCredentials(request)
     )
     if (!result.success) throw new Error('Failed to update model configs')
+  },
+
+  async deleteModel(id: string): Promise<void> {
+    const result = await httpClient.delete(
+      `${API_BASE}/agent/models/${encodeURIComponent(id)}`
+    )
+    if (!result.success)
+      throw new Error(result.message || 'Failed to delete the model')
   },
 
   // Sends one short prompt with the form's values; a blank key uses the saved

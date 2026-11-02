@@ -12,10 +12,10 @@ import { renderAvatar, rotateQuarter } from '@/components/settings/avatar'
 import { Dialog } from '@/components/common/dialog'
 import { Button } from '@/components/ui/button'
 
-// Both steps share the stage and the controls' heights (the rotate tiles, the
-// gap and the pill), so the dialog does not change size between them.
+// Both steps keep the room of the stage and the rotate tiles, so the dialog does not change
+// size between them.
 const stage = 'grid h-[min(360px,50dvh)] w-full place-items-center'
-const controls = 'flex h-[130px] flex-col items-center justify-end gap-5'
+const controls = 'flex h-[72px] items-center justify-center'
 
 // The largest centred square, which is where Google's editor starts too.
 function fullSquare(width: number, height: number): PercentCrop {
@@ -161,6 +161,22 @@ export function AvatarCropDialog({
       onClose={onCancel}
       onBack={preview ? () => setPreview(null) : onCancel}
       bodyClassName="flex min-h-0 flex-1 flex-col items-center gap-5 overflow-y-auto px-6 py-6"
+      footer={
+        preview ? (
+          <Button
+            type="button"
+            variant="primary"
+            aria-busy={saving}
+            onClick={() => void save(preview.blob)}
+          >
+            {saving ? t('saving', language) : t('saveAsAvatar', language)}
+          </Button>
+        ) : (
+          <Button type="button" variant="primary" onClick={next}>
+            {t('next', language)}
+          </Button>
+        )
+      }
     >
       {preview ? (
         <>
@@ -172,17 +188,7 @@ export function AvatarCropDialog({
               className="size-48 select-none rounded-full"
             />
           </div>
-          <div className={controls}>
-            <Button
-              type="button"
-              variant="primary"
-              className="rounded-full px-6"
-              aria-busy={saving}
-              onClick={() => void save(preview.blob)}
-            >
-              {saving ? t('saving', language) : t('saveAsAvatar', language)}
-            </Button>
-          </div>
+          <div className={controls} />
         </>
       ) : (
         <>
@@ -233,14 +239,6 @@ export function AvatarCropDialog({
                 onClick={() => rotate('right')}
               />
             </div>
-            <Button
-              type="button"
-              variant="primary"
-              className="rounded-full px-8"
-              onClick={next}
-            >
-              {t('next', language)}
-            </Button>
           </div>
         </>
       )}

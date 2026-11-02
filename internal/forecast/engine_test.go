@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -237,17 +238,17 @@ func TestAlertsFireOnceUntilTheScoreComesBack(t *testing.T) {
 		return []Signal{{SeriesID: series, Symbol: "BTCUSDT", Interval: "1h", OpenTime: justClosed, Direction: direction, DisplayProb: prob, Horizon: 4}}
 	}
 	ctx := context.Background()
-	engine.alert(ctx, record(DirectionUp, 0.75))
-	engine.alert(ctx, record(DirectionUp, 0.80))
-	if len(*sent) != 1 || !strings.Contains((*sent)[0], "BTCUSDT 1h: Up, Score 75") {
+	engine.alert(ctx, "Default", record(DirectionUp, 0.75))
+	engine.alert(ctx, "Default", record(DirectionUp, 0.80))
+	if len(*sent) != 1 || !strings.Contains((*sent)[0], "BTCUSDT 1h: Up, Score 75, over about") {
 		t.Fatalf("sent = %v", *sent)
 	}
-	engine.alert(ctx, record(DirectionUp, 0.55))
-	engine.alert(ctx, record(DirectionDown, 0.22))
+	engine.alert(ctx, "Default", record(DirectionUp, 0.55))
+	engine.alert(ctx, "Default", record(DirectionDown, 0.22))
 	if len(*sent) != 2 || !strings.Contains((*sent)[1], "Down, Score 22") {
 		t.Fatalf("should re-arm inside the threshold: %v", *sent)
 	}
-	engine.alert(ctx, []Signal{{SeriesID: 8, Symbol: "OTHERUSDT", Interval: "1h", OpenTime: justClosed, Direction: DirectionUp, DisplayProb: 0.9, Horizon: 4}})
+	engine.alert(ctx, "Default", []Signal{{SeriesID: 8, Symbol: "OTHERUSDT", Interval: "1h", OpenTime: justClosed, Direction: DirectionUp, DisplayProb: 0.9, Horizon: 4}})
 	if len(*sent) != 2 {
 		t.Fatalf("coins off the watchlist should not alert: %v", *sent)
 	}
@@ -263,15 +264,15 @@ func TestAlertsFollowTheCallAndOnlyTheNewestCandle(t *testing.T) {
 	}
 
 	// A neutral call has no side, and a curve can put a score against the call.
-	engine.alert(ctx, []Signal{signal(justClosed, DirectionNeutral, 0.9)})
-	engine.alert(ctx, []Signal{signal(justClosed, DirectionUp, 0.2)})
+	engine.alert(ctx, "Default", []Signal{signal(justClosed, DirectionNeutral, 0.9)})
+	engine.alert(ctx, "Default", []Signal{signal(justClosed, DirectionUp, 0.2)})
 	if len(*sent) != 0 {
 		t.Fatalf("sent = %v", *sent)
 	}
 
 	// Catching up: old candles say nothing, and the newest speaks once.
-	engine.alert(ctx, []Signal{signal(justClosed-2*hour, DirectionUp, 0.9), signal(justClosed-hour, DirectionUp, 0.85), signal(justClosed, DirectionUp, 0.8)})
-	if len(*sent) != 1 || strings.Count((*sent)[0], "\n") != 0 || !strings.Contains((*sent)[0], "Score 80") {
+	engine.alert(ctx, "Default", []Signal{signal(justClosed-2*hour, DirectionUp, 0.9), signal(justClosed-hour, DirectionUp, 0.85), signal(justClosed, DirectionUp, 0.8)})
+	if len(*sent) != 1 || strings.Count((*sent)[0], "\n") != 1 || !strings.Contains((*sent)[0], "Score 80") {
 		t.Fatalf("sent = %v, want one line about the newest candle", *sent)
 	}
 
@@ -279,9 +280,65 @@ func TestAlertsFollowTheCallAndOnlyTheNewestCandle(t *testing.T) {
 	if err := engine.Store.setAlertArm(watched.ID, false); err != nil {
 		t.Fatal(err)
 	}
-	engine.alert(ctx, []Signal{signal(justClosed-3*hour, DirectionUp, 0.9)})
+	engine.alert(ctx, "Default", []Signal{signal(justClosed-3*hour, DirectionUp, 0.9)})
 	if len(*sent) != 1 || engine.Store.alertArm(watched.ID) {
 		t.Fatalf("an old candle alerted: %v", *sent)
+	}
+}
+
+func TestAlertsGoByIntervalAndCarryTheirStrategyAndLanguage(t *testing.T) {
+	engine, watched, sent, clock := engineFixture(t)
+	settings, err := engine.Store.LoadSettings(engine.now())
+	if err != nil || !slices.Equal(settings.AlertIntervals, []string{"1h", "4h", "1d"}) {
+		t.Fatalf("settings = %+v, err = %v", settings, err)
+	}
+	short, err := feed.NewStore(engine.Store.db).EnsureSeries("BTCUSDT", "15m", feed.TierWatch, clock.UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	justClosed := clock.UnixMilli() - hour
+	quarter := clock.UnixMilli() - hour/4
+	signal := func(seriesID int64, interval string, openTime int64) Signal {
+		return Signal{SeriesID: seriesID, Symbol: "BTCUSDT", Interval: interval, OpenTime: openTime, Direction: DirectionUp, DisplayProb: 0.8, Horizon: 4}
+	}
+
+	// 15m is left out until asked for, but still comes back inside the threshold.
+	engine.alert(ctx, "Default", []Signal{signal(short.ID, "15m", quarter)})
+	if len(*sent) != 0 {
+		t.Fatalf("15m alerted: %v", *sent)
+	}
+	if err := engine.Store.SetAlerts(70, []string{"15m", "1h"}); err != nil {
+		t.Fatal(err)
+	}
+	// One round is one message, however many calls it holds.
+	engine.alert(ctx, "Momentum", []Signal{signal(short.ID, "15m", quarter), signal(watched.ID, "1h", justClosed)})
+	if len(*sent) != 1 || !strings.HasPrefix((*sent)[0], "📈 Forecast signals (strategy: Momentum)\n") ||
+		!strings.Contains((*sent)[0], "BTCUSDT 15m: Up, Score 80, over about 1 hour\n") ||
+		!strings.HasSuffix((*sent)[0], "BTCUSDT 1h: Up, Score 80, over about 4 hours") {
+		t.Fatalf("sent = %q", *sent)
+	}
+
+	if err := engine.Store.SetAlerts(70, []string{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Store.setAlertArm(watched.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	engine.alert(ctx, "Default", []Signal{signal(watched.ID, "1h", justClosed)})
+	if len(*sent) != 1 || engine.Store.alertArm(watched.ID) {
+		t.Fatalf("no intervals should alert none, and arm none: %v", *sent)
+	}
+
+	if err := engine.Store.SetAlerts(70, []string{"1h"}); err != nil {
+		t.Fatal(err)
+	}
+	engine.Language = func() string { return "zh" }
+	down := signal(watched.ID, "1h", justClosed)
+	down.Direction, down.DisplayProb, down.Calibrated, down.Horizon = DirectionDown, 0.2, true, 72
+	engine.alert(ctx, "默认", []Signal{down})
+	if len(*sent) != 2 || (*sent)[1] != "📈 预测信号（策略：默认）\nBTCUSDT 1h：下跌，20%，约 3 天内" {
+		t.Fatalf("sent = %q", (*sent)[1:])
 	}
 }
 
@@ -511,6 +568,55 @@ func TestSignalStatsCountOnlyWhatDoesNotOverlap(t *testing.T) {
 	}
 }
 
+// A hundred coins over one stretch of time are one moment, not a hundred answers.
+func TestPerformanceCountsEachStretchOfTimeOnce(t *testing.T) {
+	engine, series, _, clock := engineFixture(t)
+	strategy, _ := engine.Store.ActiveStrategy(*clock)
+	other, err := feed.NewStore(engine.Store.db).EnsureSeries("ETHUSDT", "1h", feed.TierWatch, clock.UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(seriesID, openTime int64, direction, regime string, confidence int, target float64) {
+		t.Helper()
+		judgeAndSave(t, engine, &Signal{
+			StrategyID: strategy.ID, SeriesID: seriesID, OpenTime: openTime, Interval: "1h", Horizon: 4, Close: 100,
+			Direction: direction, Regime: regime, Confidence: confidence,
+		}, target)
+	}
+	// Two coins in the same stretch, then one in the next, and a neutral reading in a third.
+	call(series.ID, 8*hour, DirectionUp, RegimeTrending, 70, 110)
+	call(other.ID, 9*hour, DirectionDown, RegimeRanging, 30, 90)
+	call(series.ID, 12*hour, DirectionUp, RegimeTrending, 70, 90)
+	call(series.ID, 16*hour, DirectionNeutral, RegimeRanging, 30, 110)
+
+	performance, err := engine.Store.Performance(strategy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if performance.Overall.Samples != 3 || performance.Overall.Moments != 2 {
+		t.Fatalf("overall = %+v", performance.Overall)
+	}
+	if got := performance.ByInterval["1h"]; got.Samples != 3 || got.Moments != 2 {
+		t.Fatalf("1h = %+v", got)
+	}
+	if got := performance.ByDirection[DirectionUp]; got.Samples != 2 || got.Moments != 2 {
+		t.Fatalf("up = %+v", got)
+	}
+	if got := performance.ByDirection[DirectionDown]; got.Samples != 1 || got.Moments != 1 {
+		t.Fatalf("down = %+v", got)
+	}
+	if got := performance.ByRegime[RegimeRanging]; got.Samples != 1 || got.Moments != 1 {
+		t.Fatalf("ranging = %+v", got)
+	}
+	if got := performance.ByConfidence["3"]; got.Samples != 2 || got.Moments != 2 {
+		t.Fatalf("confidence 60-79 = %+v", got)
+	}
+	coin, err := engine.Store.SignalStats(strategy.ID, series.ID)
+	if err != nil || coin.Samples != 2 || coin.Moments != 2 {
+		t.Fatalf("one coin = %+v, err = %v", coin, err)
+	}
+}
+
 func TestLatestLookupsFindEachSeriesNewestSignal(t *testing.T) {
 	engine, series, _, clock := engineFixture(t)
 	strategy, _ := engine.Store.ActiveStrategy(*clock)
@@ -674,6 +780,68 @@ func TestAStrategyNeedsANameOfItsOwn(t *testing.T) {
 	}
 	if _, err := engine.Store.CreateStrategy(DefaultConfig(), "Fast", *clock); err == nil {
 		t.Fatal("a repeated name should be refused")
+	}
+}
+
+func TestANewStrategyHasToBeAbleToCallBothMarketsAndNotLookTooFar(t *testing.T) {
+	engine, _, _, clock := engineFixture(t)
+	oneSided := DefaultConfig()
+	oneSided.Factors = map[string]FactorConfig{FactorTrend: {Enabled: true, Trending: 1}}
+	if _, err := engine.Store.CreateStrategy(oneSided, "Trend only", *clock); err == nil || !strings.Contains(err.Error(), "both trending and ranging") {
+		t.Fatalf("err = %v", err)
+	}
+	// A weight on a factor that is off is no weight.
+	oneSided.Factors[FactorMomentum] = FactorConfig{Ranging: 1}
+	if _, err := engine.Store.CreateStrategy(oneSided, "Trend only", *clock); err == nil {
+		t.Fatal("saved a strategy whose only ranging weight is on a factor that is off")
+	}
+	oneSided.Factors[FactorMomentum] = FactorConfig{Enabled: true, Ranging: 1}
+	if _, err := engine.Store.CreateStrategy(oneSided, "Both", *clock); err != nil {
+		t.Fatal(err)
+	}
+
+	for interval, limit := range HorizonLimits {
+		config := DefaultConfig()
+		config.Horizons[interval] = limit
+		if _, err := engine.Store.CreateStrategy(config, "At "+interval, *clock); err != nil {
+			t.Fatalf("at the limit for %s: %v", interval, err)
+		}
+		config.Horizons[interval] = limit + 1
+		if _, err := engine.Store.CreateStrategy(config, "Over "+interval, *clock); err == nil {
+			t.Fatalf("over the limit for %s", interval)
+		}
+	}
+
+	// A strategy saved before these rules is carried forward as it is.
+	old := DefaultConfig()
+	old.Horizons["1d"] = 96
+	old.Factors = map[string]FactorConfig{FactorTrend: {Enabled: true, Trending: 1}}
+	if _, err := engine.Store.createStrategy(engine.Store.db, old, "Saved before", false, *clock); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTheLastStrategyCannotBeDeleted(t *testing.T) {
+	engine, _, _, clock := engineFixture(t)
+	only, err := engine.Store.ActiveStrategy(*clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Store.Deactivate(only.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Store.DeleteStrategy(only.ID, *clock); !errors.Is(err, ErrLastStrategy) {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := engine.Store.ActiveStrategy(*clock); !errors.Is(err, ErrNoStrategyInUse) {
+		t.Fatalf("err = %v, want it still stopped rather than a new default", err)
+	}
+	other, err := engine.Store.CreateStrategy(DefaultConfig(), "Other", *clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.Store.DeleteStrategy(other.ID, *clock); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -938,5 +1106,47 @@ func TestOverlayDrawsTheCallOnlyWhenTheCandlesAreCurrent(t *testing.T) {
 	}
 	if overlay.Pending != PendingFetching || len(overlay.Projection) != 0 {
 		t.Fatalf("overlay = %+v", overlay)
+	}
+}
+
+// A list of runs and a run read whole both say what it really tested.
+func TestABacktestSaysWhatItReallyTested(t *testing.T) {
+	engine, _, _, clock := engineFixture(t)
+	strategy, err := engine.Store.ActiveStrategy(*clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options := BacktestOptions{Symbols: []string{"BTCUSDT"}, Intervals: []string{"1h"}, From: 1000, To: 900000}
+	run, err := engine.Store.CreateBacktest(strategy.ID, "", options, *clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := engine.Store.CreateBacktest(strategy.ID, "", options, *clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := &Report{FirstTime: 500000, LastTime: 600000, Overall: Metrics{Samples: 1}}
+	if err := engine.Store.finishBacktest(run.ID, report, "", *clock); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := engine.Store.Backtests(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range listed {
+		switch row.ID {
+		case run.ID:
+			if row.TestedFrom != 500000 || row.TestedTo != 600000 {
+				t.Fatalf("listed run = %+v", row)
+			}
+		case pending.ID:
+			if row.TestedFrom != 0 || row.TestedTo != 0 {
+				t.Fatalf("a run with no report yet = %+v", row)
+			}
+		}
+	}
+	whole, err := engine.Store.BacktestByID(run.ID)
+	if err != nil || whole.TestedFrom != 500000 || whole.TestedTo != 600000 {
+		t.Fatalf("run = %+v, err = %v", whole, err)
 	}
 }

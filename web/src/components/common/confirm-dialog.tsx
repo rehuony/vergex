@@ -15,6 +15,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { buttonVariants } from '@/components/ui/button'
+import { activeLanguage, t } from '@/i18n'
 import {
   setGlobalConfirm,
   type ConfirmOptions as NotifyConfirmOptions,
@@ -40,13 +41,8 @@ export function useConfirmDialog() {
   return context
 }
 
-interface ConfirmState {
+interface ConfirmState extends ConfirmOptions {
   isOpen: boolean
-  title?: string
-  message: string
-  okText: string
-  cancelText: string
-  tone?: 'danger'
   resolve?: (value: boolean) => void
 }
 
@@ -57,22 +53,14 @@ export function ConfirmDialogProvider({
 }) {
   const [state, setState] = useState<ConfirmState>({
     isOpen: false,
+    title: '',
     message: '',
-    okText: 'Confirm',
-    cancelText: 'Cancel',
+    okText: '',
   })
 
   const confirm = useCallback((options: ConfirmOptions): Promise<boolean> => {
     return new Promise((resolve) => {
-      setState({
-        isOpen: true,
-        title: options.title,
-        message: options.message,
-        okText: options.okText || 'Confirm',
-        cancelText: options.cancelText || 'Cancel',
-        tone: options.tone,
-        resolve,
-      })
+      setState({ ...options, isOpen: true, resolve })
     })
   }, [])
 
@@ -99,19 +87,13 @@ export function ConfirmDialogProvider({
         onOpenChange={(open) => !open && handleClose(false)}
       >
         <AlertDialogContent>
-          <div className="flex flex-col gap-5 text-center">
-            {state.title && (
-              <AlertDialogTitle className="text-xl">
-                {state.title}
-              </AlertDialogTitle>
-            )}
-            <AlertDialogDescription className="text-vergex-ink text-base font-medium">
-              {state.message}
-            </AlertDialogDescription>
-          </div>
+          <AlertDialogTitle>{state.title}</AlertDialogTitle>
+          <AlertDialogDescription className="mt-1 whitespace-pre-line">
+            {state.message}
+          </AlertDialogDescription>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => handleClose(false)}>
-              {state.cancelText}
+              {state.cancelText ?? t('cancel', activeLanguage())}
             </AlertDialogCancel>
             <AlertDialogAction
               className={

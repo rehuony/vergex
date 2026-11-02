@@ -34,10 +34,11 @@ const overlay: ForecastOverlay = {
   display_prob: 0.36,
   calibrated: false,
   stats: {
-    judged: 12,
-    samples: 4,
-    hits: 3,
-    misses: 1,
+    judged: 160,
+    samples: 40,
+    moments: 40,
+    hits: 30,
+    misses: 10,
     hit_rate: 0.75,
     chance_rate: 0.6,
     avg_return_after_fee_pct: 0.2,
@@ -120,12 +121,52 @@ it('stays off until asked, then draws the forecast and remembers', async () => {
     'href',
     '/forecast?symbol=BTCUSDT&interval=1h'
   )
-  expect(screen.getByRole('link')).toHaveTextContent('Hit rate 75.0%')
+  expect(screen.getByRole('link')).toHaveTextContent(
+    'Hit rate 75.0% of 40 · by chance 60.0%'
+  )
   expect(screen.getByRole('link')).toHaveAttribute(
     'title',
-    'Hit rate 75.0% · by chance 60.0%'
+    'Hit rate 75.0% of 40 · by chance 60.0%'
   )
   expect(localStorage.getItem('vergex.futures.forecast')).toBe('on')
+})
+
+it('gives no percentage for a handful of calls, on a page for placing trades', async () => {
+  mocks.overlay.mockResolvedValue({
+    ...overlay,
+    stats: {
+      ...overlay.stats,
+      samples: 4,
+      moments: 4,
+      hits: 4,
+      misses: 0,
+      hit_rate: 1,
+    },
+  })
+  localStorage.setItem('vergex.futures.forecast', 'on')
+  show({})
+  const line = await screen.findByRole('link')
+  expect(line).toHaveTextContent('4 calls, too few to read')
+  expect(line.textContent).not.toContain('100.0%')
+})
+
+it('says nothing of a record when no call has been judged', async () => {
+  mocks.overlay.mockResolvedValue({
+    ...overlay,
+    stats: {
+      ...overlay.stats,
+      samples: 0,
+      moments: 0,
+      hits: 0,
+      misses: 0,
+      hit_rate: null,
+    },
+  })
+  localStorage.setItem('vergex.futures.forecast', 'on')
+  show({})
+  const line = await screen.findByRole('link')
+  expect(line.textContent).not.toContain('calls')
+  expect(line.textContent).not.toContain('Hit rate')
 })
 
 it('reads the Binance coin behind an OKX swap and says where it comes from', async () => {
@@ -146,11 +187,11 @@ it('reads the Binance coin behind an OKX swap and says where it comes from', asy
 it('says why there is nothing to overlay, without asking the server', () => {
   localStorage.setItem('vergex.futures.forecast', 'on')
   const { unmount } = show({ interval: '5m' })
-  expect(screen.getByText('Forecast covers 15m and longer.')).toBeVisible()
+  expect(screen.getByText('Forecast covers 15m and longer')).toBeVisible()
   unmount()
 
   show({ venue: 'okx', symbol: 'BTC-USD-SWAP' })
-  expect(screen.getByText('No forecast for this market.')).toBeVisible()
+  expect(screen.getByText('No forecast for this market')).toBeVisible()
   expect(mocks.overlay).not.toHaveBeenCalled()
 })
 

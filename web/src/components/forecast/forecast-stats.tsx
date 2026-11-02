@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react'
+import { tooFewMoments } from '@/api/forecast'
 import {
   cellClass,
+  EmptyLine,
   gainTone,
   groupHeadClass,
   headClass,
@@ -12,7 +14,8 @@ import { fmtPct, fmtRate } from './forecast-format'
 
 // How far a hit rate is above what chance would hit, in percentage points.
 export const pointsAbove = (hit: number | null, chance: number | null) => {
-  const points = ((hit ?? 0) - (chance ?? 0)) * 100
+  if (hit === null || chance === null) return '—'
+  const points = (hit - chance) * 100
   return `${points > 0 ? '+' : ''}${points.toFixed(1)}`
 }
 
@@ -21,9 +24,11 @@ export const pointsAbove = (hit: number | null, chance: number | null) => {
 function HitBar({
   hit,
   chance,
+  thin,
 }: {
   hit: number | null
   chance: number | null
+  thin: boolean
 }) {
   if (hit === null) return null
   return (
@@ -32,7 +37,10 @@ function HitBar({
       className="relative block h-1.5 rounded-full bg-vergex-surface-muted"
     >
       <span
-        className="absolute inset-y-0 left-0 rounded-full bg-vergex-ink"
+        className={cn(
+          'absolute inset-y-0 left-0 rounded-full',
+          thin ? 'bg-vergex-muted' : 'bg-vergex-ink'
+        )}
         style={{ width: `${hit * 100}%` }}
       />
       {chance !== null && (
@@ -50,6 +58,8 @@ export interface BreakdownRow {
   // Beside the name, where there is room.
   note?: ReactNode
   samples: number | null
+  // Nil where they were not counted.
+  moments: number | null
   hit: number | null
   chance: number | null
   lift?: number | null
@@ -63,6 +73,9 @@ export interface BreakdownGroup {
 
 export interface BreakdownHead {
   samples: string
+  moments: string
+  // The line under the table when a row has too few moments.
+  tooFew: string
   hit: string
   chance: string
   lift?: string
@@ -73,6 +86,7 @@ export interface BreakdownHead {
 // on a phone as the rows do.
 const breakdownColumns = (head: BreakdownHead) => [
   { title: head.samples, className: 'w-16 max-sm:hidden' },
+  { title: head.moments, className: 'w-16' },
   { title: '', className: 'w-28 max-md:hidden' },
   { title: head.hit, className: 'w-16' },
   { title: head.chance, className: 'w-16' },
@@ -92,74 +106,95 @@ export function BreakdownTable({
   const columns = breakdownColumns(head)
   const shown = groups.filter((group) => group.rows.length > 0)
   return (
-    <table className={tableClass}>
-      <thead className="sticky top-0 z-10">
-        <tr>
-          <th className={headClass}>{shown[0]?.title}</th>
-          {columns.map((column, index) => (
-            <th
-              key={index}
-              className={cn(headClass, 'text-right', column.className)}
-            >
-              {column.title}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      {shown.map((group, groupIndex) => (
-        <tbody key={group.title}>
-          {groupIndex > 0 && (
-            <tr>
-              <th scope="rowgroup" className={groupHeadClass}>
-                {group.title}
-              </th>
-              {columns.map((column, index) => (
-                <td key={index} className={cn(headClass, column.className)} />
-              ))}
-            </tr>
-          )}
-          {group.rows.map((row) => (
-            <tr key={row.name}>
-              <td className={cn(cellClass, 'text-vergex-ink')}>
-                <span className="flex min-w-0 items-baseline gap-2">
-                  <span className="truncate" title={row.name}>
-                    {row.name}
-                  </span>
-                  {row.note && (
-                    <span className="shrink-0 text-xs text-vergex-muted max-sm:hidden">
-                      {row.note}
-                    </span>
-                  )}
-                </span>
-              </td>
-              <td className={cn(cellClass, numberClass, 'max-sm:hidden')}>
-                {row.samples ?? 0}
-              </td>
-              <td className={cn(cellClass, 'max-md:hidden')}>
-                <HitBar hit={row.hit} chance={row.chance} />
-              </td>
-              <td className={cn(cellClass, numberClass)}>{fmtRate(row.hit)}</td>
-              <td className={cn(cellClass, numberClass)}>
-                {fmtRate(row.chance)}
-              </td>
-              {head.lift && (
-                <td className={cn(cellClass, numberClass, 'max-sm:hidden')}>
-                  {`${((row.lift ?? 0) * 100).toFixed(1)}%`}
-                </td>
-              )}
-              <td
-                className={cn(
-                  cellClass,
-                  numberClass,
-                  gainTone(row.afterFees) ?? 'text-vergex-muted'
-                )}
+    <>
+      <table className={tableClass}>
+        <thead className="sticky top-0 z-10">
+          <tr>
+            <th className={headClass}>{shown[0]?.title}</th>
+            {columns.map((column, index) => (
+              <th
+                key={index}
+                className={cn(headClass, 'text-right', column.className)}
               >
-                {fmtPct(row.afterFees ?? 0, true)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      ))}
-    </table>
+                {column.title}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        {shown.map((group, groupIndex) => (
+          <tbody key={group.title}>
+            {groupIndex > 0 && (
+              <tr>
+                <th scope="rowgroup" className={groupHeadClass}>
+                  {group.title}
+                </th>
+                {columns.map((column, index) => (
+                  <td key={index} className={cn(headClass, column.className)} />
+                ))}
+              </tr>
+            )}
+            {group.rows.map((row) => {
+              const thin = tooFewMoments(row.moments)
+              const figure = thin && 'text-vergex-muted'
+              return (
+                <tr key={row.name}>
+                  <td className={cn(cellClass, 'text-vergex-ink')}>
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      <span className="truncate" title={row.name}>
+                        {row.name}
+                      </span>
+                      {row.note && (
+                        <span className="shrink-0 text-xs text-vergex-muted max-sm:hidden">
+                          {row.note}
+                        </span>
+                      )}
+                    </span>
+                  </td>
+                  <td className={cn(cellClass, numberClass, 'max-sm:hidden')}>
+                    {row.samples ?? 0}
+                  </td>
+                  <td className={cn(cellClass, numberClass)}>
+                    {row.moments ?? '—'}
+                  </td>
+                  <td className={cn(cellClass, 'max-md:hidden')}>
+                    <HitBar hit={row.hit} chance={row.chance} thin={thin} />
+                  </td>
+                  <td className={cn(cellClass, numberClass, figure)}>
+                    {fmtRate(row.hit)}
+                  </td>
+                  <td className={cn(cellClass, numberClass, figure)}>
+                    {fmtRate(row.chance)}
+                  </td>
+                  {head.lift && (
+                    <td
+                      className={cn(
+                        cellClass,
+                        numberClass,
+                        'max-sm:hidden',
+                        figure
+                      )}
+                    >
+                      {`${((row.lift ?? 0) * 100).toFixed(1)}%`}
+                    </td>
+                  )}
+                  <td
+                    className={cn(
+                      cellClass,
+                      numberClass,
+                      (!thin && gainTone(row.afterFees)) || 'text-vergex-muted'
+                    )}
+                  >
+                    {row.afterFees === null ? '—' : fmtPct(row.afterFees, true)}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        ))}
+      </table>
+      {shown.some((group) =>
+        group.rows.some((row) => tooFewMoments(row.moments))
+      ) && <EmptyLine>{head.tooFew}</EmptyLine>}
+    </>
   )
 }

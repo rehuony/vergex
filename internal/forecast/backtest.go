@@ -26,6 +26,9 @@ type BacktestOptions struct {
 type Metrics struct {
 	Samples int `json:"samples"`
 	Signals int `json:"signals"`
+	// Moments counts the separate stretches of time the calls that moved come from. A
+	// report from before this was counted has 0.
+	Moments int `json:"moments"`
 	Hits    int `json:"hits"`
 	Misses  int `json:"misses"`
 	// HitRate is hits over directional signals that moved.
@@ -113,6 +116,13 @@ func chanceRate[N int | int64](upCalls, downCalls, rose, moved N) *float64 {
 type accumulator struct {
 	samples, signals, hits, misses, ups, moved, withinMove, withDerivatives, upCalls, downCalls int
 	brier, brierCandles, probSum, returnSum                                                     float64
+	moments                                                                                     map[sampleMoment]bool
+}
+
+// sampleMoment is one horizon's stretch of time in one interval.
+type sampleMoment struct {
+	interval string
+	index    int64
 }
 
 func (a *accumulator) add(sample backtestSample) {
@@ -157,11 +167,15 @@ func (a *accumulator) add(sample backtestSample) {
 		} else {
 			a.downCalls++
 		}
+		if a.moments == nil {
+			a.moments = map[sampleMoment]bool{}
+		}
+		a.moments[sampleMoment{sample.interval, sample.moment}] = true
 	}
 }
 
 func (a *accumulator) metrics() Metrics {
-	m := Metrics{Samples: a.samples, Signals: a.signals, Hits: a.hits, Misses: a.misses}
+	m := Metrics{Samples: a.samples, Signals: a.signals, Moments: len(a.moments), Hits: a.hits, Misses: a.misses}
 	if a.hits+a.misses > 0 {
 		rate := float64(a.hits) / float64(a.hits+a.misses)
 		m.HitRate = &rate
@@ -195,7 +209,7 @@ type backtestSample struct {
 	symbol, interval, regime, direction     string
 	prob, probCandles, movePct, expectedPct float64
 	up, hasDerivatives                      bool
-	time                                    int64
+	time, moment                            int64
 	factors                                 []FactorValue
 }
 
@@ -395,7 +409,7 @@ func testSeries(source BacktestSource, config Config, symbol, interval string, r
 		samples = append(samples, backtestSample{
 			symbol: symbol, interval: interval, regime: result.Regime, direction: result.Direction,
 			prob: result.ProbFull, probCandles: result.ProbCandles, movePct: (target/result.Close - 1) * 100, expectedPct: result.ExpectedMovePct,
-			up: target > result.Close, hasDerivatives: result.HasDerivatives, time: at, factors: result.Factors,
+			up: target > result.Close, hasDerivatives: result.HasDerivatives, time: at, moment: at / (int64(horizon) * step), factors: result.Factors,
 		})
 	}
 	return samples, nil

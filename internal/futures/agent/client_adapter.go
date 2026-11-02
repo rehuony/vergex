@@ -29,6 +29,15 @@ type ClientAdapter struct {
 }
 
 func (a *ClientAdapter) Chat(ctx context.Context, messages []Message, tools []Tool) (Message, error) {
+	return a.chat(ctx, messages, tools, nil)
+}
+
+// ChatStream is Chat with the reply's text handed over as it arrives.
+func (a *ClientAdapter) ChatStream(ctx context.Context, messages []Message, tools []Tool, onText func(string)) (Message, error) {
+	return a.chat(ctx, messages, tools, onText)
+}
+
+func (a *ClientAdapter) chat(ctx context.Context, messages []Message, tools []Tool, onText func(string)) (Message, error) {
 	wire := make([]agent.Message, 0, len(messages))
 	for _, m := range messages {
 		v := agent.Message{Role: m.Role, Content: m.Content, ToolCallID: m.ToolCallID, ReasoningContent: m.ReasoningContent}
@@ -59,18 +68,25 @@ func (a *ClientAdapter) Chat(ctx context.Context, messages []Message, tools []To
 		request.Tools = nil
 		request.ToolChoice = ""
 	}
-	result, e := a.Client.CallWithRequestFull(request)
+	call := func() (*agent.Response, error) {
+		// What a text-only model writes is its tool calls, which are not for reading.
+		if onText == nil || a.TextTools {
+			return a.Client.CallWithRequestFull(request)
+		}
+		return agent.Stream(a.Client, request, onText)
+	}
+	result, e := call()
 	if refusedLimit(e) {
 		maxTokens = smallerReplyLimit
-		result, e = a.Client.CallWithRequestFull(request)
+		result, e = call()
 	}
 	if e != nil {
 		if ctx.Err() != nil {
 			return Message{}, ctx.Err()
 		}
-		// Never expose wrapped transport URLs, authorization headers or
-		// provider response bodies to the planning conversation.
-		return Message{}, errors.New("The model request failed. Check the model provider key, balance and connectivity, then try again.")
+		// Says why in terms of what to do about it, with the provider's one line and never
+		// transport URLs, authorization headers or whole response bodies.
+		return Message{}, agent.Classify(a.Client, e)
 	}
 	if result == nil || len(result.Content) > 24000 || len(result.ToolCalls) > 5 || len(result.ReasoningContent) > 256<<10 {
 		return Message{}, errors.New("invalid model response")

@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { QueryWrapper } from '@/tests/query-wrapper'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { DecisionLog } from '@/components/trader/decision-log'
+import { actionName, logText } from '@/components/trader/decision-format'
 import type { DecisionRecord } from '@/types'
 
 const mocks = vi.hoisted(() => ({ summaries: vi.fn() }))
@@ -55,7 +56,7 @@ it('marks success=true cycles as faults when their orders failed', async () => {
     ],
   })
   expect(screen.getByText('Fault · 1 of 1 orders failed')).toBeInTheDocument()
-  expect(screen.getByText('open_long SOL')).toBeInTheDocument()
+  expect(screen.getByText('Open long SOL')).toBeInTheDocument()
 })
 
 it('formats protocol errors instead of showing raw bytes', async () => {
@@ -81,8 +82,8 @@ it('renders log tones as icons and strips the emoji the backend prefixes', async
       '✓ SOLUSDT close_long succeeded',
     ],
   })
-  expect(screen.getByText('blocked: cooldown')).toBeInTheDocument()
-  expect(screen.getByText('succeeded')).toBeInTheDocument()
+  expect(screen.getByText('Stopped by a rule: cooldown')).toBeInTheDocument()
+  expect(screen.getByText('Succeeded')).toBeInTheDocument()
   expect(document.body.textContent).not.toMatch(
     /[✓✗\p{Extended_Pictographic}]/u
   )
@@ -96,4 +97,21 @@ it('shows a dash for an action time that was never recorded', async () => {
   })
   expect(screen.getByText('—')).toBeInTheDocument()
   expect(document.body.textContent).not.toContain('1-01-01')
+})
+
+it('reads the log in the language in use, and leaves what it has no words for', () => {
+  const cases: [string, string][] = [
+    ['model call duration: 3114 ms', '模型调用耗时 3114 ms'],
+    ['✓ SOLUSDT open_long succeeded', '成功'],
+    ['🧊 SOLUSDT open_long blocked: halted', '被规则拦下：halted'],
+    [
+      '1 of 3 trade actions failed or were blocked',
+      '3 笔交易中有 1 笔失败或被拦下',
+    ],
+    ['Failed to get agent decision: boom', '没有拿到模型的决定：boom'],
+    ['something the server just said', 'something the server just said'],
+  ]
+  for (const [raw, want] of cases) expect(logText(raw, 'zh-CN')).toBe(want)
+  expect(actionName('OPEN_SHORT', 'zh-CN')).toBe('开空')
+  expect(actionName('something_new', 'zh-CN')).toBe('something_new')
 })

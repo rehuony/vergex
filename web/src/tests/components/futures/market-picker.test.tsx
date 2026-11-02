@@ -89,7 +89,7 @@ it('opens a typed symbol the list does not have', async () => {
   const search = screen.getByLabelText('Search exchange markets')
   fireEvent.change(search, { target: { value: 'dogeusdt' } })
   expect(
-    screen.getByText('Press Enter to open this symbol.')
+    screen.getByText('Press Enter to open this symbol')
   ).toBeInTheDocument()
   fireEvent.submit(search)
   expect(select).toHaveBeenCalledWith('DOGEUSDT')

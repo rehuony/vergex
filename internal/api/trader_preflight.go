@@ -221,16 +221,16 @@ func checkLaunchAgentModel(model *agent.Model) LaunchCheck {
 	case model == nil:
 		check.Status = launchCheckStatusFailed
 		check.Code = "MODEL_NOT_FOUND"
-		check.Message = "The selected model was not found. Configure a model first."
+		check.Message = "The selected model was not found. Configure a model first"
 	case !model.Enabled:
 		check.Status = launchCheckStatusFailed
 		check.Code = "MODEL_DISABLED"
-		check.Message = fmt.Sprintf("Model \"%s\" is disabled. Enable it first.", model.Name)
+		check.Message = fmt.Sprintf("Model \"%s\" is disabled. Enable it first", model.Name)
 		check.Params = map[string]string{"name": model.Name}
 	case strings.TrimSpace(model.APIKey.String()) == "":
 		check.Status = launchCheckStatusFailed
 		check.Code = "MODEL_MISSING_CREDENTIALS"
-		check.Message = fmt.Sprintf("Model \"%s\" has no credential saved. Add the API key first.", model.Name)
+		check.Message = fmt.Sprintf("Model \"%s\" has no credential saved. Add the API key first", model.Name)
 		check.Params = map[string]string{"name": model.Name}
 	default:
 		check.Status = launchCheckStatusOK
@@ -281,7 +281,7 @@ func (s *Server) checkLaunchAccount(userID string, account *account.Account) []L
 	if err != nil {
 		accountCheck.Status = launchCheckStatusWarning
 		accountCheck.Code = "EXCHANGE_STATE_UNKNOWN"
-		accountCheck.Message = "Could not verify the exchange account right now."
+		accountCheck.Message = "Could not verify the exchange account right now"
 		fundsCheck.Status = launchCheckStatusSkipped
 		return []LaunchCheck{configCheck, accountCheck, fundsCheck}
 	}
@@ -290,7 +290,7 @@ func (s *Server) checkLaunchAccount(userID string, account *account.Account) []L
 	if !ok {
 		accountCheck.Status = launchCheckStatusWarning
 		accountCheck.Code = "EXCHANGE_STATE_UNKNOWN"
-		accountCheck.Message = "Could not verify the exchange account right now."
+		accountCheck.Message = "Could not verify the exchange account right now"
 		fundsCheck.Status = launchCheckStatusSkipped
 		return []LaunchCheck{configCheck, accountCheck, fundsCheck}
 	}
@@ -300,7 +300,7 @@ func (s *Server) checkLaunchAccount(userID string, account *account.Account) []L
 		accountCheck.Code = state.ErrorCode
 		accountCheck.Message = state.ErrorMessage
 		if accountCheck.Message == "" {
-			accountCheck.Message = fmt.Sprintf("Account \"%s\" is not ready (%s).", accountDisplayName(account), state.Status)
+			accountCheck.Message = fmt.Sprintf("Account \"%s\" is not ready (%s)", accountDisplayName(account), state.Status)
 		}
 		fundsCheck.Status = launchCheckStatusSkipped
 		return []LaunchCheck{configCheck, accountCheck, fundsCheck}
@@ -320,7 +320,7 @@ func (s *Server) checkLaunchAccount(userID string, account *account.Account) []L
 
 	if funded < MinTradingUSDC {
 		message := fmt.Sprintf(
-			"Account \"%s\" holds %.2f %s but needs at least %.0f %s to place the first trade.",
+			"Account \"%s\" holds %.2f %s but needs at least %.0f %s to place the first trade",
 			accountDisplayName(account), funded, fundsCheck.Asset, MinTradingUSDC, fundsCheck.Asset,
 		)
 		fundsCheck.Status = launchCheckStatusFailed
@@ -343,11 +343,11 @@ func (s *Server) checkLaunchAccount(userID string, account *account.Account) []L
 // returns stable uppercase codes for the checklist UI.
 func describeAccountConfigIssue(account *account.Account) (string, string) {
 	if account == nil {
-		return "The selected exchange account was not found. Connect an exchange first.", "EXCHANGE_NOT_FOUND"
+		return "The selected exchange account was not found. Connect an exchange first", "EXCHANGE_NOT_FOUND"
 	}
 	if missing := missingAccountFields(account); len(missing) > 0 {
 		return fmt.Sprintf(
-			"Account \"%s\" is missing %s. Complete the connection first.",
+			"Account \"%s\" is missing %s. Complete the connection first",
 			accountDisplayName(account), strings.Join(missing, ", "),
 		), "EXCHANGE_MISSING_FIELDS"
 	}

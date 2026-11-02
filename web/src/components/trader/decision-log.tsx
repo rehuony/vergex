@@ -17,10 +17,11 @@ import { cn } from '@/utils/cn'
 import { pollEvery } from '@/utils/poll'
 import { DecisionDetailDialog } from './decision-detail-dialog'
 import {
+  actionName,
   actionSide,
-  cleanLog,
   cycleFault,
   fmtDateTime,
+  logText,
   logTone,
   tradeActions,
   type LogTone,
@@ -42,7 +43,13 @@ const TONE_ICON: Record<LogTone, LucideIcon | null> = {
   info: null,
 }
 
-export function LogLine({ text }: { text: string }) {
+export function LogLine({
+  text,
+  language,
+}: {
+  text: string
+  language: Language
+}) {
   const tone = logTone(text)
   const Icon = TONE_ICON[tone]
   return (
@@ -50,7 +57,7 @@ export function LogLine({ text }: { text: string }) {
       <span className="mt-0.5 flex size-3 shrink-0 justify-center">
         {Icon && <Icon size={12} aria-hidden="true" />}
       </span>
-      <span className="min-w-0 break-words">{cleanLog(text)}</span>
+      <span className="min-w-0 break-words">{logText(text, language)}</span>
     </li>
   )
 }
@@ -101,7 +108,8 @@ function Cycle({
                         : 'text-vergex-muted'
                   )}
                 >
-                  {action.action.toLowerCase()} {baseLabel(action.symbol)}
+                  {actionName(action.action, language)}{' '}
+                  {baseLabel(action.symbol)}
                 </span>
               )
             })}
@@ -126,9 +134,11 @@ function Cycle({
           {(logs.length > 0 || record.error_message) && (
             <ul className="mt-1.5 flex flex-col gap-0.5">
               {logs.map((line, index) => (
-                <LogLine key={index} text={line} />
+                <LogLine key={index} text={line} language={language} />
               ))}
-              {record.error_message && <LogLine text={record.error_message} />}
+              {record.error_message && (
+                <LogLine text={record.error_message} language={language} />
+              )}
             </ul>
           )}
         </span>

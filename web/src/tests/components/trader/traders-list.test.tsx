@@ -66,13 +66,13 @@ it('filters by the search and says when nothing matches', () => {
   unmount()
 
   show({ traders, search: 'nothing' })
-  expect(screen.getByText('No traders match this search.')).toBeInTheDocument()
+  expect(screen.getByText('No traders match this search')).toBeInTheDocument()
 })
 
 it('points a first trader at what is still missing', () => {
   show({ traders: [], modelCount: 0, accountCount: 0 })
   expect(
-    screen.getByText('A trader needs a model and an account.')
+    screen.getByText('A trader needs a model and an account')
   ).toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'Add model' })).toHaveAttribute(
     'href',

@@ -51,7 +51,7 @@ export function useAccountCheck(
           String(next.available).trim() === ''
         )
           throw new Error(
-            'The exchange did not return a complete balance. Retry verification.'
+            'The exchange did not return a complete balance. Retry verification'
           )
         if (mounted.current && revision === request.current)
           setCheck({
@@ -66,7 +66,7 @@ export function useAccountCheck(
             accountID,
             status: 'unavailable',
             error:
-              e instanceof Error ? e.message : 'Could not verify the account.',
+              e instanceof Error ? e.message : 'Could not verify the account',
           })
       }
     },

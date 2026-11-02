@@ -1,4 +1,4 @@
-import { API_BASE, httpClient } from './helpers'
+import { API_BASE, httpClient, serverError } from './helpers'
 
 export type ForecastInterval = '15m' | '1h' | '4h' | '1d'
 export const FORECAST_INTERVALS: ForecastInterval[] = ['15m', '1h', '4h', '1d']
@@ -79,12 +79,26 @@ export interface ForecastResult {
 export interface ForecastStats {
   judged: number
   samples: number
+  // The separate stretches of time those samples come from.
+  moments: number
   hits: number
   misses: number
   hit_rate: number | null
   // What the same mix of up and down calls would hit with no skill.
   chance_rate: number | null
   avg_return_after_fee_pct: number | null
+}
+
+// Below this many separate moments a record says too little to read anything into, however
+// many coins it counts: coins move together. A report from before they were counted has no
+// figure to go by, so it is left as it reads.
+export const ENOUGH_MOMENTS = 30
+export const tooFewMoments = (moments: number | null | undefined) =>
+  !!moments && moments < ENOUGH_MOMENTS
+
+export interface ForecastSettings {
+  alert_threshold: number
+  alert_intervals: string[]
 }
 
 export interface ForecastCalibrationStatus {
@@ -194,11 +208,15 @@ export interface ForecastStrategies {
   active_strategy_id: string
   strategies: ForecastStrategy[]
   default_config: ForecastConfig
+  // How many bars a new strategy can look ahead, by interval.
+  horizon_limits: Record<string, number>
 }
 
 export interface BacktestMetrics {
   samples: number
   signals: number
+  // The separate stretches of time the calls come from. None in an older report.
+  moments?: number
   hits: number
   misses: number
   hit_rate: number | null
@@ -264,6 +282,9 @@ export interface BacktestRun {
   total: number
   // The report's overall line, in a list of runs.
   summary?: BacktestMetrics
+  // The candles it really tested, which local history can make much less than was asked for.
+  tested_from?: number
+  tested_to?: number
   // The whole report, when one run is asked for.
   report?: BacktestReport
   error?: string
@@ -283,7 +304,7 @@ async function read<T>(path: string, failure: string): Promise<T> {
   const result = await httpClient.request<T>(`${API_BASE}${path}`, {
     silent: true,
   })
-  if (!result.success) throw new Error(result.message || failure)
+  if (!result.success) throw serverError(result, failure)
   return result.data!
 }
 
@@ -341,7 +362,7 @@ export const forecastApi = {
       { config, name }
     )
     if (!result.success)
-      throw new Error(result.message || 'Failed to save the strategy')
+      throw serverError(result, 'Failed to save the strategy')
     return result.data!
   },
 
@@ -352,15 +373,14 @@ export const forecastApi = {
       { method: 'PUT', data: { name }, silent: true }
     )
     if (!result.success)
-      throw new Error(result.message || 'Failed to rename the strategy')
+      throw serverError(result, 'Failed to rename the strategy')
   },
 
   async activateForecastStrategy(id: string): Promise<void> {
     const result = await httpClient.post(
       `${API_BASE}/forecast/strategies/${id}/activate`
     )
-    if (!result.success)
-      throw new Error(result.message || 'Failed to use the strategy')
+    if (!result.success) throw serverError(result, 'Failed to use the strategy')
   },
 
   async deactivateForecastStrategy(id: string): Promise<void> {
@@ -368,15 +388,14 @@ export const forecastApi = {
       `${API_BASE}/forecast/strategies/${id}/deactivate`
     )
     if (!result.success)
-      throw new Error(result.message || 'Failed to stop the strategy')
+      throw serverError(result, 'Failed to stop the strategy')
   },
 
   async reviveForecastStrategy(id: string): Promise<void> {
     const result = await httpClient.post(
       `${API_BASE}/forecast/strategies/${id}/revive`
     )
-    if (!result.success)
-      throw new Error(result.message || 'Failed to use the strategy')
+    if (!result.success) throw serverError(result, 'Failed to use the strategy')
   },
 
   async deleteForecastStrategy(id: string): Promise<void> {
@@ -384,22 +403,23 @@ export const forecastApi = {
       `${API_BASE}/forecast/strategies/${id}`
     )
     if (!result.success)
-      throw new Error(result.message || 'Failed to delete the strategy')
+      throw serverError(result, 'Failed to delete the strategy')
   },
 
   getForecastSettings() {
-    return read<{ alert_threshold: number }>(
+    return read<ForecastSettings>(
       '/forecast/settings',
       'Failed to load forecast settings'
     )
   },
 
-  async saveForecastSettings(alertThreshold: number): Promise<void> {
-    const result = await httpClient.put(`${API_BASE}/forecast/settings`, {
-      alert_threshold: alertThreshold,
-    })
+  async saveForecastSettings(settings: ForecastSettings): Promise<void> {
+    const result = await httpClient.put(
+      `${API_BASE}/forecast/settings`,
+      settings
+    )
     if (!result.success)
-      throw new Error(result.message || 'Failed to save forecast settings')
+      throw serverError(result, 'Failed to save forecast settings')
   },
 
   getHistoryCoverage(symbols: string[], intervals: string[]) {
@@ -433,7 +453,7 @@ export const forecastApi = {
       { method: 'PUT', data: { name }, silent: true }
     )
     if (!result.success)
-      throw new Error(result.message || 'Failed to rename the backtest')
+      throw serverError(result, 'Failed to rename the backtest')
   },
 
   async deleteForecastBacktest(id: number): Promise<void> {
@@ -441,7 +461,7 @@ export const forecastApi = {
       `${API_BASE}/forecast/backtests/${id}`
     )
     if (!result.success)
-      throw new Error(result.message || 'Failed to delete the backtest')
+      throw serverError(result, 'Failed to delete the backtest')
   },
 
   async cancelForecastBacktest(id: number): Promise<void> {
@@ -449,7 +469,7 @@ export const forecastApi = {
       `${API_BASE}/forecast/backtests/${id}/cancel`
     )
     if (!result.success)
-      throw new Error(result.message || 'Failed to stop the backtest')
+      throw serverError(result, 'Failed to stop the backtest')
   },
 
   async startForecastBacktest(request: {
@@ -465,7 +485,7 @@ export const forecastApi = {
       request
     )
     if (!result.success)
-      throw new Error(result.message || 'Failed to start the backtest')
+      throw serverError(result, 'Failed to start the backtest')
     return result.data!
   },
 }

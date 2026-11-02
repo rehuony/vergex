@@ -10,17 +10,15 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary:
-          'bg-vergex-ink font-semibold text-vergex-on-ink hover:bg-vergex-ink-hover',
-        secondary:
-          'border border-vergex-line bg-vergex-surface text-vergex-ink hover:bg-vergex-surface-muted',
+        primary: 'bg-vergex-ink text-vergex-on-ink hover:bg-vergex-ink-hover',
+        // The same tint as what is selected elsewhere: no outline to read as a stock button.
+        secondary: 'bg-vergex-ink-tint text-vergex-ink hover:bg-vergex-ink/12',
         danger:
-          'border border-vergex-danger-border bg-vergex-surface text-vergex-danger hover:bg-vergex-danger-bg',
+          'bg-vergex-danger-bg text-vergex-danger hover:bg-vergex-danger/20 focus-visible:ring-vergex-danger/25',
         destructive:
-          'bg-vergex-danger font-semibold text-white hover:bg-vergex-danger/90 focus-visible:ring-vergex-danger/25',
+          'bg-vergex-danger text-vergex-on-ink hover:bg-vergex-danger/90 focus-visible:ring-vergex-danger/25',
         success:
-          'border border-vergex-success-border bg-vergex-surface text-vergex-success hover:bg-vergex-success-bg',
-        soft: 'bg-vergex-ink-tint text-vergex-ink hover:bg-vergex-ink/12',
+          'bg-vergex-success-bg text-vergex-success hover:bg-vergex-success/20 focus-visible:ring-vergex-success/25',
         ghost:
           'text-vergex-muted hover:bg-vergex-surface-muted hover:text-vergex-ink',
         // Inline text action, e.g. "Manage account" in a card footer.
@@ -37,7 +35,7 @@ export const buttonVariants = cva(
           'justify-between rounded-md border border-vergex-line bg-vergex-surface text-left font-normal text-vergex-ink hover:border-vergex-line-strong focus-visible:border-vergex-ink/40 focus-visible:ring-1 focus-visible:ring-vergex-ink/10 data-[state=open]:border-vergex-ink/40',
       },
       size: {
-        sm: 'h-8 px-3',
+        sm: 'h-8 gap-1.5 px-3',
         md: 'h-9 px-4',
         lg: 'h-10 px-5',
         icon: 'h-9 w-9',

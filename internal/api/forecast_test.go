@@ -58,8 +58,8 @@ func TestForecastStrategiesAreValidated(t *testing.T) {
 	if w := send(r, http.MethodPost, "/strategies", bad); w.Code != http.StatusBadRequest {
 		t.Fatalf("a config with no factors = %d", w.Code)
 	}
-	if w := send(r, http.MethodPost, "/strategies/99/activate", ""); w.Code != http.StatusNotFound {
-		t.Fatalf("activating a missing strategy = %d", w.Code)
+	if w := send(r, http.MethodPost, "/strategies/99/activate", ""); w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), `"error_key":"forecast.refusal.absent"`) {
+		t.Fatalf("activating a missing strategy = %d %s", w.Code, w.Body.String())
 	}
 }
 
@@ -74,8 +74,14 @@ func TestForecastInputsAreChecked(t *testing.T) {
 	if w := send(r, http.MethodPut, "/settings", `{"alert_threshold":40}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("a threshold under 51 = %d", w.Code)
 	}
-	if w := send(r, http.MethodPut, "/settings", `{"alert_threshold":80}`); w.Code != http.StatusOK {
+	if w := send(r, http.MethodPut, "/settings", `{"alert_threshold":80}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"alert_intervals":["1h","4h","1d"]`) {
 		t.Fatalf("threshold = %d %s", w.Code, w.Body.String())
+	}
+	if w := send(r, http.MethodPut, "/settings", `{"alert_threshold":80,"alert_intervals":["3m"]}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("an unsupported alert interval = %d", w.Code)
+	}
+	if w := send(r, http.MethodPut, "/settings", `{"alert_threshold":80,"alert_intervals":[]}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"alert_intervals":[]`) {
+		t.Fatalf("no alert intervals = %d %s", w.Code, w.Body.String())
 	}
 	if w := send(r, http.MethodPost, "/backtests", `{"strategy_id":1,"symbols":["bad symbol"],"intervals":["1h"],"from":1,"to":2}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("a bad symbol = %d", w.Code)

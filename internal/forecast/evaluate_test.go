@@ -286,6 +286,9 @@ func TestBacktestMatchesLiveEvaluationAndDoesNotOverlap(t *testing.T) {
 	if report.Overall.HitRate == nil {
 		t.Fatal("expected a hit rate")
 	}
+	if report.Overall.Moments == 0 || report.Overall.Moments != report.Overall.Hits+report.Overall.Misses {
+		t.Fatalf("one coin's calls are each a moment of their own: %+v", report.Overall)
+	}
 	if len(report.ByInterval) != 1 || len(report.BySymbol) != 1 || len(report.Reliability) == 0 {
 		t.Fatalf("breakdowns: %+v", report)
 	}
@@ -311,6 +314,38 @@ func TestBacktestMatchesLiveEvaluationAndDoesNotOverlap(t *testing.T) {
 		if live.ProbFull != sample.prob || live.Direction != sample.direction {
 			t.Fatalf("bar %d: live %.6f, backtest %.6f", i, live.ProbFull, sample.prob)
 		}
+	}
+}
+
+// Coins move together, so more of them over the same stretch of time add samples and no
+// moments, while each interval's stretches are its own.
+func TestABacktestCountsEachStretchOfTimeOnce(t *testing.T) {
+	candles := walk(WindowBars+400, 0.15)
+	options := BacktestOptions{Symbols: []string{"BTCUSDT"}, Intervals: []string{"1h"}, From: candles[WindowBars].OpenTime, To: candles[len(candles)-1].OpenTime}
+	one, err := RunBacktest(context.Background(), fixedSource{candles}, DefaultConfig(), options, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	options.Symbols = []string{"BTCUSDT", "ETHUSDT", "SOLUSDT"}
+	three, err := RunBacktest(context.Background(), fixedSource{candles}, DefaultConfig(), options, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if three.Overall.Samples != 3*one.Overall.Samples || three.Overall.Moments != one.Overall.Moments {
+		t.Fatalf("one coin %+v, three %+v", one.Overall, three.Overall)
+	}
+	if three.BySymbol["ETHUSDT"].Moments != one.Overall.Moments {
+		t.Fatalf("by coin = %+v", three.BySymbol["ETHUSDT"])
+	}
+
+	var overall accumulator
+	for _, interval := range []string{"1h", "4h"} {
+		overall.add(backtestSample{interval: interval, direction: DirectionUp, movePct: 1, moment: 7})
+	}
+	overall.add(backtestSample{interval: "1h", direction: DirectionNeutral, movePct: 1, moment: 8})
+	overall.add(backtestSample{interval: "1h", direction: DirectionUp, movePct: 0, moment: 9})
+	if got := overall.metrics().Moments; got != 2 {
+		t.Fatalf("moments = %d, want one for each interval, and none with no call or no move", got)
 	}
 }
 

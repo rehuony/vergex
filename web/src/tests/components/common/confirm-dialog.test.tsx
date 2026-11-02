@@ -3,7 +3,7 @@ import { expect, it } from 'vitest'
 import { ConfirmDialogProvider } from '@/components/common/confirm-dialog'
 import { confirmToast } from '@/components/common/notify'
 
-it('paints the confirm button red only for destructive confirmations', async () => {
+it('marks only destructive confirmations, and says what is asked in the language in use', async () => {
   render(
     <ConfirmDialogProvider>
       <div />
@@ -12,6 +12,7 @@ it('paints the confirm button red only for destructive confirmations', async () 
 
   act(() => {
     void confirmToast('Delete this trader?', {
+      title: 'Delete trader',
       okText: 'Delete',
       tone: 'danger',
     })
@@ -19,10 +20,13 @@ it('paints the confirm button red only for destructive confirmations', async () 
   expect(await screen.findByRole('button', { name: 'Delete' })).toHaveClass(
     'bg-vergex-danger'
   )
+  expect(
+    screen.getByRole('alertdialog', { name: 'Delete trader' })
+  ).toHaveAccessibleDescription('Delete this trader?')
   act(() => screen.getByRole('button', { name: 'Cancel' }).click())
 
   act(() => {
-    void confirmToast('Save changes?', { okText: 'Save' })
+    void confirmToast('Save changes?', { title: 'Save', okText: 'Save' })
   })
   expect(await screen.findByRole('button', { name: 'Save' })).not.toHaveClass(
     'bg-vergex-danger'

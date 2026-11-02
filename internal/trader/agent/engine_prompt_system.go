@@ -189,15 +189,9 @@ func writeModeVariant(sb *strings.Builder, variant string, zh bool) {
 }
 
 func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskControl kind.RiskControl, btcEthPosValueRatio, altcoinPosValueRatio float64, singleSymbol bool, primarySymbol string, zh bool) {
-	if zh {
-		sb.WriteString("# Hard Constraints (Risk Control)\n\n")
-		sb.WriteString("## CODE ENFORCED (backend validation, cannot be bypassed):\n")
-		sb.WriteString(fmt.Sprintf("- Max Positions: %d instruments simultaneously\n", riskControl.MaxPositions))
-	} else {
-		sb.WriteString("# Hard Constraints (Risk Control)\n\n")
-		sb.WriteString("## CODE ENFORCED (backend validation, cannot be bypassed):\n")
-		sb.WriteString(fmt.Sprintf("- Max Positions: %d instruments simultaneously\n", riskControl.MaxPositions))
-	}
+	sb.WriteString("# Hard Constraints (Risk Control)\n\n")
+	sb.WriteString("## CODE ENFORCED (backend validation, cannot be bypassed):\n")
+	sb.WriteString(fmt.Sprintf("- Max Positions: %d instruments simultaneously\n", riskControl.MaxPositions))
 
 	if singleSymbol {
 		// One symbol — pick the higher of the two configured ratios so the

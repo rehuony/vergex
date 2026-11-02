@@ -105,6 +105,7 @@ const detail = (patch: Partial<ForecastDetail> = {}) =>
     stats: {
       judged: 12,
       samples: 4,
+      moments: 4,
       hits: 3,
       misses: 1,
       hit_rate: 0.75,
@@ -183,7 +184,8 @@ it('shows the call, and the hit rate against what chance would hit', async () =>
   show()
   expect(await screen.findByText('77,000')).toBeVisible()
   expect(screen.getByText('Score 68')).toBeVisible()
-  expect(screen.getByText('75.0%')).toBeVisible()
+  // Four calls are too few to read, so they stay grey.
+  expect(screen.getByText('75.0%').className).toContain('text-vergex-muted')
   expect(screen.getByText('60.0%')).toBeVisible()
   expect(
     screen.getByRole('img', { name: 'BTCUSDT 1h candles' })
@@ -314,7 +316,7 @@ it('opens a coin that is not tracked when asked by name', async () => {
   await screen.findByRole('table')
   const search = screen.getByLabelText('Search coins')
   fireEvent.change(search, { target: { value: 'new' } })
-  expect(screen.getByText('Press Enter to fetch NEWUSDT.')).toBeVisible()
+  expect(screen.getByText('Press Enter to fetch NEWUSDT')).toBeVisible()
   fireEvent.keyDown(search, { key: 'Enter' })
   expect(screen.getByLabelText('where')).toHaveTextContent(
     '/forecast?symbol=NEWUSDT&interval=1h'
@@ -371,7 +373,7 @@ it('says so when no strategy is in use, and reads no coin', async () => {
 
 it('says so when no coins are tracked', async () => {
   show('/forecast')
-  expect(await screen.findByText('No coins are being tracked.')).toBeVisible()
+  expect(await screen.findByText('No coins are being tracked')).toBeVisible()
   expect(screen.getByRole('link', { name: 'Choose coins' })).toHaveAttribute(
     'href',
     '/forecast/settings'
@@ -392,4 +394,27 @@ it('asks only for what the chart will draw', async () => {
   expect(JSON.parse(localStorage.getItem('vergex.forecast.chart')!).rsi).toBe(
     true
   )
+})
+
+it('leaves the move of a call not yet judged blank, and readings the coin has none of', async () => {
+  mocks.detail.mockResolvedValue(
+    detail({
+      signals: [
+        signal({ id: 1, status: 'open' }),
+        signal({
+          id: 2,
+          open_time: 3600000,
+          status: 'verified',
+          outcome: 'hit',
+          actual_move_pct: 1.5,
+        }),
+      ],
+    })
+  )
+  show()
+  const open = await screen.findByText('Open')
+  expect(open.closest('tr')).toHaveTextContent('—')
+  expect(open.closest('tr')).not.toHaveTextContent('0.00%')
+  expect(screen.getByText('+1.50%')).toBeVisible()
+  expect(screen.getByText('Funding').parentElement).toHaveTextContent('—')
 })

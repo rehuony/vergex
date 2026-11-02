@@ -52,7 +52,7 @@ See [accounts.md](accounts.md) for API key errors.
 
 ## Models
 
-**A model call fails.** Check that the model is enabled and has an API key, then use the test button in Settings → Agent models.
+**A model call fails.** Check that the model is enabled and has an API key, then use the test button in Settings → Agent models. What you are told says why, with the provider's own line; the full error of every failed call is in `agent.calls`. See [When a call fails](models.md#when-a-call-fails).
 
 **A custom URL is rejected.** Localhost and private addresses are blocked, and the URL must not include `/chat/completions` unless it ends with `#`: see [models.md](models.md).
 

@@ -214,3 +214,75 @@ func TestPlansAreWrittenInTheInterfacesLanguage(t *testing.T) {
 		t.Error("an unknown language was accepted")
 	}
 }
+
+func TestALongLabelIsCutToFitTheChart(t *testing.T) {
+	if got := shortLabel("Resistance 81950"); got != "Resistance 81950" {
+		t.Fatalf("a short label changed: %q", got)
+	}
+	got := shortLabel(strings.Repeat("阻力", 60))
+	if runes := []rune(got); len(runes) != maxLabelRunes || !strings.HasSuffix(got, "…") {
+		t.Fatalf("label = %q", got)
+	}
+}
+
+// streamPlanner writes its reply in pieces, then returns it whole.
+type streamPlanner struct{ pieces []string }
+
+func (p *streamPlanner) Chat(context.Context, []Message, []Tool) (Message, error) {
+	return Message{}, errors.New("a planner that can stream should be asked to")
+}
+
+func (p *streamPlanner) ChatStream(_ context.Context, _ []Message, _ []Tool, onText func(string)) (Message, error) {
+	for _, piece := range p.pieces {
+		onText(piece)
+		time.Sleep(textEvery / 2)
+	}
+	return Message{Role: "assistant", Content: strings.Join(p.pieces, "")}, nil
+}
+
+func TestAReplyReachesThePageAsItIsWrittenAndInOrder(t *testing.T) {
+	planner := &streamPlanner{pieces: []string{"one ", "two ", "three ", "four ", "five"}}
+	var events []Event
+	answer, err := chatWithProgress(context.Background(), planner, nil, nil, func(event Event) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil || answer.Content != "one two three four five" {
+		t.Fatalf("answer=%+v err=%v", answer, err)
+	}
+	var seen strings.Builder
+	deltas := 0
+	for _, event := range events {
+		if event.Type == "assistant_delta" {
+			deltas++
+			seen.WriteString(event.Data.(map[string]string)["text"])
+		}
+	}
+	// Everything arrives, the last piece before the call returns, and in fewer events than
+	// pieces only when they came fast enough to be worth joining.
+	if seen.String() != answer.Content || deltas == 0 || deltas > len(planner.pieces) {
+		t.Fatalf("seen=%q in %d events", seen.String(), deltas)
+	}
+}
+
+func TestAPlannerThatCannotStreamStillAnswers(t *testing.T) {
+	var events []Event
+	answer, err := chatWithProgress(context.Background(), plainPlanner{}, nil, nil, func(event Event) error {
+		events = append(events, event)
+		return nil
+	})
+	if err != nil || answer.Content != "whole" {
+		t.Fatalf("answer=%+v err=%v", answer, err)
+	}
+	for _, event := range events {
+		if event.Type == "assistant_delta" {
+			t.Fatal("no text should go out for a planner that cannot stream")
+		}
+	}
+}
+
+type plainPlanner struct{}
+
+func (plainPlanner) Chat(context.Context, []Message, []Tool) (Message, error) {
+	return Message{Role: "assistant", Content: "whole"}, nil
+}

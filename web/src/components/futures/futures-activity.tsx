@@ -5,6 +5,7 @@ import { useLanguage } from '@/contexts/language-context'
 import { t, type Language } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { validationSummary } from '@/utils/futures/futures-presentation'
+import { eventErrorText } from '@/utils/request-errors'
 
 export interface ActivityItem {
   id: string
@@ -29,6 +30,25 @@ const TOOLS = new Set([
 ])
 const STRUCTURES = new Set(['market', 'limit', 'ladder', 'twap'])
 const LIVE_STEPS = 4
+// What a turn came to, kept with its steps but not one of them.
+const USAGE_ID = 'usage'
+
+// What a turn's model calls came to, read from what the server recorded of them.
+function usageText(d: Record<string, unknown>, language: Language) {
+  const tokens = (value: unknown) => Number(value).toLocaleString('en-US')
+  const cost = Number(d.cost_usd)
+  const money = d.unpriced
+    ? cost > 0
+      ? `≥ $${cost.toFixed(4)}`
+      : t('futures.activity.unpriced', language)
+    : `$${cost.toFixed(4)}`
+  return t('futures.activity.usageDetail', language, {
+    prompt: tokens(d.prompt_tokens),
+    completion: tokens(d.completion_tokens),
+    money,
+  })
+}
+
 export function structureName(kind: string, language: Language, fallback = '') {
   return STRUCTURES.has(kind)
     ? t(`futures.structure.${kind}`, language)
@@ -52,6 +72,18 @@ export function recordActivity(
         id: 'planning_sizing',
         label: text('sizing'),
         detail: text('planningOnly'),
+        state: 'done' as const,
+        started: now,
+        ended: now,
+      },
+    ]
+  if (event.type === 'usage')
+    return [
+      ...items.filter((item) => item.id !== USAGE_ID),
+      {
+        id: USAGE_ID,
+        label: text('usage'),
+        detail: usageText(d, language),
         state: 'done' as const,
         started: now,
         ended: now,
@@ -293,7 +325,7 @@ export function recordActivity(
       ended: now,
       detail:
         event.type === 'error'
-          ? String(d.message)
+          ? eventErrorText(d, language)
           : event.type === 'cancelled'
             ? text('cancelledDetail')
             : Number(d.drafts) > 0
@@ -334,17 +366,19 @@ export function FuturesActivity({
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [busy])
-  if (!busy && !items.length) return null
+  const usage = items.find((row) => row.id === USAGE_ID)
+  const steps = items.filter((row) => row.id !== USAGE_ID)
+  if (!busy && !steps.length) return null
   const rows = expanded
-    ? items
+    ? steps
     : busy
-      ? items.filter((row) => row.id !== 'model_transport').slice(-LIVE_STEPS)
-      : items.filter((row) => row.state === 'failed')
+      ? steps.filter((row) => row.id !== 'model_transport').slice(-LIVE_STEPS)
+      : steps.filter((row) => row.state === 'failed')
   const ended = busy
     ? now
-    : Math.max(...items.map((row) => row.ended || row.started))
-  const seconds = items.length
-    ? Math.max(0, Math.round((ended - items[0].started) / 1000))
+    : Math.max(...steps.map((row) => row.ended || row.started))
+  const seconds = steps.length
+    ? Math.max(0, Math.round((ended - steps[0].started) / 1000))
     : 0
   return (
     <section className="text-xs" aria-label={label('name')}>
@@ -362,8 +396,9 @@ export function FuturesActivity({
         )}
         <span>
           {busy
-            ? label(items.length ? 'thinkingFor' : 'thinking', { seconds })
-            : label('thought', { seconds, count: items.length })}
+            ? label(steps.length ? 'thinkingFor' : 'thinking', { seconds })
+            : label('thought', { seconds, count: steps.length })}
+          {usage && !busy && ` · ${usage.detail}`}
         </span>
         <ChevronRight
           className={cn(

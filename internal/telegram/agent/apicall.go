@@ -7,16 +7,18 @@ import (
 	"io"
 	"net/http"
 	"time"
+	"unicode/utf8"
 	"vergex/internal/logger"
 )
 
-// apiClient calls this server's own REST API with the bot user's JWT. Skills
-// use it with fixed paths, so the model never chooses an endpoint and every
-// request goes through the same validation and risk caps as the web UI.
+// apiClient calls this server's own REST API as the bot's user. Skills use it with
+// fixed paths, so the model never chooses an endpoint and every request goes through
+// the same validation and risk caps as the web UI.
 type apiClient struct {
 	baseURL string
-	token   string
-	client  *http.Client
+	// token signs each request anew: a JWT lasts a day, and the bot runs for months.
+	token  func() (string, error)
+	client *http.Client
 }
 
 // apiError is a non-2xx API response.
@@ -29,7 +31,7 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("API error %d: %s", e.Status, truncate(e.Body, 500))
 }
 
-func newAPIClient(port int, token string) *apiClient {
+func newAPIClient(port int, token func() (string, error)) *apiClient {
 	return &apiClient{
 		baseURL: fmt.Sprintf("http://127.0.0.1:%d", port),
 		token:   token,
@@ -66,8 +68,12 @@ func (c *apiClient) raw(method, path string, body any) (json.RawMessage, error) 
 	if err != nil {
 		return nil, err
 	}
+	token, err := c.token()
+	if err != nil {
+		return nil, fmt.Errorf("sign the API call: %w", err)
+	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("API call failed: %w", err)
@@ -87,9 +93,14 @@ func (c *apiClient) raw(method, path string, body any) (json.RawMessage, error) 
 	return data, nil
 }
 
+// truncate cuts s to about n bytes, never inside a character: what it returns is stored,
+// and PostgreSQL refuses broken UTF-8.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n] + "…"
 }

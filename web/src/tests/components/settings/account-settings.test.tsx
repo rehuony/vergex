@@ -278,7 +278,7 @@ it('will not delete an account a trader trades on', async () => {
   await new Promise((resolve) => setTimeout(resolve, 0))
   fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
   expect(
-    await screen.findByText('Used by Alpha. Delete those traders first.')
+    await screen.findByText('Used by Alpha. Delete those traders first')
   ).toBeVisible()
   expect(mocks.confirm).not.toHaveBeenCalled()
   expect(mocks.remove).not.toHaveBeenCalled()

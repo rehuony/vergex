@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,7 +136,7 @@ func (s *Server) handleTraderDryRun(c *gin.Context) {
 		"candidates":      candidates,
 	}
 	if req.AgentModelID != "" {
-		response, err := s.callDryRunModel(userID, req.AgentModelID, systemPrompt, userPrompt)
+		response, err := s.callDryRunModel(c.Request.Context(), userID, req.AgentModelID, systemPrompt, userPrompt)
 		if err != nil {
 			result["agent_error"] = err.Error()
 		} else {
@@ -208,7 +209,7 @@ func gridDryRunPrompts(config *kind.GridConfig) (string, string, []traderagent.C
 	return traderagent.BuildGridSystemPrompt(config), traderagent.BuildGridUserPrompt(context), candidates, nil
 }
 
-func (s *Server) callDryRunModel(userID, modelID, systemPrompt, userPrompt string) (string, error) {
+func (s *Server) callDryRunModel(ctx context.Context, userID, modelID, systemPrompt, userPrompt string) (string, error) {
 	model, err := s.stores.Models.Get(userID, modelID)
 	if err != nil {
 		return "", errors.New("the model was not found")
@@ -227,9 +228,13 @@ func (s *Server) callDryRunModel(userID, modelID, systemPrompt, userPrompt strin
 	client.SetAPIKey(string(model.APIKey), model.CustomAPIURL, model.CustomModelName)
 	agent.TagUsage(client, agent.FeatureTest, "")
 
-	response, err := client.CallWithMessages(systemPrompt, userPrompt)
+	// Leaving the dialog stops the call rather than paying for an answer nobody will read.
+	response, err := client.CallWithRequest(&agent.Request{
+		Ctx:      ctx,
+		Messages: []agent.Message{agent.NewSystemMessage(systemPrompt), agent.NewUserMessage(userPrompt)},
+	})
 	if err != nil {
-		return "", fmt.Errorf("model API call failed: %w", err)
+		return "", agent.Classify(client, err)
 	}
 	return response, nil
 }

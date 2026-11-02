@@ -38,6 +38,8 @@ type TraderOrder struct {
 	CreatedAt       int64   `gorm:"column:created_at;serializer:unixms;autoCreateTime:false" json:"created_at"`
 	UpdatedAt       int64   `gorm:"column:updated_at;serializer:unixms;autoUpdateTime:false" json:"updated_at"`
 	FilledAt        int64   `gorm:"column:filled_at;serializer:unixms" json:"filled_at"`
+	// Error is what the exchange or the system said of a failed order, where it was kept.
+	Error string `gorm:"column:error" json:"error,omitempty"`
 }
 
 // TraderFill is a fill as the interface reads it: a row of account.fills with its
@@ -72,7 +74,7 @@ const orderColumns = `o.id, o.source, COALESCE(o.source_id, '') AS trader_id, o.
 	COALESCE(o.leverage, 0) AS leverage, o.reduce_only,
 	CASE WHEN o.role IN ('entry', 'grid') THEN 'open_' ELSE 'close_' END ||
 		COALESCE(o.position_side, CASE WHEN (o.role IN ('entry', 'grid')) = (o.side = 'buy') THEN 'long' ELSE 'short' END) AS order_action,
-	o.created_at, o.updated_at, o.closed_at AS filled_at`
+	o.created_at, o.updated_at, o.closed_at AS filled_at, COALESCE(o.error, '') AS error`
 
 const fillColumns = `f.id, o.source, COALESCE(o.source_id, '') AS trader_id, f.account_id::text AS account_id, i.venue AS venue,
 	f.order_id, COALESCE(o.exchange_order_id, '') AS exchange_order_id, f.exchange_trade_id, i.symbol, upper(f.side) AS side,

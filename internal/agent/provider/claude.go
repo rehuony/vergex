@@ -18,8 +18,11 @@ package provider
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"vergex/internal/agent"
 )
@@ -80,7 +83,7 @@ func (c *ClaudeClient) SetAuthHeader(h http.Header) {
 
 // BuildUrl targets /messages instead of /chat/completions.
 func (c *ClaudeClient) BuildUrl() string {
-	return fmt.Sprintf("%s/messages", c.BaseURL)
+	return strings.TrimRight(c.BaseURL, "/") + "/messages"
 }
 
 // BuildRequestBody builds the Anthropic wire format for the simple
@@ -124,9 +127,13 @@ func (c *ClaudeClient) BuildRequestBodyFromRequest(req *agent.Request) map[strin
 	}
 
 	// ── 4. Assemble request body ──────────────────────────────────────────────
+	maxTokens := c.MaxTokens
+	if req.MaxTokens != nil {
+		maxTokens = *req.MaxTokens
+	}
 	body := map[string]any{
 		"model":      req.Model,
-		"max_tokens": c.MaxTokens,
+		"max_tokens": maxTokens,
 		"system":     systemPrompt,
 		"messages":   anthropicMsgs,
 	}
@@ -211,6 +218,148 @@ func ConvertMessagesToAnthropic(msgs []agent.Message) []map[string]any {
 	}
 
 	return out
+}
+
+// ── Streaming ─────────────────────────────────────────────────────────────────
+
+// StreamBody asks for a stream. Anthropic reports usage in its events whether asked or not.
+func (c *ClaudeClient) StreamBody(body map[string]any) map[string]any {
+	body["stream"] = true
+	return body
+}
+
+// ParseStream reads Anthropic's events into the same Response an ordinary call gets.
+func (c *ClaudeClient) ParseStream(stream io.Reader, onDelta func(agent.StreamDelta)) (*agent.Response, error) {
+	response := &agent.Response{}
+	var text, thinking strings.Builder
+	type block struct {
+		kind, id, name string
+		input          strings.Builder
+	}
+	blocks := map[int]*block{}
+	order := []int{}
+	var input, cacheRead, cacheWrite, output int
+	usage := func() *agent.TokenUsage {
+		prompt := input + cacheRead + cacheWrite
+		return &agent.TokenUsage{PromptTokens: prompt, CachedPromptTokens: cacheRead, CompletionTokens: output, TotalTokens: prompt + output}
+	}
+	finished := false
+	err := agent.EachEvent(stream, func(event, data string) error {
+		switch event {
+		case "message_start":
+			var start struct {
+				Message struct {
+					Usage struct {
+						InputTokens              int `json:"input_tokens"`
+						OutputTokens             int `json:"output_tokens"`
+						CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+						CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+					} `json:"usage"`
+				} `json:"message"`
+			}
+			if err := json.Unmarshal([]byte(data), &start); err != nil {
+				return fmt.Errorf("failed to parse the stream: %w", err)
+			}
+			u := start.Message.Usage
+			input, cacheRead, cacheWrite, output = u.InputTokens, u.CacheReadInputTokens, u.CacheCreationInputTokens, u.OutputTokens
+			onDelta(agent.StreamDelta{Usage: usage()})
+		case "content_block_start":
+			var start struct {
+				Index        int `json:"index"`
+				ContentBlock struct {
+					Type string `json:"type"`
+					ID   string `json:"id"`
+					Name string `json:"name"`
+				} `json:"content_block"`
+			}
+			if err := json.Unmarshal([]byte(data), &start); err != nil {
+				return fmt.Errorf("failed to parse the stream: %w", err)
+			}
+			blocks[start.Index] = &block{kind: start.ContentBlock.Type, id: start.ContentBlock.ID, name: start.ContentBlock.Name}
+			order = append(order, start.Index)
+		case "content_block_delta":
+			var piece struct {
+				Index int `json:"index"`
+				Delta struct {
+					Type        string `json:"type"`
+					Text        string `json:"text"`
+					Thinking    string `json:"thinking"`
+					PartialJSON string `json:"partial_json"`
+				} `json:"delta"`
+			}
+			if err := json.Unmarshal([]byte(data), &piece); err != nil {
+				return fmt.Errorf("failed to parse the stream: %w", err)
+			}
+			switch piece.Delta.Type {
+			case "text_delta":
+				text.WriteString(piece.Delta.Text)
+				onDelta(agent.StreamDelta{Text: piece.Delta.Text})
+			case "thinking_delta":
+				thinking.WriteString(piece.Delta.Thinking)
+			case "input_json_delta":
+				if b := blocks[piece.Index]; b != nil {
+					b.input.WriteString(piece.Delta.PartialJSON)
+				}
+			}
+		case "message_delta":
+			var delta struct {
+				Delta struct {
+					StopReason string `json:"stop_reason"`
+				} `json:"delta"`
+				Usage struct {
+					OutputTokens int `json:"output_tokens"`
+				} `json:"usage"`
+			}
+			if err := json.Unmarshal([]byte(data), &delta); err != nil {
+				return fmt.Errorf("failed to parse the stream: %w", err)
+			}
+			if delta.Delta.StopReason != "" {
+				response.FinishReason = delta.Delta.StopReason
+			}
+			output = delta.Usage.OutputTokens
+			onDelta(agent.StreamDelta{Usage: usage()})
+		case "message_stop":
+			finished = true
+		case "error":
+			var failure struct {
+				Error struct {
+					Type    string `json:"type"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal([]byte(data), &failure); err != nil {
+				return fmt.Errorf("failed to parse the stream: %w", err)
+			}
+			status := http.StatusBadGateway
+			if failure.Error.Type == "overloaded_error" {
+				status = 529
+			}
+			return &agent.StatusError{Status: status, Body: data}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if !finished && response.FinishReason == "" {
+		return nil, errors.New("the stream ended before the reply did: EOF")
+	}
+	response.Content, response.ReasoningContent, response.Usage = text.String(), thinking.String(), usage()
+	for _, index := range order {
+		b := blocks[index]
+		if b.kind != "tool_use" {
+			continue
+		}
+		arguments := b.input.String()
+		if arguments == "" {
+			arguments = "{}"
+		}
+		response.ToolCalls = append(response.ToolCalls, agent.ToolCall{
+			ID: b.id, Type: "function",
+			Function: agent.ToolCallFunction{Name: b.name, Arguments: arguments},
+		})
+	}
+	return response, nil
 }
 
 // ── Response parsers ──────────────────────────────────────────────────────────

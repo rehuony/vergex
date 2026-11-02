@@ -59,7 +59,7 @@ it('says when an older page failed, and keeps the rows and the way to retry', as
 
   fireEvent.click(screen.getByText('Load older'))
   expect(await screen.findByRole('alert')).toHaveTextContent(
-    'Closed trades could not be loaded.'
+    'Closed trades could not be loaded'
   )
   expect(rows()).toBe(CLOSES_PAGE_SIZE)
   expect(screen.getByText('Load older')).toBeEnabled()
@@ -68,6 +68,6 @@ it('says when an older page failed, and keeps the rows and the way to retry', as
 it('says when closed trades could not be read at all', () => {
   render(<RecentCloses {...props} failed />)
   expect(screen.getByRole('alert')).toHaveTextContent(
-    'Closed trades could not be loaded.'
+    'Closed trades could not be loaded'
   )
 })

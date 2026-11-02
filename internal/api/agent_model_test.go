@@ -172,3 +172,56 @@ func TestModelListAnswersWithTheProvidersNames(t *testing.T) {
 		t.Errorf("an unknown provider got %d", w.Code)
 	}
 }
+
+func TestDeletingAModelRemovesItsKeyAndNeedsNoTraderOnIt(t *testing.T) {
+	st := NewStores(testdb.Open(t))
+	owner := testdb.AddUser(t, st.DB)
+	if err := st.Models.Save(owner, "deepseek", "DeepSeek", true, "sk-to-remove", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	model, err := st.Models.Find(owner, "deepseek")
+	if err != nil {
+		t.Fatal(err)
+	}
+	inUse := testdb.AddTrader(t, st.DB, &testdb.Trader{UserID: owner, Name: "Trend", AgentModelID: model.ID})
+
+	s := &Server{stores: st}
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(func(c *gin.Context) { c.Set("user_id", c.GetHeader("X-User")) })
+	r.DELETE("/models/:id", s.handleDeleteModel)
+	remove := func(user, id string) (int, string) {
+		req := httptest.NewRequest(http.MethodDelete, "/models/"+id, nil)
+		req.Header.Set("X-User", user)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Code, w.Body.String()
+	}
+
+	// Someone else's model is not there, and one in use stays.
+	if code, _ := remove(testdb.AddOtherUser(t, st.DB), model.ID); code != http.StatusNotFound {
+		t.Fatalf("another user's delete: %d", code)
+	}
+	code, body := remove(owner, model.ID)
+	if code != http.StatusConflict || !strings.Contains(body, "Trend") {
+		t.Fatalf("delete while in use: %d %s", code, body)
+	}
+
+	// An archived trader gives it up. The key goes with the row.
+	if err := st.Traders.Archive(owner, inUse.ID); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := remove(owner, model.ID); code != http.StatusOK {
+		t.Fatalf("delete: %d %s", code, body)
+	}
+	if _, err := st.Models.Find(owner, "deepseek"); err == nil {
+		t.Fatal("the model is still there")
+	}
+	var left int64
+	if err := st.DB.Raw("SELECT count(*) FROM agent.models WHERE id = ?", model.ID).Scan(&left).Error; err != nil || left != 0 {
+		t.Fatalf("%d rows left, %v", left, err)
+	}
+	if code, _ := remove(owner, model.ID); code != http.StatusNotFound {
+		t.Fatalf("second delete: %d", code)
+	}
+}

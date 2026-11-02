@@ -401,7 +401,7 @@ it('says so when the day has been quiet, and offers the next step only if nothin
     </MemoryRouter>
   )
   expect(
-    screen.getByText('Nothing has happened in the last 24 hours.')
+    screen.getByText('Nothing has happened in the last 24 hours')
   ).toBeInTheDocument()
   expect(screen.queryByText('Create trader')).not.toBeInTheDocument()
   rerender(

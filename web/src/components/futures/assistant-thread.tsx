@@ -7,6 +7,8 @@ import type { ChatMessage } from './use-futures-assistant'
 interface AssistantThreadProps {
   messages: ChatMessage[]
   trace: ActivityItem[]
+  // The reply as the model writes it.
+  streaming: string
   futuresBusy: boolean
   // Whether the thread keeps scrolling to the newest message.
   followRef: MutableRefObject<boolean>
@@ -19,12 +21,6 @@ export function Message({ message }: { message: ChatMessage }) {
         {message.content}
       </div>
     )
-  if (message.role === 'error')
-    return (
-      <p className="whitespace-pre-wrap break-words text-xs leading-relaxed text-vergex-danger">
-        {message.content}
-      </p>
-    )
   return <AssistantMessage text={message.content} />
 }
 
@@ -34,6 +30,7 @@ export function Message({ message }: { message: ChatMessage }) {
 export function AssistantThread({
   messages,
   trace,
+  streaming,
   futuresBusy,
   followRef,
 }: AssistantThreadProps) {
@@ -42,7 +39,7 @@ export function AssistantThread({
     if (box.current && followRef.current)
       box.current.scrollTop =
         messages.length || trace.length ? box.current.scrollHeight : 0
-  }, [messages, trace])
+  }, [messages, trace, streaming])
   const shown = messages.filter(
     (m, i) =>
       m.role !== 'user' ||
@@ -73,6 +70,7 @@ export function AssistantThread({
         {shown.slice(answerAt).map((message, index) => (
           <Message key={answerAt + index} message={message} />
         ))}
+        {streaming && <AssistantMessage text={streaming} />}
       </div>
     </ScrollArea>
   )

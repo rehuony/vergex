@@ -41,7 +41,10 @@ beforeEach(() => {
     watchlist: ['BTCUSDT'],
     top_n: 200,
   })
-  mocks.forecast.mockResolvedValue({ alert_threshold: 70 })
+  mocks.forecast.mockResolvedValue({
+    alert_intervals: ['1h', '4h', '1d'],
+    alert_threshold: 70,
+  })
   mocks.status.mockResolvedValue({
     ready: 5,
     series: 8,
@@ -86,7 +89,6 @@ it('saves collection with its button, and only what changed', async () => {
 it('saves the alert on leaving its field, and only when it changed', async () => {
   show()
   const field = await screen.findByLabelText('Alert at score')
-  expect(card('Alerts').queryByRole('button')).toBeNull()
   fireEvent.blur(field)
   expect(mocks.saveForecast).not.toHaveBeenCalled()
 
@@ -94,7 +96,29 @@ it('saves the alert on leaving its field, and only when it changed', async () =>
   expect(screen.getByText('up, or 20 down')).toBeVisible()
   expect(mocks.saveForecast).not.toHaveBeenCalled()
   fireEvent.blur(field)
-  await waitFor(() => expect(mocks.saveForecast).toHaveBeenCalledWith(80))
+  await waitFor(() =>
+    expect(mocks.saveForecast).toHaveBeenCalledWith({
+      alert_threshold: 80,
+      alert_intervals: ['1h', '4h', '1d'],
+    })
+  )
+})
+
+it('saves which intervals can alert as they change, keeping the score', async () => {
+  show()
+  const fifteen = await screen.findByRole('button', { name: '15m' })
+  expect(fifteen).toHaveAttribute('aria-pressed', 'false')
+  expect(screen.getByRole('button', { name: '1h' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  fireEvent.click(fifteen)
+  await waitFor(() =>
+    expect(mocks.saveForecast).toHaveBeenCalledWith({
+      alert_threshold: 70,
+      alert_intervals: ['15m', '1h', '4h', '1d'],
+    })
+  )
 })
 
 it('saves an alert out of range at its limit', async () => {
@@ -102,7 +126,12 @@ it('saves an alert out of range at its limit', async () => {
   const field = await screen.findByLabelText('Alert at score')
   fireEvent.change(field, { target: { value: '120' } })
   fireEvent.blur(field)
-  await waitFor(() => expect(mocks.saveForecast).toHaveBeenCalledWith(99))
+  await waitFor(() =>
+    expect(mocks.saveForecast).toHaveBeenCalledWith({
+      alert_threshold: 99,
+      alert_intervals: ['1h', '4h', '1d'],
+    })
+  )
   expect(field).toHaveValue(99)
 })
 
@@ -112,7 +141,12 @@ it('goes back to the saved alert when saving fails', async () => {
   const field = await screen.findByLabelText('Alert at score')
   fireEvent.change(field, { target: { value: '80' } })
   fireEvent.blur(field)
-  await waitFor(() => expect(mocks.saveForecast).toHaveBeenCalledWith(80))
+  await waitFor(() =>
+    expect(mocks.saveForecast).toHaveBeenCalledWith({
+      alert_threshold: 80,
+      alert_intervals: ['1h', '4h', '1d'],
+    })
+  )
   await waitFor(() => expect(field).toHaveValue(70))
 })
 

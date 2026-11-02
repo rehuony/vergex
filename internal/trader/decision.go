@@ -85,6 +85,8 @@ type DecisionRecord struct {
 	AccountState    *AccountSnapshot `json:"account_state"`
 	Limits          any              `json:"-"` // The limits this cycle ran under, kept for reading it later
 	Decisions       []DecisionAction `json:"decisions"`
+	// ModelUse is what the cycle's calls to the model came to, on a record read in full.
+	ModelUse *agent.CallTotals `json:"model_use,omitempty"`
 }
 
 // AccountSnapshot account state snapshot

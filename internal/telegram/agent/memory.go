@@ -16,9 +16,8 @@ type Message struct {
 	Content string
 }
 
-// Memory manages conversation history with automatic compaction.
-// Inspired by openclaw's compaction pattern:
-// when ShortTerm exceeds threshold, model silently summarizes it into LongTerm.
+// Memory manages conversation history. When ShortTerm exceeds the threshold, the model
+// summarizes everything so far into LongTerm, whose size that keeps bounded.
 type Memory struct {
 	LongTerm  string    // Durable summary (survives compaction, user never sees this happen)
 	ShortTerm []Message // Recent conversation (cleared on compaction)
@@ -29,9 +28,14 @@ func NewMemory(client agent.Client) *Memory {
 	return &Memory{client: client}
 }
 
-// Add appends a message and triggers compaction if threshold exceeded
+// Add appends a message.
 func (m *Memory) Add(role, content string) {
 	m.ShortTerm = append(m.ShortTerm, Message{Role: role, Content: content})
+}
+
+// Tidy compacts if the conversation has grown past the threshold. It calls the model, so it
+// runs once a reply is out, not on the way to one.
+func (m *Memory) Tidy() {
 	if m.estimateTokens() > compactionThresholdTokens {
 		m.compact()
 	}
@@ -61,7 +65,7 @@ func (m *Memory) ResetFull() {
 }
 
 func (m *Memory) estimateTokens() int {
-	total := len(m.LongTerm)
+	total := 0
 	for _, msg := range m.ShortTerm {
 		total += len(msg.Content)
 	}
@@ -91,10 +95,7 @@ Output: plain text summary, under 200 words.`
 		// Compaction failed: keep short-term as-is, never lose user data
 		return
 	}
-	if m.LongTerm != "" {
-		m.LongTerm = m.LongTerm + "\n" + summary
-	} else {
-		m.LongTerm = summary
-	}
+	// The history it summarized included the summary before, so this replaces it.
+	m.LongTerm = summary
 	m.ShortTerm = []Message{}
 }

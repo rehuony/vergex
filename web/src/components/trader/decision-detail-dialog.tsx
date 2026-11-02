@@ -2,12 +2,13 @@ import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api'
 import { t, type Language } from '@/i18n'
+import type { DecisionRecord } from '@/types'
 import { Dialog } from '@/components/common/dialog'
 import { PanelLoading, PanelState } from '@/components/common/panel'
 import { StoredText } from '@/components/common/stored-text'
 import { cn } from '@/utils/cn'
 import { LogLine } from './decision-log'
-import { actionSide, fmtDateTime } from './decision-format'
+import { actionName, actionSide, fmtDateTime } from './decision-format'
 import { baseLabel, fmtPx } from '@/utils/trader-format'
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -21,6 +22,53 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 const headClass = 'px-2 py-1.5 text-xs font-medium whitespace-nowrap'
 const cellClass = 'px-2 py-1.5 align-top whitespace-nowrap'
+
+const count = (value: number) => value.toLocaleString('en-US')
+
+// What the cycle's calls to the model came to. A reply cut off at its length limit is worth
+// saying plainly, since what follows it can only be part of an answer.
+function ModelUse({
+  use,
+  language,
+}: {
+  use: NonNullable<DecisionRecord['model_use']>
+  language: Language
+}) {
+  const label = (key: string, params?: Record<string, string | number>) =>
+    t(`traderDetail.${key}`, language, params)
+  const cutOff =
+    use.finish_reason === 'length' || use.finish_reason === 'max_tokens'
+  return (
+    <>
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
+        {[
+          [label('modelName'), use.model],
+          [label('modelTime'), `${(use.duration_ms / 1000).toFixed(1)} s`],
+          [
+            label('modelTokens'),
+            `${count(use.prompt_tokens)} / ${count(use.completion_tokens)}`,
+          ],
+          [
+            label('modelCallCost'),
+            use.unpriced ? label('unpriced') : `$${use.cost_usd.toFixed(4)}`,
+          ],
+        ].map(([name, value]) => (
+          <div key={name} className="min-w-0" title={value}>
+            <dt className="truncate text-xs text-vergex-muted">{name}</dt>
+            <dd className="mono mt-0.5 truncate text-[13px] text-vergex-ink">
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {cutOff && (
+        <p className="mt-2 text-[13px] text-vergex-warning">
+          {label('replyCutOff')}
+        </p>
+      )}
+    </>
+  )
+}
 
 // DecisionDetailDialog shows one cycle in full: each action and its result,
 // the execution log, then the stored prompts and the model's raw response.
@@ -73,6 +121,11 @@ export function DecisionDetailDialog({
               {record.error_message}
             </p>
           )}
+          {record.model_use && (
+            <Section title={label('modelUse')}>
+              <ModelUse use={record.model_use} language={language} />
+            </Section>
+          )}
           <Section title={label('actions')}>
             {actions.length === 0 ? (
               <p className="text-[13px] text-vergex-muted">
@@ -122,7 +175,7 @@ export function DecisionDetailDialog({
                                   : 'text-vergex-muted'
                             )}
                           >
-                            {action.action.toLowerCase()}
+                            {actionName(action.action, language)}
                           </td>
                           <td className={cn(cellClass, 'text-right')}>
                             {fmtPx(action.price)}
@@ -158,7 +211,7 @@ export function DecisionDetailDialog({
             <Section title={label('executionLog')}>
               <ul className="flex flex-col gap-0.5">
                 {logs.map((line, index) => (
-                  <LogLine key={index} text={line} />
+                  <LogLine key={index} text={line} language={language} />
                 ))}
               </ul>
             </Section>

@@ -5,7 +5,7 @@ import {
 } from '@/constants/model-providers'
 
 describe('model provider config', () => {
-  it('offers every native provider with a default model and key link', () => {
+  it('offers every native provider with a key link', () => {
     expect(Object.keys(AGENT_PROVIDER_CONFIG).sort()).toEqual(
       [
         'claude',
@@ -19,7 +19,6 @@ describe('model provider config', () => {
       ].sort()
     )
     for (const cfg of Object.values(AGENT_PROVIDER_CONFIG)) {
-      expect(cfg.defaultModel).toBeTruthy()
       expect(cfg.apiUrl).toMatch(/^https:\/\//)
     }
   })
@@ -31,6 +30,7 @@ describe('getTraderModelLabel', () => {
       id: 'model-deepseek',
       name: 'DeepSeek AI',
       provider: 'deepseek',
+      defaultModel: 'deepseek-v4-pro',
     },
     {
       id: 'model-openai',

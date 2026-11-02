@@ -221,7 +221,7 @@ it('reports a completed wait decision without claiming drafts were saved or awai
   expect(rows.every((row) => row.state === 'done')).toBe(true)
   expect(rows[rows.length - 1]).toMatchObject({
     label: 'Waiting for an entry',
-    detail: 'No order to approve. See the entry conditions under Plans.',
+    detail: 'No order to approve. See the entry conditions under Plans',
   })
   expect(
     rows.some((row) =>
@@ -404,4 +404,48 @@ it('updates paginated history progress and discloses a newly listed market with 
     detail:
       '1h · 345 / 1200 candles · Limited exchange history · Latest history · independent of chart view',
   })
+})
+
+it('says what a turn cost beside its steps, and does not count that as one', () => {
+  const steps = recordActivity(
+    [],
+    { type: 'iteration', data: { round: 1 } },
+    1000,
+    'en'
+  )
+  const done = recordActivity(steps, { type: 'outcome', data: {} }, 3000, 'en')
+  const items = recordActivity(
+    done,
+    {
+      type: 'usage',
+      data: {
+        prompt_tokens: 40000,
+        completion_tokens: 800,
+        cost_usd: 0.0123,
+        unpriced: false,
+      },
+    },
+    3000,
+    'en'
+  )
+  render(<FuturesActivity items={items} busy={false} />)
+  expect(
+    screen.getByText(/2 steps · 40,000 in, 800 out · \$0\.0123/)
+  ).toBeInTheDocument()
+
+  const unpriced = recordActivity(
+    done,
+    {
+      type: 'usage',
+      data: {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+        cost_usd: 0,
+        unpriced: true,
+      },
+    },
+    3000,
+    'zh-CN'
+  )
+  expect(unpriced.find((row) => row.id === 'usage')?.detail).toContain('未定价')
 })

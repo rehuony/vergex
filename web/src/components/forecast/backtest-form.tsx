@@ -278,16 +278,18 @@ export function BacktestForm({
                   />
                 </div>
               </SettingRow>
-              <SettingRow
-                label={label('downloadDerivatives')}
-                className="max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:items-center"
-              >
-                <Switch
-                  aria-label={label('downloadDerivatives')}
-                  checked={derivatives}
-                  onChange={setDerivatives}
-                />
-              </SettingRow>
+              {missing.length > 0 && (
+                <SettingRow
+                  label={label('downloadDerivatives')}
+                  className="max-sm:grid-cols-[minmax(0,1fr)_auto] max-sm:items-center"
+                >
+                  <Switch
+                    aria-label={label('downloadDerivatives')}
+                    checked={derivatives}
+                    onChange={setDerivatives}
+                  />
+                </SettingRow>
+              )}
             </div>
           </ScrollArea>
           <div className="shrink-0 bg-vergex-surface px-4">
@@ -295,16 +297,18 @@ export function BacktestForm({
               message={message}
               messageTone={!validRange ? 'danger' : 'muted'}
             >
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="max-sm:h-10"
-                disabled={busy || backfilling}
-                onClick={() => void download()}
-              >
-                {label('downloadHistory')}
-              </Button>
+              {missing.length > 0 && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="max-sm:h-10"
+                  disabled={busy || backfilling}
+                  onClick={() => void download()}
+                >
+                  {label('downloadHistory')}
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="primary"

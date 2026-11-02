@@ -1,4 +1,8 @@
-import type { ForecastSignal } from '@/api/forecast'
+import {
+  tooFewMoments,
+  type ForecastSignal,
+  type ForecastStats,
+} from '@/api/forecast'
 import { Panel, PanelState } from '@/components/common/panel'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { t, type Language } from '@/i18n'
@@ -24,31 +28,33 @@ const outcomeTone = {
 // This coin's recent forecasts and how each turned out.
 export function RecordList({
   signals,
-  hits,
-  misses,
+  stats,
   language,
   className,
 }: {
   signals: ForecastSignal[]
-  hits: number
-  misses: number
+  stats?: ForecastStats
   language: Language
   className?: string
 }) {
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`forecast.${key}`, language, params)
-  const judged = hits + misses
+  const hits = stats?.hits ?? 0
+  const judged = hits + (stats?.misses ?? 0)
   return (
     <Panel
       title={label('record')}
       meta={
-        judged > 0
-          ? label('hitSummary', {
-              hits,
-              judged,
-              rate: ((hits / judged) * 100).toFixed(1),
-            })
-          : undefined
+        judged === 0
+          ? undefined
+          : tooFewMoments(stats?.moments)
+            ? label('hitSummaryFew', { hits, judged })
+            : label('hitSummary', {
+                hits,
+                judged,
+                rate: ((hits / judged) * 100).toFixed(1),
+                chance: ((stats?.chance_rate ?? 0) * 100).toFixed(1),
+              })
       }
       className={className}
     >
@@ -106,7 +112,9 @@ export function RecordList({
                     ±{fmtPct(signal.expected_move_pct)}
                   </td>
                   <td className={cn(cellClass, 'text-right font-mono text-xs')}>
-                    {fmtPct(signal.actual_move_pct ?? 0, true)}
+                    {signal.outcome
+                      ? fmtPct(signal.actual_move_pct ?? 0, true)
+                      : '—'}
                   </td>
                   <td
                     className={cn(

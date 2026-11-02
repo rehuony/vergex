@@ -152,6 +152,7 @@ export function TradersPage() {
   const select = async (id: string, next: TraderTab = tab) => {
     if (id !== selected?.trader_id && dirty.current) {
       const ok = await confirmToast(t('traderSettings.leaveDraft', language), {
+        title: t('traderSettings.discardDraft', language),
         okText: t('traderSettings.discardDraft', language),
         cancelText: t('traderSettings.keepEditing', language),
         tone: 'danger',
@@ -245,9 +246,14 @@ export function TradersPage() {
   }
 
   const remove = async (trader: TraderInfo) => {
-    const ok = await confirmToast(t('confirmDeleteTrader', language), {
-      tone: 'danger',
-    })
+    const ok = await confirmToast(
+      t('confirmDeleteTrader', language, { name: trader.trader_name }),
+      {
+        title: t('deleteTraderTitle', language),
+        okText: t('delete', language),
+        tone: 'danger',
+      }
+    )
     if (!ok) return
     try {
       await api.deleteTrader(trader.trader_id)

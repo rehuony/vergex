@@ -2,7 +2,7 @@
 export const dashboard = {
   dashboard: {
     stale: 'Not updating, last {time}',
-    loadFailed: 'The overview could not be loaded.',
+    loadFailed: 'The overview could not be loaded',
     needsAttention: 'Needs attention',
     attentionNone: 'None',
     attentionCount: '{count} open',
@@ -10,8 +10,8 @@ export const dashboard = {
     running: 'Running',
     stopped: 'Stopped',
     someAccountsUnread: 'Some accounts could not be read',
-    positionsUnread: 'Positions could not be read.',
-    noPositions: 'No open positions.',
+    positionsUnread: 'Positions could not be read',
+    noPositions: 'No open positions',
     symbol: 'Symbol',
     heldBy: 'Held by',
     size: 'Size',
@@ -38,9 +38,9 @@ export const dashboard = {
       filter: 'Filter events',
       resetView: 'Back to the start',
       loading: 'Loading…',
-      loadFailed: 'Activity could not be loaded.',
-      noEvents: 'Nothing has happened in the last 24 hours.',
-      noMatch: 'No events match this filter.',
+      loadFailed: 'Activity could not be loaded',
+      noEvents: 'Nothing has happened in the last 24 hours',
+      noMatch: 'No events match this filter',
       createTrader: 'Create trader',
       planTrade: 'Plan a trade',
       kind: {

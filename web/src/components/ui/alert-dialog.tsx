@@ -33,7 +33,7 @@ const AlertDialogContent = React.forwardRef<
     <AlertDialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-vergex-line bg-vergex-surface p-6 animate-dialog-in rounded-2xl shadow-(--shadow-overlay)',
+        'fixed left-[50%] top-[50%] z-50 w-[calc(100%-2rem)] max-w-100 translate-x-[-50%] translate-y-[-50%] border border-vergex-line bg-vergex-surface p-6 animate-dialog-in rounded-2xl shadow-(--shadow-overlay)',
         className
       )}
       {...props}
@@ -62,7 +62,7 @@ const AlertDialogFooter = ({
 }: React.HTMLAttributes<HTMLDivElement>) => (
   <div
     className={cn(
-      'flex flex-col-reverse sm:flex-row sm:justify-center sm:space-x-2 gap-3',
+      'mt-5 flex items-center justify-end gap-2 max-sm:*:flex-1',
       className
     )}
     {...props}
@@ -76,7 +76,10 @@ const AlertDialogTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Title
     ref={ref}
-    className={cn('text-base font-semibold text-vergex-ink', className)}
+    className={cn(
+      'text-base font-semibold leading-snug text-vergex-ink',
+      className
+    )}
     {...props}
   />
 ))
@@ -88,7 +91,7 @@ const AlertDialogDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Description
     ref={ref}
-    className={cn('text-sm text-vergex-muted', className)}
+    className={cn('text-sm leading-6 text-vergex-ink-soft', className)}
     {...props}
   />
 ))
@@ -103,7 +106,7 @@ const AlertDialogAction = React.forwardRef<
     ref={ref}
     className={cn(
       buttonVariants({ variant: 'primary' }),
-      'min-w-[120px]',
+      'max-sm:h-10',
       className
     )}
     {...props}
@@ -119,7 +122,7 @@ const AlertDialogCancel = React.forwardRef<
     ref={ref}
     className={cn(
       buttonVariants({ variant: 'secondary' }),
-      'min-w-[120px]',
+      'max-sm:h-10',
       className
     )}
     {...props}

@@ -102,7 +102,7 @@ it('cannot run without an enabled model, but can still preview', () => {
     { id: 'off', name: 'Disabled', provider: 'openai', enabled: false },
   ]
   show()
-  expect(screen.getByText('No model is enabled.')).toBeVisible()
+  expect(screen.getByText('No model is enabled')).toBeVisible()
   expect(screen.getByRole('button', { name: 'Run test' })).toBeDisabled()
   expect(screen.getByRole('button', { name: 'Preview prompts' })).toBeEnabled()
 })

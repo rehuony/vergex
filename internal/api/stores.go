@@ -27,6 +27,7 @@ type Stores struct {
 	Equity        *trader.EquityStore
 	AccountCloses *futures.AccountCloseStore
 	Telegram      telegram.ConfigStore
+	Visitors      *telegram.VisitorStore
 }
 
 // NewStores opens them on a migrated connection.
@@ -46,5 +47,6 @@ func NewStores(db *gorm.DB) *Stores {
 		Equity:        trader.NewEquityStore(db),
 		AccountCloses: futures.NewAccountCloseStore(db),
 		Telegram:      telegram.NewConfigStore(db),
+		Visitors:      telegram.NewVisitorStore(db),
 	}
 }

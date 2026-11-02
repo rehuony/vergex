@@ -1,3 +1,4 @@
+import { t, type Language } from '@/i18n'
 import { formatRequestError } from '@/utils/request-errors'
 import type { DecisionRecord } from '@/types'
 
@@ -50,6 +51,46 @@ export function cleanLog(raw: string): string {
     ''
   )
   return formatRequestError(s)
+}
+
+// The log lines the server writes most, which are English where they are stored. What
+// follows a known start, such as an exchange's own words, stays as it came.
+const LOG_LINES: [RegExp, string][] = [
+  [/^model call duration: (?<ms>\d+) ms$/, 'modelDuration'],
+  [/^succeeded$/, 'succeeded'],
+  [/^blocked: (?<detail>.*)$/s, 'blocked'],
+  [/^failed: (?<detail>.*)$/s, 'failed'],
+  [
+    /^(?<failed>\d+) of (?<total>\d+) trade actions failed or were blocked$/,
+    'someBlocked',
+  ],
+  [/^No candidate coins available, cycle skipped$/, 'noCandidates'],
+  [
+    /^Halted with nothing held, cycle skipped: (?<detail>.*)$/s,
+    'haltedSkipped',
+  ],
+  [/^Grid cycle completed with (?<count>\d+) decisions$/, 'gridCycle'],
+  [/^Failed to get agent decision: (?<detail>.*)$/s, 'noDecision'],
+]
+
+// logText is a stored log line as this page reads it, in the language in use.
+export function logText(raw: string, language: Language): string {
+  const line = cleanLog(raw)
+  for (const [pattern, key] of LOG_LINES) {
+    const match = pattern.exec(line)
+    if (match) {
+      return t(`traderDetail.log.${key}`, language, { ...match.groups })
+    }
+  }
+  return line
+}
+
+// actionName is what an action is called. One the interface has no name for stays as it is.
+export function actionName(action: string, language: Language): string {
+  const name = action.toLowerCase()
+  const key = `traderDetail.actionName.${name}`
+  const text = t(key, language)
+  return text === key ? name : text
 }
 
 export type ActionSide = 'long' | 'short' | 'flat'

@@ -13,6 +13,7 @@ import (
 type Stores struct {
 	DB            *gorm.DB
 	Telegram      ConfigStore
+	Visitors      *VisitorStore
 	Users         *user.Store
 	Traders       *trader.Store
 	Decisions     *trader.DecisionStore
@@ -29,6 +30,7 @@ func NewStores(db *gorm.DB) *Stores {
 	return &Stores{
 		DB:            db,
 		Telegram:      NewConfigStore(db),
+		Visitors:      NewVisitorStore(db),
 		Users:         user.NewStore(db),
 		Traders:       trader.NewStore(db),
 		Decisions:     trader.NewDecisionStore(db),

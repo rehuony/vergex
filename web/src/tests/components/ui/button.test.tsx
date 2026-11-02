@@ -25,7 +25,7 @@ it('styles a router link as a button', () => {
   )
   const link = screen.getByRole('link', { name: 'Connections' })
   expect(link).toHaveAttribute('href', '/connections')
-  expect(link).toHaveClass('border', 'h-9')
+  expect(link).toHaveClass('bg-vergex-ink-tint', 'h-9')
 })
 
 it('keeps a text link free of the size box', () => {

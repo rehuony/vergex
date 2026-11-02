@@ -89,24 +89,44 @@ export function SettingItem({
   )
 }
 
-// A list tab: the entries scroll while the action bar, with the add button,
-// stays at the bottom of the tab whatever the list's length.
+// A window of one scrolling region, which is every window in Settings: what it holds scrolls
+// between its head, which stays at the top, and the action bar, which stays at the bottom in
+// the same place on every one, however long what it holds gets. A form goes around this, so
+// its buttons submit it.
 export function SettingList({
+  head,
   children,
   actions,
+  message,
+  messageTone,
+  messageId,
 }: {
+  head?: ReactNode
   children: ReactNode
-  actions: ReactNode
+  /** A window with nothing to do has no bar. */
+  actions?: ReactNode
+  message?: ReactNode
+  messageTone?: keyof typeof messageTones
+  messageId?: string
 }) {
   return (
     <div className="flex h-full flex-col">
+      {head && <div className="border-b border-vergex-line">{head}</div>}
       <ScrollArea
         className="-mx-6 min-h-0 flex-1 px-6"
         viewportClassName="flex flex-col"
       >
         {children}
       </ScrollArea>
-      <SettingActions>{actions}</SettingActions>
+      {actions && (
+        <SettingActions
+          message={message}
+          messageTone={messageTone}
+          messageId={messageId}
+        >
+          {actions}
+        </SettingActions>
+      )}
     </div>
   )
 }
@@ -136,6 +156,7 @@ export function SettingState({
 const badgeTones = {
   success: 'bg-vergex-success/10 text-vergex-success',
   danger: 'bg-vergex-danger/10 text-vergex-danger',
+  warning: 'bg-vergex-warning/10 text-vergex-warning',
   muted: 'bg-vergex-surface-muted text-vergex-muted',
 }
 
@@ -239,7 +260,7 @@ export function SettingActions({
   children: ReactNode
 }) {
   return (
-    <div className="flex items-center gap-2 border-t border-vergex-line py-3">
+    <div className="flex items-center gap-2 border-t border-vergex-line py-3 max-sm:[&>a]:h-10 max-sm:[&>button]:h-10">
       <p
         id={messageId}
         aria-live="polite"

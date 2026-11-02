@@ -1,8 +1,12 @@
 package api
 
 import (
+	"errors"
 	"net/http"
+	"strings"
+	"time"
 
+	"vergex/internal/service"
 	"vergex/internal/telegram"
 
 	"github.com/gin-gonic/gin"
@@ -18,9 +22,12 @@ func (s *Server) handleGetTelegramConfig(c *gin.Context) {
 			"is_bound":     false,
 			"token_masked": "",
 			"username":     "",
+			"bot_state":    string(service.Off),
 		})
 		return
 	}
+
+	bot, alertsError := telegramServices()
 
 	// Mask bot token for security (show only last 6 chars)
 	tokenMasked := ""
@@ -36,11 +43,32 @@ func (s *Server) handleGetTelegramConfig(c *gin.Context) {
 		"configured":     cfg.BotToken != "",
 		"is_bound":       cfg.ChatID != 0,
 		"username":       cfg.Username,
+		"bound_chat_id":  cfg.ChatID,
 		"bound_at":       cfg.BoundAt,
 		"token_masked":   tokenMasked,
 		"agent_model_id": cfg.AgentModelID,
 		"alerts":         alertSwitches(cfg),
+		"bot_username":   telegram.BotName(),
+		"bot_state":      string(bot.State),
+		"bot_error":      bot.Detail,
+		"alerts_error":   alertsError,
 	})
+}
+
+// telegramServices says how the bot and its alerts are doing, from what each last reported.
+func telegramServices() (bot service.Entry, alertsError string) {
+	bot.State = service.Off
+	for _, entry := range service.All() {
+		switch entry.Name {
+		case service.Telegram:
+			bot = entry
+		case service.TelegramAlerts:
+			if entry.State == service.Degraded || entry.State == service.Failed {
+				alertsError = entry.Detail
+			}
+		}
+	}
+	return bot, alertsError
 }
 
 // handleUpdateTelegramConfig saves bot token (+ optional model ID) and triggers bot hot-reload
@@ -61,20 +89,80 @@ func (s *Server) handleUpdateTelegramConfig(c *gin.Context) {
 	if !s.validTelegramModel(c, req.AgentModelID) {
 		return
 	}
-	if err := s.stores.Telegram.Save(req.BotToken, req.AgentModelID); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save config"})
+	switch err := telegram.SaveToken(c.Request.Context(), s.stores.Telegram, req.BotToken, req.AgentModelID); {
+	case errors.Is(err, telegram.ErrBadToken):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	case err != nil:
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}
 
 	s.reloadTelegram()
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Bot token saved. Bot will reload automatically."})
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Bot token saved. Bot will reload automatically"})
+}
+
+// handleClearTelegramToken forgets the bot token, so setup starts over from its first step and
+// the bot stops. While someone is bound it is refused: unbinding comes first.
+func (s *Server) handleClearTelegramToken(c *gin.Context) {
+	switch err := telegram.ClearToken(s.stores.Telegram); {
+	case errors.Is(err, telegram.ErrAlreadyBound):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear the token"})
+		return
+	}
+	s.reloadTelegram()
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Bot token cleared"})
+}
+
+// handleTelegramBindCode gives the signed-in user a link that binds the chat they open it
+// in, while nobody is bound. Nothing else can bind a chat.
+func (s *Server) handleTelegramBindCode(c *gin.Context) {
+	var req struct {
+		Language string `json:"language"`
+	}
+	_ = c.ShouldBindJSON(&req)
+	language := ""
+	switch {
+	case strings.HasPrefix(req.Language, "zh"):
+		language = "zh"
+	case strings.HasPrefix(req.Language, "en"):
+		language = "en"
+	}
+	link, err := telegram.NewBindLink(c.Request.Context(), s.stores.Telegram, language, time.Now())
+	switch {
+	case err == nil:
+		c.JSON(http.StatusOK, link)
+	case errors.Is(err, telegram.ErrNoToken), errors.Is(err, telegram.ErrBadToken):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	case errors.Is(err, telegram.ErrAlreadyBound):
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+	default:
+		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+	}
+}
+
+// handleTelegramVisitors lists who tried to use the bot and was refused, the latest first.
+func (s *Server) handleTelegramVisitors(c *gin.Context) {
+	visitors, err := s.stores.Visitors.List()
+	if err != nil {
+		SafeInternalError(c, "Read who tried the Telegram bot", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"visitors": visitors})
 }
 
 // handleUnbindTelegram removes Telegram user binding
 func (s *Server) handleUnbindTelegram(c *gin.Context) {
+	cfg, cfgErr := s.stores.Telegram.Get()
 	if err := s.stores.Telegram.Unbind(); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unbind"})
 		return
+	}
+	if cfgErr == nil && cfg.ChatID != 0 {
+		telegram.ClearMenu(c.Request.Context(), string(cfg.BotToken), cfg.ChatID)
 	}
 	// The running bot keeps the chat it was started with until it reloads.
 	s.reloadTelegram()

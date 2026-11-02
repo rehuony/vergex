@@ -47,9 +47,9 @@ type UpdateTraderRequest struct {
 
 func formatTraderCreationError(reason, nextStep string) string {
 	if nextStep == "" {
-		return fmt.Sprintf("Failed to create the bot this time: %s.", reason)
+		return fmt.Sprintf("Failed to create the bot this time: %s", reason)
 	}
-	return fmt.Sprintf("Failed to create the bot this time: %s. %s.", reason, nextStep)
+	return fmt.Sprintf("Failed to create the bot this time: %s. %s", reason, nextStep)
 }
 
 func traderCreationRequestError(reason string) string {
@@ -196,35 +196,35 @@ func traderSetupReasonParams(err error, fallback string, kv ...string) map[strin
 
 func describeTraderCreationWarning(traderName string, err error) string {
 	if err == nil {
-		return fmt.Sprintf("Bot \"%s\" has been saved, but it has not yet passed the pre-start validation. Please check the model, settings, and exchange configuration first, then click start after fixing them.", traderName)
+		return fmt.Sprintf("Bot \"%s\" has been saved, but it has not yet passed the pre-start validation. Please check the model, settings, and exchange configuration first, then click start after fixing them", traderName)
 	}
 
 	reason := humanizeTraderSetupReason(SanitizeError(err, ""))
 	if reason == "" {
-		return fmt.Sprintf("Bot \"%s\" has been saved, but it cannot start for now. Please check the model, settings, and exchange configuration first, then click start after fixing them.", traderName)
+		return fmt.Sprintf("Bot \"%s\" has been saved, but it cannot start for now. Please check the model, settings, and exchange configuration first, then click start after fixing them", traderName)
 	}
 
-	return fmt.Sprintf("Bot \"%s\" has been saved, but it cannot start for now, because: %s. Please check the model, settings, and exchange configuration first, then click start after fixing them.", traderName, reason)
+	return fmt.Sprintf("Bot \"%s\" has been saved, but it cannot start for now, because: %s. Please check the model, settings, and exchange configuration first, then click start after fixing them", traderName, reason)
 }
 
 func describeTraderStartError(traderName string, err error) string {
 	if err == nil {
-		return fmt.Sprintf("Failed to start the bot this time: bot \"%s\" cannot start for now. Please check the model, settings, and exchange configuration, then click start again.", traderName)
+		return fmt.Sprintf("Failed to start the bot this time: bot \"%s\" cannot start for now. Please check the model, settings, and exchange configuration, then click start again", traderName)
 	}
 
 	reason := humanizeTraderSetupReason(SanitizeError(err, ""))
 	if reason == "" {
-		return fmt.Sprintf("Failed to start the bot this time: bot \"%s\" cannot start for now. Please check the model, settings, and exchange configuration, then click start again.", traderName)
+		return fmt.Sprintf("Failed to start the bot this time: bot \"%s\" cannot start for now. Please check the model, settings, and exchange configuration, then click start again", traderName)
 	}
 
-	return fmt.Sprintf("Failed to start the bot this time: bot \"%s\" cannot start for now, because: %s. Please check the model, settings, and exchange configuration, then click start again.", traderName, reason)
+	return fmt.Sprintf("Failed to start the bot this time: bot \"%s\" cannot start for now, because: %s. Please check the model, settings, and exchange configuration, then click start again", traderName, reason)
 }
 
 func formatTraderStartError(reason, nextStep string) string {
 	if nextStep == "" {
-		return fmt.Sprintf("Failed to start the bot this time: %s.", reason)
+		return fmt.Sprintf("Failed to start the bot this time: %s", reason)
 	}
-	return fmt.Sprintf("Failed to start the bot this time: %s. %s.", reason, nextStep)
+	return fmt.Sprintf("Failed to start the bot this time: %s. %s", reason, nextStep)
 }
 
 // handleCreateTrader Create new trader
@@ -278,7 +278,7 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 	}
 	if estimate, exceeds := exceedsEveryModel(config); exceeds {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":          fmt.Sprintf("Estimated %d tokens exceeds all known model context limits. Reduce coins, timeframes, or K-line count.", estimate.Total),
+			"error":          fmt.Sprintf("Estimated %d tokens exceeds all known model context limits. Reduce coins, timeframes, or K-line count", estimate.Total),
 			"token_estimate": estimate,
 		})
 		return
@@ -498,7 +498,7 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 		}
 		if estimate, exceeds := exceedsEveryModel(merged); exceeds {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error":          fmt.Sprintf("Estimated %d tokens exceeds all known model context limits. Reduce coins, timeframes, or K-line count.", estimate.Total),
+				"error":          fmt.Sprintf("Estimated %d tokens exceeds all known model context limits. Reduce coins, timeframes, or K-line count", estimate.Total),
 				"token_estimate": estimate,
 			})
 			return

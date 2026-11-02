@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -87,7 +88,7 @@ func (s *Server) handleForecastDetail(c *gin.Context) {
 	}
 	strategy, err := s.forecast.Store.ActiveStrategy(time.Now())
 	if errors.Is(err, forecast.ErrNoStrategyInUse) {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusConflict, err)
 		return
 	}
 	if err != nil {
@@ -135,6 +136,30 @@ func (s *Server) handleForecastOverlay(c *gin.Context) {
 	c.JSON(http.StatusOK, overlay)
 }
 
+// forecastRefusals names the web's wording for what the forecast store refuses.
+var forecastRefusals = map[error]string{
+	forecast.ErrStrategyInUse:     "inUse",
+	forecast.ErrLastStrategy:      "last",
+	forecast.ErrStrategyBusy:      "busy",
+	forecast.ErrStrategyAbsent:    "absent",
+	forecast.ErrStrategyRetired:   "retired",
+	forecast.ErrStrategyName:      "name",
+	forecast.ErrStrategyNameTaken: "nameTaken",
+	forecast.ErrBacktestRunning:   "backtestRunning",
+	forecast.ErrBacktestName:      "backtestName",
+	forecast.ErrBacktestAbsent:    "backtestAbsent",
+}
+
+func refuseForecast(c *gin.Context, status int, err error) {
+	body := gin.H{"error": err.Error()}
+	for refusal, key := range forecastRefusals {
+		if errors.Is(err, refusal) {
+			body["error_key"] = "forecast.refusal." + key
+		}
+	}
+	c.JSON(status, body)
+}
+
 func (s *Server) handleForecastStrategies(c *gin.Context) {
 	if !s.requireForecast(c) {
 		return
@@ -149,7 +174,7 @@ func (s *Server) handleForecastStrategies(c *gin.Context) {
 		SafeInternalError(c, "Read forecast strategies", err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"active_strategy_id": settings.ActiveStrategyID, "strategies": strategies, "default_config": forecast.DefaultConfig()})
+	c.JSON(http.StatusOK, gin.H{"active_strategy_id": settings.ActiveStrategyID, "strategies": strategies, "horizon_limits": forecast.HorizonLimits, "default_config": forecast.DefaultConfig()})
 }
 
 // handleForecastPerformance is how a strategy has done live.
@@ -184,7 +209,7 @@ func (s *Server) handleCreateForecastStrategy(c *gin.Context) {
 	}
 	strategy, err := s.forecast.Store.CreateStrategy(req.Config, req.Name, time.Now())
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusBadRequest, err)
 		return
 	}
 	c.JSON(http.StatusOK, strategy)
@@ -205,11 +230,11 @@ func (s *Server) handleRenameForecastStrategy(c *gin.Context) {
 	case err == nil:
 		c.JSON(http.StatusOK, gin.H{"renamed": c.Param("id")})
 	case errors.Is(err, forecast.ErrStrategyAbsent):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusNotFound, err)
 	case errors.Is(err, forecast.ErrStrategyName):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusBadRequest, err)
 	case errors.Is(err, forecast.ErrStrategyNameTaken):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusConflict, err)
 	default:
 		SafeInternalError(c, "Rename the forecast strategy", err)
 	}
@@ -224,9 +249,9 @@ func (s *Server) handleActivateForecastStrategy(c *gin.Context) {
 	case err == nil:
 		c.JSON(http.StatusOK, gin.H{"active_strategy_id": id})
 	case errors.Is(err, forecast.ErrStrategyAbsent):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusNotFound, err)
 	case errors.Is(err, forecast.ErrStrategyRetired):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusConflict, err)
 	default:
 		SafeInternalError(c, "Use the forecast strategy", err)
 	}
@@ -240,7 +265,7 @@ func (s *Server) handleDeactivateForecastStrategy(c *gin.Context) {
 	case err == nil:
 		c.JSON(http.StatusOK, gin.H{"active_strategy_id": ""})
 	case errors.Is(err, forecast.ErrStrategyAbsent):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusNotFound, err)
 	default:
 		SafeInternalError(c, "Stop the forecast strategy", err)
 	}
@@ -255,9 +280,9 @@ func (s *Server) handleReviveForecastStrategy(c *gin.Context) {
 	case err == nil:
 		c.JSON(http.StatusOK, gin.H{"active_strategy_id": id})
 	case errors.Is(err, forecast.ErrStrategyAbsent):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusNotFound, err)
 	case errors.Is(err, forecast.ErrStrategyBusy):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusConflict, err)
 	default:
 		SafeInternalError(c, "Revive the forecast strategy", err)
 	}
@@ -272,9 +297,9 @@ func (s *Server) handleDeleteForecastStrategy(c *gin.Context) {
 	case err == nil:
 		c.JSON(http.StatusOK, gin.H{"deleted": id})
 	case errors.Is(err, forecast.ErrStrategyAbsent):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-	case errors.Is(err, forecast.ErrStrategyInUse), errors.Is(err, forecast.ErrStrategyBusy):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusNotFound, err)
+	case errors.Is(err, forecast.ErrStrategyInUse), errors.Is(err, forecast.ErrLastStrategy), errors.Is(err, forecast.ErrStrategyBusy):
+		refuseForecast(c, http.StatusConflict, err)
 	default:
 		SafeInternalError(c, "Delete the forecast strategy", err)
 	}
@@ -298,6 +323,8 @@ func (s *Server) handleUpdateForecastSettings(c *gin.Context) {
 	}
 	var req struct {
 		AlertThreshold int `json:"alert_threshold"`
+		// AlertIntervals stays as it is when left out, and an empty list means none.
+		AlertIntervals []string `json:"alert_intervals"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		SafeBadRequest(c, "Invalid request parameters")
@@ -307,15 +334,25 @@ func (s *Server) handleUpdateForecastSettings(c *gin.Context) {
 		SafeBadRequest(c, "Alert threshold must be between 51 and 99")
 		return
 	}
-	if _, err := s.forecast.Store.LoadSettings(time.Now()); err != nil {
+	for _, interval := range req.AlertIntervals {
+		if !slices.Contains(forecast.Intervals, interval) {
+			SafeBadRequest(c, "Unsupported interval")
+			return
+		}
+	}
+	current, err := s.forecast.Store.LoadSettings(time.Now())
+	if err != nil {
 		SafeInternalError(c, "Read forecast settings", err)
 		return
 	}
-	if err := s.forecast.Store.SetAlertThreshold(req.AlertThreshold); err != nil {
+	if req.AlertIntervals == nil {
+		req.AlertIntervals = current.AlertIntervals
+	}
+	if err := s.forecast.Store.SetAlerts(req.AlertThreshold, req.AlertIntervals); err != nil {
 		SafeInternalError(c, "Save forecast settings", err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"alert_threshold": req.AlertThreshold})
+	c.JSON(http.StatusOK, gin.H{"alert_threshold": req.AlertThreshold, "alert_intervals": req.AlertIntervals})
 }
 
 func (s *Server) handleForecastCoverage(c *gin.Context) {
@@ -339,7 +376,7 @@ func (s *Server) handleForecastBacktests(c *gin.Context) {
 	if !s.requireForecast(c) {
 		return
 	}
-	runs, err := s.forecast.Store.Backtests(30)
+	runs, err := s.forecast.Store.Backtests(100)
 	if err != nil {
 		SafeInternalError(c, "Read backtests", err)
 		return
@@ -389,9 +426,9 @@ func (s *Server) handleRenameForecastBacktest(c *gin.Context) {
 	case err == nil:
 		c.JSON(http.StatusOK, gin.H{"renamed": id})
 	case errors.Is(err, forecast.ErrBacktestAbsent):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusNotFound, err)
 	case errors.Is(err, forecast.ErrBacktestName):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusBadRequest, err)
 	default:
 		SafeInternalError(c, "Rename the backtest", err)
 	}
@@ -410,9 +447,9 @@ func (s *Server) handleDeleteForecastBacktest(c *gin.Context) {
 	case err == nil:
 		c.JSON(http.StatusOK, gin.H{"deleted": id})
 	case errors.Is(err, forecast.ErrBacktestAbsent):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusNotFound, err)
 	case errors.Is(err, forecast.ErrBacktestRunning):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusConflict, err)
 	default:
 		SafeInternalError(c, "Delete the backtest", err)
 	}
@@ -474,11 +511,11 @@ func (s *Server) handleCreateForecastBacktest(c *gin.Context) {
 	case err == nil:
 		c.JSON(http.StatusAccepted, run)
 	case errors.Is(err, forecast.ErrStrategyAbsent):
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusNotFound, err)
 	case errors.Is(err, forecast.ErrStrategyRetired), errors.Is(err, forecast.ErrBacktestRunning):
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusConflict, err)
 	case errors.Is(err, forecast.ErrBacktestName):
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		refuseForecast(c, http.StatusBadRequest, err)
 	default:
 		SafeInternalError(c, "Start the backtest", err)
 	}

@@ -211,7 +211,7 @@ export function comparisonShapes(plans: Plan[], selected: string | undefined) {
         x2,
         p2: price,
         color: c,
-        width: active ? 2 : 1,
+        width: 1,
         dashed: !active,
       })
     // A lane is narrow: its colours say which price is which, as in the plan's row. An

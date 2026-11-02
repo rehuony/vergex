@@ -60,10 +60,15 @@ type Settings struct {
 	// AlertThreshold is the score at or beyond which a signal alerts: 70 means 70
 	// and above upwards, 30 and below downwards.
 	AlertThreshold int `json:"alert_threshold"`
+	// AlertIntervals are the intervals whose calls can alert.
+	AlertIntervals []string `json:"alert_intervals"`
 }
 
 // DefaultAlertThreshold is used until the user sets one.
 const DefaultAlertThreshold = 70
+
+// DefaultAlertIntervals leaves out 15m, whose calls would fill the chat.
+var DefaultAlertIntervals = []string{"1h", "4h", "1d"}
 
 // Signal is one forecast and, later, how it turned out. Symbol and Interval come from
 // its series.
@@ -132,6 +137,9 @@ const (
 // BacktestCanceled is the error of a failed run that was stopped on request.
 const BacktestCanceled = "canceled"
 
+// BacktestInterrupted is the error of a run that was going when the process stopped.
+const BacktestInterrupted = "interrupted by a restart"
+
 // Refusals when naming or deleting a backtest.
 var (
 	ErrBacktestName   = errors.New("a backtest's name can be at most 80 characters")
@@ -154,9 +162,13 @@ type Backtest struct {
 	// Summary is the report's overall line, for a list of runs.
 	SummaryJSON string   `gorm:"column:summary;->" json:"-"`
 	Summary     *Metrics `gorm:"-" json:"summary,omitempty"`
-	Error       string   `json:"error,omitempty"`
-	CreatedAt   int64    `gorm:"serializer:unixms;autoCreateTime:false" json:"created_at"`
-	FinishedAt  int64    `gorm:"serializer:unixms" json:"finished_at,omitempty"`
+	// TestedFrom and TestedTo are the candles it actually tested, which local history can
+	// make much less than what was asked for.
+	TestedFrom int64  `gorm:"column:tested_from;->" json:"tested_from,omitempty"`
+	TestedTo   int64  `gorm:"column:tested_to;->" json:"tested_to,omitempty"`
+	Error      string `json:"error,omitempty"`
+	CreatedAt  int64  `gorm:"serializer:unixms;autoCreateTime:false" json:"created_at"`
+	FinishedAt int64  `gorm:"serializer:unixms" json:"finished_at,omitempty"`
 }
 
 func (Backtest) TableName() string { return "forecast.backtests" }
@@ -181,6 +193,9 @@ func (strategy *Strategy) decode() error {
 
 // CreateStrategy saves a new strategy under a name of its own.
 func (s *Store) CreateStrategy(config Config, name string, now time.Time) (*Strategy, error) {
+	if err := config.validateNew(); err != nil {
+		return nil, err
+	}
 	return s.createStrategy(s.db, config, name, false, now)
 }
 
@@ -246,6 +261,7 @@ func (s *Store) RenameStrategy(id, name string) error {
 // Refusals when using or deleting a strategy.
 var (
 	ErrStrategyInUse     = errors.New("the strategy in use cannot be deleted")
+	ErrLastStrategy      = errors.New("the last strategy cannot be deleted")
 	ErrStrategyBusy      = errors.New("a backtest of this strategy is running")
 	ErrStrategyAbsent    = errors.New("strategy not found")
 	ErrStrategyRetired   = errors.New("this strategy was saved under older forecast code: start a new one from it")
@@ -268,6 +284,15 @@ func (s *Store) DeleteStrategy(id string, now time.Time) error {
 		return ErrStrategyAbsent
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		// With none left, the next read would make a new Default and put it to use, which
+		// is not what deleting a stopped strategy asks for.
+		var others int64
+		if err := tx.Model(&Strategy{}).Where("id <> ?", id).Count(&others).Error; err != nil {
+			return err
+		}
+		if others == 0 {
+			return ErrLastStrategy
+		}
 		var running int64
 		if err := tx.Model(&Backtest{}).Where("strategy_id = ? AND status = ?", id, BacktestRunning).Count(&running).Error; err != nil {
 			return err
@@ -315,7 +340,7 @@ func (s *Store) LoadSettings(now time.Time) (Settings, error) {
 	if err != nil && !errors.Is(err, ErrNoStrategyInUse) {
 		return Settings{}, err
 	}
-	settings := Settings{AlertThreshold: DefaultAlertThreshold}
+	settings := Settings{AlertThreshold: DefaultAlertThreshold, AlertIntervals: DefaultAlertIntervals}
 	if active != nil {
 		settings.ActiveStrategyID = active.ID
 	}
@@ -323,7 +348,7 @@ func (s *Store) LoadSettings(now time.Time) (Settings, error) {
 	if err != nil || found {
 		return settings, err
 	}
-	return settings, s.SetAlertThreshold(DefaultAlertThreshold)
+	return settings, s.SetAlerts(DefaultAlertThreshold, DefaultAlertIntervals)
 }
 
 // ActiveStrategy returns the strategy in use, creating the first one when there are none
@@ -387,6 +412,15 @@ func (s *Store) Revive(id string) error {
 		return s.Activate(id)
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		// With none left, the next read would make a new Default and put it to use, which
+		// is not what deleting a stopped strategy asks for.
+		var others int64
+		if err := tx.Model(&Strategy{}).Where("id <> ?", id).Count(&others).Error; err != nil {
+			return err
+		}
+		if others == 0 {
+			return ErrLastStrategy
+		}
 		var running int64
 		if err := tx.Model(&Backtest{}).Where("strategy_id = ? AND status = ?", id, BacktestRunning).Count(&running).Error; err != nil {
 			return err
@@ -467,9 +501,9 @@ func carriedName(tx *gorm.DB, name string) (string, error) {
 	}
 }
 
-// SetAlertThreshold stores the alert threshold.
-func (s *Store) SetAlertThreshold(threshold int) error {
-	return database.PatchSetting(s.db, settingsModule, map[string]any{"alert_threshold": threshold})
+// SetAlerts stores what can alert.
+func (s *Store) SetAlerts(threshold int, intervals []string) error {
+	return database.PatchSetting(s.db, settingsModule, map[string]any{"alert_threshold": threshold, "alert_intervals": intervals})
 }
 
 // signalQuery selects signals with their symbol and interval.
@@ -777,7 +811,7 @@ func (s *Store) finishBacktest(id int64, report *Report, failure string, now tim
 // failInterruptedBacktests marks runs that were going when the process stopped.
 func (s *Store) failInterruptedBacktests(now time.Time) error {
 	return s.db.Model(&Backtest{}).Where("status = ?", BacktestRunning).Updates(map[string]any{
-		"status": BacktestFailed, "error": "interrupted by a restart", "finished_at": now.UTC(),
+		"status": BacktestFailed, "error": BacktestInterrupted, "finished_at": now.UTC(),
 	}).Error
 }
 
@@ -793,7 +827,10 @@ func (b *Backtest) decode() error {
 	}
 	if b.ReportJSON != "" {
 		b.Report = &Report{}
-		return json.Unmarshal([]byte(b.ReportJSON), b.Report)
+		if err := json.Unmarshal([]byte(b.ReportJSON), b.Report); err != nil {
+			return err
+		}
+		b.TestedFrom, b.TestedTo = b.Report.FirstTime, b.Report.LastTime
 	}
 	return nil
 }
@@ -801,7 +838,7 @@ func (b *Backtest) decode() error {
 // Backtests lists runs newest first, with each report's overall line for comparing them.
 func (s *Store) Backtests(limit int) ([]*Backtest, error) {
 	var runs []*Backtest
-	err := s.db.Select("id, strategy_id, name, options, status, done, total, error, created_at, finished_at, report->'overall' AS summary").
+	err := s.db.Select("id, strategy_id, name, options, status, done, total, error, created_at, finished_at, report->'overall' AS summary, (report->>'first_time')::bigint AS tested_from, (report->>'last_time')::bigint AS tested_to").
 		Order("id DESC").Limit(limit).Find(&runs).Error
 	if err != nil {
 		return nil, err
@@ -830,7 +867,10 @@ type SignalStats struct {
 	// Judged counts every judged signal, overlapping ones too.
 	Judged int64 `json:"judged"`
 	// Samples counts calls that moved: Hits and Misses.
-	Samples int64    `json:"samples"`
+	Samples int64 `json:"samples"`
+	// Moments counts the separate stretches of time those calls come from. Coins move
+	// together, so a hundred coins over one stretch are far from a hundred answers.
+	Moments int64    `json:"moments"`
 	Hits    int64    `json:"hits"`
 	Misses  int64    `json:"misses"`
 	HitRate *float64 `json:"hit_rate"`
@@ -908,7 +948,49 @@ func (s *Store) SignalStats(strategyID string, seriesID int64) (SignalStats, err
 	for _, row := range rows {
 		totals.add(row)
 	}
-	return totals.stats(), nil
+	stats := totals.stats()
+	// One series' independent calls never share a stretch of time.
+	stats.Moments = stats.Samples
+	return stats, nil
+}
+
+// madeCall is one independent call a strategy made and when, which outcome_stats no
+// longer knows.
+type madeCall struct {
+	Timeframe  string
+	Regime     string
+	Direction  string
+	Confidence int
+	OpenAt     time.Time
+	Horizon    int64
+}
+
+func (s *Store) madeCalls(strategyID string) ([]madeCall, error) {
+	var calls []madeCall
+	err := s.db.Table("forecast.signals AS r").Select("m.timeframe, r.regime, r.direction, r.confidence, r.open_at, r.horizon").
+		Joins("JOIN market.series AS m ON m.id = r.series_id").
+		Where("r.strategy_id = ? AND r.independent AND r.direction <> ?", strategyID, DirectionNeutral).Scan(&calls).Error
+	return calls, err
+}
+
+// momentsBy counts the separate moments behind the calls of each group. A moment belongs
+// to its interval, so an hour at 1h and an hour at 4h are not the same one.
+func momentsBy(calls []madeCall, key func(outcomeRow) string) map[string]int64 {
+	type moment struct {
+		group, timeframe string
+		index            int64
+	}
+	seen := map[moment]bool{}
+	counts := map[string]int64{}
+	for _, call := range calls {
+		group := key(outcomeRow{Timeframe: call.Timeframe, Regime: call.Regime, Direction: call.Direction, ConfidenceBand: confidenceBand(call.Confidence)})
+		at := moment{group, call.Timeframe, call.OpenAt.UnixMilli() / (max(call.Horizon, 1) * intervalMillis(call.Timeframe))}
+		if !seen[at] {
+			seen[at] = true
+			counts[group]++
+		}
+	}
+	return counts
 }
 
 // Performance is how a strategy has done live, overall and by what might explain it.
@@ -942,6 +1024,10 @@ func (s *Store) Performance(strategyID string) (*Performance, error) {
 	if err != nil {
 		return nil, err
 	}
+	calls, err := s.madeCalls(strategyID)
+	if err != nil {
+		return nil, err
+	}
 	var overall outcomeTotals
 	performance := &Performance{}
 	groups := []struct {
@@ -960,7 +1046,9 @@ func (s *Store) Performance(strategyID string) (*Performance, error) {
 		overall.add(row)
 	}
 	performance.Overall = overall.stats()
+	performance.Overall.Moments = momentsBy(calls, func(outcomeRow) string { return "" })[""]
 	for _, group := range groups {
+		moments := momentsBy(calls, group.key)
 		totals := map[string]*outcomeTotals{}
 		for _, row := range rows {
 			key := group.key(row)
@@ -974,7 +1062,9 @@ func (s *Store) Performance(strategyID string) (*Performance, error) {
 			if group.overallBase {
 				total.rose, total.moved = overall.rose, overall.moved
 			}
-			(*group.dest)[key] = total.stats()
+			stats := total.stats()
+			stats.Moments = moments[key]
+			(*group.dest)[key] = stats
 		}
 	}
 

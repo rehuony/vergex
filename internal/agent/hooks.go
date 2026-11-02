@@ -1,6 +1,9 @@
 package agent
 
-import "net/http"
+import (
+	"io"
+	"net/http"
+)
 
 // ClientHooks is the dispatch interface used to implement per-provider
 // polymorphism without Go's lack of virtual methods.
@@ -29,6 +32,12 @@ type ClientHooks interface {
 	// ParseResponseFull extracts text, tool calls, usage and why the reply ended
 	// from a non-streaming response body.
 	ParseResponseFull(body []byte) (*Response, error)
+
+	// ── Streaming ───────────────────────────────────────────────────────────
+	// StreamBody turns a request body into a streaming one, and ParseStream reads the
+	// answer into the same Response ParseResponseFull gives, calling onDelta as it goes.
+	StreamBody(body map[string]any) map[string]any
+	ParseStream(stream io.Reader, onDelta func(StreamDelta)) (*Response, error)
 
 	IsRetryableError(err error) bool
 }

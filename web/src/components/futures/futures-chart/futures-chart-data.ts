@@ -113,7 +113,7 @@ export async function fetchJSON<T>(path: string): Promise<T> {
   } catch (e) {
     if (controller.signal.aborted)
       throw new Error(
-        'Market chart timed out. Check the connection and try again.'
+        'Market chart timed out. Check the connection and try again'
       )
     throw e
   } finally {

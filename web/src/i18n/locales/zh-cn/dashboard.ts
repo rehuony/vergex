@@ -3,7 +3,7 @@ import type { dashboard as template } from '@/i18n/locales/en/dashboard'
 export const dashboard: typeof template = {
   dashboard: {
     stale: '未更新，最后更新于 {time}',
-    loadFailed: '无法加载总览。',
+    loadFailed: '无法加载总览',
     needsAttention: '需要处理',
     attentionNone: '无',
     attentionCount: '{count} 项',
@@ -11,8 +11,8 @@ export const dashboard: typeof template = {
     running: '运行中',
     stopped: '已停止',
     someAccountsUnread: '部分账户无法读取',
-    positionsUnread: '无法读取持仓。',
-    noPositions: '没有持仓。',
+    positionsUnread: '无法读取持仓',
+    noPositions: '没有持仓',
     symbol: '币种',
     heldBy: '持有者',
     size: '数量',
@@ -39,9 +39,9 @@ export const dashboard: typeof template = {
       filter: '筛选事件',
       resetView: '回到初始视角',
       loading: '正在加载…',
-      loadFailed: '无法加载动态。',
-      noEvents: '最近 24 小时没有发生任何事件。',
-      noMatch: '没有符合筛选条件的事件。',
+      loadFailed: '无法加载动态',
+      noEvents: '最近 24 小时没有发生任何事件',
+      noMatch: '没有符合筛选条件的事件',
       createTrader: '创建交易员',
       planTrade: '规划交易',
       kind: {

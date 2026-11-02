@@ -76,7 +76,7 @@ func (s *Server) handleFuturesAccountClose(c *gin.Context) {
 	if order.Status == "FILLED" {
 		runs, readErr := p.controller.List(user)
 		if readErr != nil {
-			warning = "Execution records could not be refreshed."
+			warning = "Execution records could not be refreshed"
 		}
 		for _, run := range runs {
 			if run.State == "completed" || run.State == "cancelled" || run.State == "expired" || run.AccountID != in.AccountID || run.Plan.Snapshot.Symbol != in.Symbol || run.Plan.Idea.Side != in.Side {

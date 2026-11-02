@@ -3,7 +3,11 @@ import { ArrowDown, ArrowUp, Minus } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api'
-import { FORECAST_INTERVALS, type ForecastInterval } from '@/api/forecast'
+import {
+  FORECAST_INTERVALS,
+  tooFewMoments,
+  type ForecastInterval,
+} from '@/api/forecast'
 import type { FuturesChart } from '@/api/futures'
 import { chartLineClass } from '@/components/market-chart/chart-legend'
 import { Switch } from '@/components/ui/switch'
@@ -142,11 +146,19 @@ export function FuturesForecast({
     )
   }
   if (!wanted || !data || !coin) return null
-  const hitRate = label('hitRate', { rate: percent(data.stats.hit_rate) })
+  // A percentage of a handful of calls on a page for placing trades reads as far more than
+  // it is, so it waits until there is something behind it.
+  const { samples, moments, hit_rate, chance_rate } = data.stats
+  const record =
+    samples === 0
+      ? null
+      : tooFewMoments(moments)
+        ? label('fewCalls', { count: samples })
+        : `${label('hitRate', { rate: percent(hit_rate), count: samples })} · ${label('byChance', { rate: percent(chance_rate) })}`
   return (
     <Link
       to={buildForecastPath(coin, interval)}
-      title={`${hitRate} · ${label('byChance', { rate: percent(data.stats.chance_rate) })}`}
+      title={record ?? undefined}
       className={cn(
         chartLineClass,
         'text-vergex-muted before:absolute before:inset-0 before:rounded-md hover:before:bg-vergex-ink-tint active:before:bg-vergex-ink/10'
@@ -166,7 +178,7 @@ export function FuturesForecast({
         />
         {data.calibrated ? `${score}%` : label('score', { score })}
       </span>
-      <span className="whitespace-nowrap">{hitRate}</span>
+      {record && <span className="whitespace-nowrap">{record}</span>}
       {venue !== 'binance' && (
         <span className="whitespace-nowrap">{label('fromBinance')}</span>
       )}

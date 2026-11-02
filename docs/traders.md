@@ -12,7 +12,7 @@ A trader is started and stopped from its header, and what else can be done to it
 | :-- | :---- |
 | Performance | Account equity, P/L, exposure, the account's equity curve (from the snapshot each cycle stores), results by symbol, hold time and side, and what its model calls have cost, with what it realized net of fees and that cost. A read that fails keeps the last values and says they are not updating |
 | Positions | Open positions, closing one or all of them, and closed trades, with older ones on request |
-| Decisions | The latest cycle, and a log of every cycle. Opening one shows its prompts, reasoning and raw response |
+| Decisions | The latest cycle, and a log of every cycle. Opening one shows what its model call cost, its prompts, reasoning and raw response |
 | Orders | Recorded orders and their fills, with CSV export |
 | Settings | What it runs with under Basics: its model, account, interval and margin mode. Then its config: Coins, Risk, Market data and Prompt parts for an agent trader, one form for a grid |
 
@@ -95,6 +95,8 @@ These bounds are applied whenever settings are saved or loaded (`Validate` in `i
 | Timeframes, bars | 3 timeframes, 20 bars | at most 4, 10–30 bars |
 
 The model is told all of these, and code holds it to them just before an order. Leverage above its limit is lowered to it, and a position too large for the margin left under the usage limit is cut down. An open is refused if it is over its value limit, if it would then be under the minimum size, if it would pass the position count, if its confidence is too low, or if its reward to risk, worked out from the current price, is too low.
+
+A reply cut off at its length limit before it could be read says so, rather than only that it could not be parsed. It counts as a failed model call, and `VERGEX_AGENT_MAX_TOKENS` raises the limit.
 
 A refused decision is only that decision: the rest of the reply still happens, including closes, it shows as blocked in the Decisions log, and it raises no alert and does not count towards safe mode.
 

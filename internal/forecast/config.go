@@ -143,6 +143,32 @@ func (c Config) Validate() error {
 	return nil
 }
 
+// HorizonLimits is how far ahead a new strategy can look at each interval: a day at 15m, up
+// to a month at 1d. Further than that, a curve would take decades of moments to earn.
+var HorizonLimits = map[string]int{"15m": 96, "1h": 72, "4h": 42, "1d": 30}
+
+// validateNew holds a new strategy to more than a saved one is held to, so one saved before
+// these rules keeps working.
+func (c Config) validateNew() error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	var trending, ranging bool
+	for _, factor := range c.Factors {
+		trending = trending || factor.Enabled && factor.Trending != 0
+		ranging = ranging || factor.Enabled && factor.Ranging != 0
+	}
+	if !trending || !ranging {
+		return errors.New("give both trending and ranging markets a weight, or the strategy has no call in the other")
+	}
+	for _, interval := range Intervals {
+		if limit := HorizonLimits[interval]; c.Horizons[interval] > limit {
+			return fmt.Errorf("horizon for %s must be at most %d bars", interval, limit)
+		}
+	}
+	return nil
+}
+
 // sortedFactors lists a config's factors in a fixed order.
 func sortedFactors(c Config) []string {
 	names := make([]string, 0, len(c.Factors))

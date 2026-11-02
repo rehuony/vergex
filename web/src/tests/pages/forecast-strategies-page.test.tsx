@@ -54,9 +54,10 @@ const config: ForecastConfig = {
   horizons: { '15m': 4, '1h': 4, '4h': 4, '1d': 4 },
 }
 
-const stats = (samples: number) => ({
+const stats = (samples: number, moments = samples) => ({
   judged: samples * 4,
   samples,
+  moments,
   hits: samples,
   misses: 0,
   hit_rate: samples ? 0.62 : null,
@@ -80,6 +81,7 @@ beforeEach(() => {
   sessionStorage.clear()
   mocks.strategies.mockResolvedValue({
     active_strategy_id: 'strategy-2',
+    horizon_limits: { '15m': 96, '1h': 72, '4h': 42, '1d': 30 },
     default_config: {
       ...config,
       factors: {
@@ -136,7 +138,7 @@ it('reads a saved strategy as plain values, and saves new rules as a new strateg
   })
   const save = screen.getByRole('button', { name: 'Save strategy' })
   fireEvent.click(save)
-  expect(screen.getByText('Name the new strategy.')).toBeVisible()
+  expect(screen.getByText('Name the new strategy')).toBeVisible()
   expect(mocks.create).not.toHaveBeenCalled()
 
   fireEvent.change(screen.getByLabelText('Name'), {
@@ -235,24 +237,64 @@ it('will not save with every factor off', async () => {
     target: { value: 'Nothing' },
   })
   fireEvent.click(screen.getByRole('button', { name: 'Save strategy' }))
-  expect(screen.getByText('Turn on at least one factor.')).toBeVisible()
+  expect(screen.getByText('Turn on at least one factor')).toBeVisible()
   expect(mocks.create).not.toHaveBeenCalled()
+})
+
+it('will not save a strategy with no weight in one kind of market', async () => {
+  show()
+  await screen.findByRole('tab', { name: 'Rules' })
+  fireEvent.click(within(rail()).getByRole('button', { name: 'New strategy' }))
+  fireEvent.change(await screen.findByLabelText(/Trend.*Ranging/), {
+    target: { value: '0' },
+  })
+  fireEvent.change(screen.getByLabelText('Name'), {
+    target: { value: 'Trend only' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save strategy' }))
+  expect(screen.getByText(/both trending and ranging/)).toBeVisible()
+  expect(mocks.create).not.toHaveBeenCalled()
+})
+
+it('says about how long a horizon is, and starts within the limits', async () => {
+  mocks.strategies.mockResolvedValue({
+    active_strategy_id: 'strategy-1',
+    horizon_limits: { '15m': 96, '1h': 72, '4h': 42, '1d': 30 },
+    default_config: config,
+    strategies: [
+      {
+        id: 'strategy-1',
+        name: 'Old',
+        retired: false,
+        config: { ...config, horizons: { ...config.horizons, '1d': 96 } },
+        created_at: 1,
+      },
+    ],
+  })
+  show()
+  await screen.findByRole('tab', { name: 'Rules' })
+  fireEvent.click(within(rail()).getByRole('button', { name: 'New strategy' }))
+  const longest = await screen.findByLabelText(/1d/)
+  expect(longest).toHaveValue(30)
+  expect(screen.getByText('bars, about 30 d')).toBeVisible()
+  expect(screen.getByText('bars, about 1 h')).toBeVisible()
 })
 
 it('shows how a strategy has done live, and how far it is from a curve', async () => {
   show()
   expect(await screen.findByText('12 / 200')).toBeVisible()
-  expect(screen.getByText('160 judged')).toBeVisible()
+  expect(screen.getByText('160 judged · 40 moments')).toBeVisible()
   expect(screen.getAllByText('62.0%').length).toBeGreaterThan(1)
   expect(screen.getAllByText('51.0%').length).toBeGreaterThan(1)
   expect(rail()).toBeVisible()
 })
 
-it('says when no calls have been judged, with 0 for what has nothing behind it', async () => {
+it('says when no calls have been judged, with no rate that reads as every call wrong', async () => {
   mocks.performance.mockResolvedValue({
     overall: {
       judged: 0,
       samples: 0,
+      moments: 0,
       hits: 0,
       misses: 0,
       hit_rate: null,
@@ -266,11 +308,10 @@ it('says when no calls have been judged, with 0 for what has nothing behind it',
     calibration: [],
   })
   show()
-  expect(
-    await screen.findByText('No calls have been judged yet.')
-  ).toBeVisible()
-  expect(screen.getAllByText('0.0%').length).toBeGreaterThan(1)
-  expect(screen.queryByText('—')).toBeNull()
+  expect(await screen.findByText('No calls have been judged yet')).toBeVisible()
+  expect(screen.queryByText('0.0%')).toBeNull()
+  expect(screen.getAllByText('—').length).toBeGreaterThan(1)
+  expect(screen.getByText('0 judged · 0 moments')).toBeVisible()
   expect(screen.queryByText('NaN')).toBeNull()
 })
 
@@ -325,4 +366,54 @@ it('keeps a draft after leaving the page', async () => {
 
   show()
   expect(await screen.findByLabelText('Name')).toHaveValue('Half done')
+})
+
+it('greys a record from too few moments, however many coins it counts', async () => {
+  mocks.performance.mockResolvedValue({
+    overall: stats(60, 40),
+    by_interval: { '1h': stats(40, 40), '4h': stats(20, 1) },
+    by_regime: {},
+    by_direction: {},
+    by_confidence: {},
+    calibration: [
+      { interval: '1h', moments: 40, needed: 200, active: false },
+      { interval: '4h', moments: 1, needed: 200, active: false },
+    ],
+  })
+  show()
+  const thin = (await screen.findAllByRole('cell', { name: '4h' }))[0].closest(
+    'tr'
+  )!
+  const whole = screen.getAllByRole('cell', { name: '1h' })[0].closest('tr')!
+  const afterFees = (row: Element) => row.querySelector('td:last-child')!
+  expect(afterFees(thin).className).not.toContain('text-vergex-success')
+  expect(afterFees(thin).className).toContain('text-vergex-muted')
+  expect(afterFees(whole).className).toContain('text-vergex-success')
+  expect(screen.getByText(/fewer than 30 separate stretches/)).toBeVisible()
+})
+
+it('says where each interval stands on showing as a probability', async () => {
+  const built = new Date('2026-10-03T00:00:00').getTime()
+  mocks.performance.mockResolvedValue({
+    overall: stats(40),
+    by_interval: {},
+    by_regime: {},
+    by_direction: {},
+    by_confidence: {},
+    calibration: [
+      { interval: '15m', moments: 12, needed: 200, active: false },
+      { interval: '1h', moments: 250, needed: 200, active: false },
+      {
+        interval: '4h',
+        moments: 210,
+        needed: 200,
+        active: true,
+        built_at: built,
+      },
+    ],
+  })
+  show()
+  expect(await screen.findByText('Score, did not pass the check')).toBeVisible()
+  expect(screen.getByText(/^Probability since Oct 3/)).toBeVisible()
+  expect(screen.getAllByText('Score').length).toBeGreaterThan(0)
 })

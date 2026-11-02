@@ -182,7 +182,7 @@ func (a *Agent) diagnoseOrders(ref *targetRef) map[string]any {
 	}
 	for key, path := range map[string]string{
 		"status":           base + "/status",
-		"latest_decisions": base + "/decisions/latest?limit=5",
+		"latest_decisions": base + "/decisions/summary?limit=5",
 		"open_orders":      base + "/open-orders",
 	} {
 		raw, err := a.api.raw("GET", path, nil)

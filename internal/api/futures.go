@@ -97,7 +97,7 @@ func (s *Server) futuresBroker(ctx context.Context, user, id string) (run.Broker
 			}
 		}
 		if active {
-			return nil, "", plan.Rejection{Key: "traderRunning", Text: "Automatic trading is running on this account. Stop it before using an approved one-time plan."}
+			return nil, "", plan.Rejection{Key: "traderRunning", Text: "Automatic trading is running on this account. Stop it before using an approved one-time plan"}
 		}
 	}
 	return s.futuresReadBroker(ctx, user, id)
@@ -354,6 +354,9 @@ func (s *Server) handleFuturesCompile(c *gin.Context) {
 	c.JSON(200, draft)
 }
 
+// futuresTurnLimit bounds one assistant turn, across all its rounds.
+const futuresTurnLimit = 5 * time.Minute
+
 // modelNamePattern is what a model's name can look like, on any provider.
 var modelNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$`)
 
@@ -422,7 +425,7 @@ func (s *Server) handleFuturesChat(c *gin.Context) {
 		return
 	}
 	if _, loaded := p.turns.LoadOrStore(user, true); loaded {
-		c.JSON(409, gin.H{"error": "A planning request is still running. Wait for it or stop it first."})
+		c.JSON(409, gin.H{"error": "A planning request is still running. Wait for it or stop it first"})
 		return
 	}
 	defer p.turns.Delete(user)
@@ -438,7 +441,7 @@ func (s *Server) handleFuturesChat(c *gin.Context) {
 		return
 	}
 	engine := futuresagent.Engine{Store: ds, Market: p.books(ex), Charts: p.source, Model: &futuresagent.ClientAdapter{Client: client}, Limits: in.Constraints, Forge: forge.NewRegistry(s.stores.DB), Plugins: registry}
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 180*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), futuresTurnLimit)
 	defer cancel()
 	if in.SessionID != "" {
 		conversation := agent.Conversation{
@@ -476,15 +479,27 @@ func (s *Server) handleFuturesChat(c *gin.Context) {
 	}
 	_ = emit(futuresagent.Event{Type: "status", Data: gin.H{"message": "Loading market context; preparing the planning model"}})
 	_ = emit(futuresagent.Event{Type: "model_transport", Data: gin.H{"transport": "native_tools"}})
+	started := time.Now()
 	e = engine.Run(ctx, in.Input, emit)
 	if e != nil && c.Request.Context().Err() == nil {
 		message := e.Error()
 		if ctx.Err() != nil || errors.Is(e, context.DeadlineExceeded) {
-			message = "Planning reached its time limit. No orders were submitted. Review saved drafts before starting another request."
+			message = "Planning reached its time limit. No orders were submitted. Review saved drafts before starting another request"
 		}
-		_ = emit(futuresagent.Event{Type: "error", Data: gin.H{"message": message}})
+		data := gin.H{"message": message}
+		var failure *agent.Failure
+		if errors.As(e, &failure) {
+			data["error_key"], data["detail"] = failure.Key(), failure.Detail
+		}
+		_ = emit(futuresagent.Event{Type: "error", Data: data})
 	}
 	if c.Request.Context().Err() == nil {
+		// What this turn came to. Every call is on record by the time it returns.
+		if use, err := s.stores.Calls.ForConversation(in.SessionID, started); err != nil {
+			logger.Warnf("Futures: read a turn's model calls: %v", err)
+		} else if use.Calls > 0 {
+			_ = emit(futuresagent.Event{Type: "usage", Data: use})
+		}
 		_ = emit(futuresagent.Event{Type: "done", Data: gin.H{"ok": e == nil}})
 	}
 }
@@ -688,7 +703,7 @@ func cancellableOrder(open []account.OpenOrder, runs []run.View, accountID, orde
 		}
 		for _, order := range row.Orders {
 			if order.OrderID == account.PlainOrderID(orderID) {
-				return account.OpenOrder{}, plan.Rejection{Key: "orderInPlan", Text: "This order belongs to a running plan. Change or stop the plan instead."}
+				return account.OpenOrder{}, plan.Rejection{Key: "orderInPlan", Text: "This order belongs to a running plan. Change or stop the plan instead"}
 			}
 		}
 	}
@@ -697,7 +712,7 @@ func cancellableOrder(open []account.OpenOrder, runs []run.View, accountID, orde
 			return order, nil
 		}
 	}
-	return account.OpenOrder{}, plan.Rejection{Key: "orderGone", Text: "This order is no longer open."}
+	return account.OpenOrder{}, plan.Rejection{Key: "orderGone", Text: "This order is no longer open"}
 }
 
 // settleCancelledOrder ends the order in the ledger, if the ledger knows it. Failing is only

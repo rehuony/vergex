@@ -10,7 +10,6 @@ import { NumberField } from '@/components/common/form-fields'
 import { Segmented } from '@/components/common/segmented'
 import { Button } from '@/components/ui/button'
 import { AppSelect } from '@/components/ui/select'
-import { testnetMark } from '@/constants/model-providers'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
 import type {
@@ -20,14 +19,16 @@ import type {
   TraderKind,
 } from '@/types'
 import { cn } from '@/utils/cn'
+import { accountName } from '@/utils/futures/futures-accounts'
 
 export const MIN_INTERVAL = 3
 export const MAX_INTERVAL = 60
 
-export function accountLabel(account: Account) {
+// An account in a list to choose from, told apart from another of the same name: a real
+// account and a testnet one can share it.
+export function accountLabel(account: Account, accounts: Account[] = []) {
   const venue = account.venue_name || account.venue
-  const name = account.name ? `${venue} · ${account.name}` : venue
-  return name + testnetMark(account)
+  return account.name ? `${venue} · ${accountName(account, accounts)}` : venue
 }
 
 export function modelLabel(model: AgentModel) {
@@ -214,7 +215,7 @@ function RunWithFields({
           value={form.account}
           options={accounts.map((account) => ({
             value: account.id,
-            label: accountLabel(account),
+            label: accountLabel(account, accounts),
           }))}
           onChange={(account) => onPatch({ account })}
         />

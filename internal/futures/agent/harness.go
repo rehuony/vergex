@@ -47,6 +47,18 @@ func (d Drawing) Validate() error {
 	return nil
 }
 
+// maxLabelRunes is as long as a label on the chart can be and still be read beside the
+// price axis.
+const maxLabelRunes = 40
+
+// shortLabel keeps a model's long label from running across the chart.
+func shortLabel(label string) string {
+	if runes := []rune(label); len(runes) > maxLabelRunes {
+		return string(runes[:maxLabelRunes-1]) + "…"
+	}
+	return label
+}
+
 type History struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
@@ -257,7 +269,7 @@ func Tools() []Tool {
 	idea := object(map[string]any{"name": text, "side": map[string]any{"type": "string", "enum": []string{"long", "short"}}, "entry": text, "stop": text, "target": text, "rationale": text, "execution": object(map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"market", "limit", "ladder", "twap"}}, "levels": map[string]any{"type": "array", "items": object(map[string]any{"price": text, "weight": text}, "price", "weight"), "minItems": 2, "maxItems": 8}, "slices": map[string]any{"type": "integer", "minimum": 2, "maximum": 24}, "interval_seconds": map[string]any{"type": "integer", "minimum": 5, "maximum": 300}}, "kind")}, "name", "side", "entry", "stop", "target", "rationale", "execution")
 	deferred := object(map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"market", "limit", "ladder", "twap"}}, "reason": map[string]any{"type": "string", "minLength": 1, "maxLength": 500}}, "kind", "reason")
 	point := object(map[string]any{"time": map[string]any{"type": "integer"}, "price": text}, "time", "price")
-	drawing := object(map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"horizontal_line", "trend_line", "rectangle"}}, "label": text, "points": map[string]any{"type": "array", "items": point, "minItems": 1, "maxItems": 2}}, "kind", "label", "points")
+	drawing := object(map[string]any{"kind": map[string]any{"type": "string", "enum": []string{"horizontal_line", "trend_line", "rectangle"}}, "label": map[string]any{"type": "string", "description": "A few words, such as \"Resistance 81950\". The reasoning goes in your reply."}, "points": map[string]any{"type": "array", "items": point, "minItems": 1, "maxItems": 2}}, "kind", "label", "points")
 	specs := []struct {
 		name, description string
 		schema            any
@@ -593,10 +605,12 @@ func (e *Engine) invoke(ctx context.Context, input Input, limits plan.Constraint
 		if len(*args.Drawings) > 10 {
 			return nil, errors.New("too many drawings")
 		}
-		for _, d := range *args.Drawings {
+		for i := range *args.Drawings {
+			d := &(*args.Drawings)[i]
 			if err := d.Validate(); err != nil {
 				return nil, err
 			}
+			d.Label = shortLabel(d.Label)
 		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -754,24 +768,71 @@ func (e *Engine) invoke(ctx context.Context, input Input, limits plan.Constraint
 	}
 }
 
-// Heartbeats are written by the same goroutine as tool events, preserving SSE order.
+// roundLimit bounds one call to the model. The reply arrives as it is written, so a quiet
+// connection is caught much sooner than this, by the client.
+const roundLimit = 180 * time.Second
+
+// textEvery is how often the reply's new text goes to the page, so a fast stream costs one
+// event a tenth of a second and not one a token.
+const textEvery = 100 * time.Millisecond
+
+// streamingPlanner is a planner that can show its reply as it is written.
+type streamingPlanner interface {
+	ChatStream(ctx context.Context, messages []Message, tools []Tool, onText func(string)) (Message, error)
+}
+
+// Heartbeats and text are written by the same goroutine as tool events, preserving SSE order.
 func chatWithProgress(ctx context.Context, planner ChatPlanner, messages []Message, tools []Tool, emit Emit) (Message, error) {
 	type result struct {
 		message Message
 		err     error
 	}
-	query, cancel := context.WithTimeout(ctx, 75*time.Second)
+	query, cancel := context.WithTimeout(ctx, roundLimit)
 	defer cancel()
 	done := make(chan result, 1)
-	go func() { m, err := planner.Chat(query, messages, tools); done <- result{m, err} }()
+	texts := make(chan string)
+	go func() {
+		if streaming, ok := planner.(streamingPlanner); ok {
+			m, err := streaming.ChatStream(query, messages, tools, func(text string) {
+				select {
+				case texts <- text:
+				case <-query.Done():
+				}
+			})
+			done <- result{m, err}
+			return
+		}
+		m, err := planner.Chat(query, messages, tools)
+		done <- result{m, err}
+	}()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	flusher := time.NewTicker(textEvery)
+	defer flusher.Stop()
 	started := time.Now()
+	var pending strings.Builder
+	flush := func() error {
+		if pending.Len() == 0 {
+			return nil
+		}
+		text := pending.String()
+		pending.Reset()
+		return emit(Event{"assistant_delta", map[string]string{"text": text}})
+	}
 	for {
 		select {
 		case <-query.Done():
 			return Message{}, query.Err()
+		case text := <-texts:
+			pending.WriteString(text)
+		case <-flusher.C:
+			if err := flush(); err != nil {
+				return Message{}, err
+			}
 		case r := <-done:
+			if err := flush(); err != nil {
+				return Message{}, err
+			}
 			return r.message, r.err
 		case <-ticker.C:
 			if err := emit(Event{"status", map[string]any{"message": "Model is still planning. Market updates continue; you can stop this request.", "elapsed_seconds": int(time.Since(started).Seconds())}}); err != nil {

@@ -16,7 +16,7 @@ func (s *Server) handleFuturesMarkets(c *gin.Context) {
 	}
 	markets, err := p.source.Markets(c.Request.Context(), c.Query("venue"))
 	if err != nil {
-		c.JSON(503, gin.H{"error": "Public market list unavailable. Retry or enter a native symbol."})
+		c.JSON(503, gin.H{"error": "Public market list unavailable. Retry or enter a native symbol"})
 		return
 	}
 	c.Header("Cache-Control", "public, max-age=30")

@@ -128,11 +128,12 @@ func main() {
 		forecastStore = forecast.NewStore(marketStore.DB())
 		engine := forecast.NewEngine(forecastStore, marketData, func(ctx context.Context, text string) error {
 			cfg, err := telegramStores.Telegram.Get()
-			if err != nil || cfg.AlertMuted(telegram.AlertForecast) {
+			if err != nil || cfg.BotToken == "" || cfg.ChatID == 0 || cfg.AlertMuted(telegram.AlertForecast) {
 				return nil
 			}
 			return telegram.Notify(ctx, telegramStores.Telegram, text)
 		})
+		engine.Language = telegramStores.Telegram.GetLanguage
 		engine.Start(marketCtx)
 		server.SetForecast(engine)
 	}

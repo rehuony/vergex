@@ -11,7 +11,7 @@ Open **Forecast** in the top bar. Data comes from [market data](market-data.md),
 | Signals | Every tracked coin in a list that stays beside the page, then one coin's chart filling the screen with its call at the head, and what the call rests on, its factors and its record below. `/forecast` opens the last coin looked at, and `/forecast?symbol=BTCUSDT&interval=1h` a given one |
 | Strategies | Saved strategies in a list that stays beside the page, then how one has done live and its rules |
 | Backtests | Past runs in a list that stays beside the page, then one run's report, or the form to start another |
-| Settings | What is collected, saved with its button, and the alert threshold, saved on leaving its field, beside how collection and the live stream are doing |
+| Settings | What is collected, saved with its button, and the alert threshold and intervals, saved as they change, beside how collection and the live stream are doing |
 
 The strategy in use is chosen from the picker on Signals, or with **Use** on Strategies. Choosing one puts it to use: signals and alerts follow it, and nothing trades on them.
 
@@ -41,7 +41,7 @@ The **Chart** menu turns on or off, remembered on this browser:
 
 Simulated candles restate the reading and add no information. From the score and expected move they set how far the path goes, each spanning one typical bar's range, with no randomness and nothing stored. They run flat on a neutral call, and where a calibrated score sits on the other side of 50 from the call. Only the direction of these calls has been tested, not the size or the path, so they are drawn see-through.
 
-The reading shows this strategy's hit rate on the coin next to what the same mix of Up and Down calls would hit by chance, given how often price rose. A hit rate means nothing until it beats that: always calling Down in a falling market hits often, with no skill. Both count only forecasts whose windows do not overlap, the same way a backtest does.
+The reading shows this strategy's hit rate on the coin next to what the same mix of Up and Down calls would hit by chance, given how often price rose. A hit rate means nothing until it beats that: always calling Down in a falling market hits often, with no skill. Both count only forecasts whose windows do not overlap, the same way a backtest does. The record's header says how many of them were right, and adds the percentages from 30 on.
 
 The Futures chart can overlay the same simulated candles and reading: see [Futures](futures.md).
 
@@ -49,7 +49,7 @@ The coin list orders strong calls first and keeps rows in place while values ref
 
 The star beside a coin puts it on the watchlist, shown in Chinese as `收藏`, or takes it off. A starred coin is collected at every interval and can alert, so it keeps a forecast whatever its volume does. The watchlist holds up to 100 coins.
 
-The chart's head gives the price, the 24-hour change, the call and its score. The panel under the chart gives the confidence, the expected move, when the call will be judged, support and resistance with their distance from the price, the market and its ADX, the hit rate with its sample size, what chance would hit, the funding rate, the open interest change, the long/short ratio against its own recent range, and when the forecast was made. It marks a series that has fallen behind as stale and keeps its last values. Factors lists each factor's reading, weight and effect on the score, and those with no reading.
+The chart's head gives the price, the 24-hour change, the call and its score. The panel under the chart gives the strength, the expected move, when the call will be judged, support and resistance with their distance from the price, the market and its ADX, the hit rate with its sample size, what chance would hit, the funding rate, the open interest change, the long/short ratio against its own recent range, and when the forecast was made. It marks a series that has fallen behind as stale and keeps its last values. Factors lists each factor's reading, weight and effect on the score, and those with no reading.
 
 ## How a forecast is made
 
@@ -58,7 +58,7 @@ The chart's head gives the price, the 24-hour change, the call and its score. Th
 1. **Factors.** Each reads from -1 (points down) to 1 (points up): trend, momentum, RSI, Bollinger position, recent returns, volume, candle shape, swing structure, stochastic, VWAP distance, divergence, funding rate, open interest and long/short ratio.
 2. **Market.** ADX splits trending from ranging markets, and each has its own weights. A negative weight reads a factor the other way round: an overbought RSI supports a trend but argues against a range.
 3. **Score.** The weighted average goes through a logistic curve. It is calculated twice: with candles only and with derivatives added. A factor with no recent reading is left out.
-4. **Call.** Up or Down when the score is far enough from 50, otherwise Neutral. Confidence falls when factors are missing. Expected move comes from ATR over the horizon, and support and resistance from recent swing points.
+4. **Call.** Up or Down when the score is far enough from 50, otherwise Neutral. Strength is how far the score is from 50, less when factors are missing, and is no probability: it says nothing the score does not. Expected move comes from ATR over the horizon, and support and resistance from recent swing points.
 
 A coin needs 200 candles, and until then shows `Not enough history`. One whose candles have an unexplained hole is skipped, and says so, until the hole is filled.
 
@@ -77,11 +77,11 @@ Every closed candle of a tracked series gets one record per strategy in use. For
 
 ## Strategies
 
-A saved strategy's rules never change, so its records always describe one set of rules, and they read as plain values. Its name can change. To try something else, press **New strategy** under the list. A new strategy starts from the one in view, or from any other or the default rules, and is saved under a name of its own. Backtest it, then put it to use. A draft survives leaving the page. A strategy not in use can be deleted, with its records and backtests.
+A saved strategy's rules never change, so its records always describe one set of rules, and they read as plain values. Its name can change. To try something else, press **New strategy** under the list. A new one needs a weight in both trending and ranging markets, since a market with none would never get a call, and can look at most 96 bars ahead at 15m, 72 at 1h, 42 at 4h and 30 at 1d, with the fields saying about how long that is. Strategies saved before these limits keep working. The last strategy cannot be deleted, since nothing would be left to use. A new strategy starts from the one in view, or from any other or the default rules, and is saved under a name of its own. Backtest it, then put it to use. A draft survives leaving the page. A strategy not in use can be deleted, with its records and backtests.
 
 Each entry in the lists of strategies and runs has a menu on hover with its actions. A double click, or the pencil beside the name on its own page, edits the name in place: Enter or leaving the field saves, and Escape keeps the old name. Strategies need a name of their own. A run with no name of its own goes by its strategy's.
 
-**Performance** sets how a strategy has done live beside its latest backtest: independent calls, hit rate against chance and return after fees, overall and by interval, market, call and confidence. It also shows how many of the 200 moments each interval has towards a calibration curve. An Up or Down call is compared with how often price rose or fell overall.
+**Performance** sets how a strategy has done live beside its latest backtest: independent calls, the moments they come from, hit rate against chance and return after fees, overall and by interval, market, call and strength. Figures from fewer than 30 moments are grey and take no colour: coins move together, so a hundred coins over one stretch of time say little more than one. It also shows, for each interval, how many of the 200 moments it has towards a calibration curve and where that stands: a score, a score that has the moments and did not pass the check, one that has the moments and is only checked while the strategy is in use, or a probability since the day its curve was built. An Up or Down call is compared with how often price rose or fell overall.
 
 When the forecast code changes what a strategy computes, an internal `EngineVersion` goes up. The next start copies the strategy in use under a new name, such as `Default (2)`, and puts the copy to use, so one strategy's records always come from one version of the code. The old strategy shows as `Retired`: it keeps its records and cannot be backtested, and a new strategy can start from its rules. Turning it back on, after a warning, puts the same strategy to use under the current code and deletes its signals, statistics, curves and backtests, since they came from the old code.
 
@@ -93,9 +93,9 @@ The config carries a `scorer` field, only `weighted` so far. Another way of scor
 
 ## Backtests
 
-A backtest reads only local data, one at a time, in the background, and can be stopped while it runs. **New backtest**, under the list of runs, takes the last 3, 6, 12 or 24 months or any range, so a strategy tuned on one stretch can be tested on another. Where local history is short, the form says so, and it can download history, with derivatives unless turned off. See [deep history](market-data.md#deep-history).
+A backtest reads only local data, one at a time, in the background, and can be stopped while it runs. **New backtest**, under the list of runs, takes the last 3, 6, 12 or 24 months or any range, so a strategy tuned on one stretch can be tested on another. Where local history is short, the form says so and offers to download it, with derivatives unless turned off. With nothing short it offers neither, and `vergex market-backfill --derivatives` fills derivatives in for history already held. See [deep history](market-data.md#deep-history). The list holds the newest 100 runs, and a link to any other says it was not found.
 
-Each run in the list shows its hit rate against chance and its lift, for comparing them. A run with nothing to test says so. **Run again** opens the form with what a run tested, and a run that is not going can be deleted.
+A run's report gives the range it really tested, and the list marks a run where local history made that much less than what it asked for: a year asked for and three days tested reads as neither. Each run in the list shows its hit rate against chance and its lift, for comparing them. A run with nothing to test says so. **Run again** opens the form with what a run tested, and a run that is not going can be deleted.
 
 ```bash
 vergex forecast-backtest --symbols BTCUSDT,ETHUSDT --intervals 1h,4h,1d --months 24
@@ -104,6 +104,7 @@ vergex forecast-backtest --symbols BTCUSDT,ETHUSDT --intervals 1h,4h,1d --months
 | Metric | Meaning |
 | :----- | :------ |
 | Samples | Non-overlapping tests: each series every `horizon` bars, so one move is not counted several times |
+| Moments | The separate stretches of time, one horizon long, that the calls come from. Coins move together, so this is how much evidence there really is, and figures from fewer than 30 are grey. A report from before they were counted shows `—` |
 | Hit rate | Hits over directional calls that moved |
 | By chance | What the same mix of Up and Down calls would hit with no skill. This is what a hit rate has to beat |
 | Rose anyway | How often price simply rose, over the samples where it moved |
@@ -117,7 +118,7 @@ vergex forecast-backtest --symbols BTCUSDT,ETHUSDT --intervals 1h,4h,1d --months
 
 ### First results
 
-The default weights are a first guess, not a tested result. On BTC, ETH and SOL over 24 months at 1h, 4h and 1d, with candles only:
+The default weights are a first guess, not a tested result. On BTC, ETH and SOL over 24 months at 1h, 4h and 1d, with candles only, measured on older forecast code (before `EngineVersion` 2) and not run again since, as that takes downloading the long history first:
 
 | | Samples | Hit rate | Rose anyway | Lift | Per signal after fees |
 | :- | --: | --: | --: | --: | --: |
@@ -129,4 +130,4 @@ The reliability table was flat: price rose about half the time at every score. S
 
 ## Alerts
 
-Watchlist coins alert over Telegram when a call's score crosses the threshold in **Forecast → Settings**: at 70, that means an Up call at 70 and above or a Down call at 30 and below. A neutral call does not alert, nor does a score a curve has put on the other side of the call. Each coin and interval alerts once, checked only when a candle closes, and can alert again after its score comes back inside. After downtime only the newest candle can alert, and only if it has just closed. Turn it off with Forecast signals in **Settings → Telegram**.
+Watchlist coins alert over Telegram when a call's score crosses the threshold in **Forecast → Settings**: at 70, that means an Up call at 70 and above or a Down call at 30 and below. A neutral call does not alert, nor does a score a curve has put on the other side of the call. Each coin and interval alerts once, checked only when a candle closes, and can alert again after its score comes back inside. After downtime only the newest candle can alert, and only if it has just closed. Only the intervals picked beside the threshold can alert, by default 1h, 4h and 1d, since 15m calls would fill the chat. One round of candles is one message, in the language set with `/lang`, naming the strategy and about how long each call looks ahead. Turn it off with Forecast signals in **Settings → Telegram**.

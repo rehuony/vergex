@@ -183,7 +183,7 @@ func (s *Server) handleChangePassword(c *gin.Context) {
 	}
 	if !s.authLimiter.allow(c.ClientIP(), time.Now()) {
 		c.Header("Retry-After", "60")
-		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many attempts. Try again in a minute."})
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "Too many attempts. Try again in a minute"})
 		return
 	}
 	user, err := s.stores.Users.GetByID(userID)

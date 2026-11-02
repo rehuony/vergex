@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"context"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -33,6 +34,12 @@ func (c *scriptedClient) CallWithRequestFull(req *agent.Request) (*agent.Respons
 	return &agent.Response{Content: "you have no accounts", ReasoningContent: "the list is empty"}, nil
 }
 
+// signed stands in for what signs the bot's API calls; these tests make none.
+func signed() (string, error) { return "tok", nil }
+
+// noLanguage stands for a chat where none was chosen with /lang.
+func noLanguage() string { return "" }
+
 func TestAChatIsKeptAcrossARestart(t *testing.T) {
 	st := NewStores(testdb.Open(t))
 	user := testdb.AddUser(t, st.DB)
@@ -40,9 +47,9 @@ func TestAChatIsKeptAcrossARestart(t *testing.T) {
 	const chat = int64(42)
 
 	client := &scriptedClient{}
-	manager := telegramagent.NewManager(0, "tok", "me@example.com", user, func() agent.Client { return client }, history)
-	if reply := manager.Run(chat, "what do I have?", nil); reply != "you have no accounts" {
-		t.Fatalf("reply = %q", reply)
+	manager := telegramagent.NewManager(0, signed, "me@example.com", user, func() agent.Client { return client }, history, noLanguage)
+	if reply := manager.Run(context.Background(), chat, "what do I have?", nil); reply.Text != "you have no accounts" {
+		t.Fatalf("reply = %q", reply.Text)
 	}
 
 	conversation, err := st.Conversations.Latest(user, agent.FeatureTelegram, "42")
@@ -77,8 +84,8 @@ func TestAChatIsKeptAcrossARestart(t *testing.T) {
 	// A new manager is what a restart makes: it remembers, in the same conversation.
 	client = &scriptedClient{}
 	client.turn.Store(1)
-	restarted := telegramagent.NewManager(0, "tok", "me@example.com", user, func() agent.Client { return client }, history)
-	restarted.Run(chat, "and now?", nil)
+	restarted := telegramagent.NewManager(0, signed, "me@example.com", user, func() agent.Client { return client }, history, noLanguage)
+	restarted.Run(context.Background(), chat, "and now?", nil)
 	sent := client.lastReq.Messages[len(client.lastReq.Messages)-1].Content
 	if !strings.Contains(sent, "what do I have?") || !strings.Contains(sent, "you have no accounts") {
 		t.Fatalf("the model was not reminded: %q", sent)
@@ -93,9 +100,9 @@ func TestAChatIsKeptAcrossARestart(t *testing.T) {
 	// /start begins a new conversation, even as the first thing after a restart.
 	client = &scriptedClient{}
 	client.turn.Store(1)
-	afterStart := telegramagent.NewManager(0, "tok", "me@example.com", user, func() agent.Client { return client }, history)
+	afterStart := telegramagent.NewManager(0, signed, "me@example.com", user, func() agent.Client { return client }, history, noLanguage)
 	afterStart.Reset(chat)
-	afterStart.Run(chat, "fresh", nil)
+	afterStart.Run(context.Background(), chat, "fresh", nil)
 	sent = client.lastReq.Messages[len(client.lastReq.Messages)-1].Content
 	if strings.Contains(sent, "what do I have?") {
 		t.Fatalf("/start kept the old chat: %q", sent)

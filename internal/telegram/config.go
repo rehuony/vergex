@@ -62,6 +62,7 @@ type ConfigStore interface {
 	Get() (*Config, error)                         // Get current config (may not exist)
 	SaveToken(botToken string) error               // Save bot token only (Web UI sets this)
 	Save(botToken, agentModelID string) error      // Save bot token + selected model
+	ClearToken() error                             // Forget the bot token
 	BindUser(chatID int64, username string) error  // Called on first /start
 	IsBound() (bool, error)                        // Check if any user is bound
 	GetBoundChatID() (int64, error)                // Get bound chat ID (0 if not bound)
@@ -111,6 +112,12 @@ func (s *telegramConfigStore) Save(botToken, agentModelID string) error {
 	cfg.BotToken = crypto.EncryptedString(botToken)
 	cfg.AgentModelID = agentModelID
 	return s.db.Save(&cfg).Error
+}
+
+func (s *telegramConfigStore) ClearToken() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.db.Model(&Config{}).Where("id = 1").Update("bot_token", "").Error
 }
 
 func (s *telegramConfigStore) BindUser(chatID int64, username string) error {

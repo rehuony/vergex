@@ -16,6 +16,7 @@ import { SettingRow } from '@/components/common/setting-row'
 import { Switch } from '@/components/ui/switch'
 import { t, type Language } from '@/i18n'
 import { cn } from '@/utils/cn'
+import { barsSpan } from './forecast-format'
 
 const CANDLE_FACTORS = [
   'trend',
@@ -39,10 +40,12 @@ const factorColumns =
 // whatever scrolls this.
 export function StrategyRules({
   config,
+  horizonLimits,
   onChange,
   language,
 }: {
   config: ForecastConfig
+  horizonLimits: Record<string, number>
   onChange: (next: ForecastConfig) => void
   language: Language
 }) {
@@ -161,8 +164,10 @@ export function StrategyRules({
               id={`fc-horizon-${interval}`}
               value={config.horizons[interval]}
               min={1}
-              max={96}
-              suffix={label('bars')}
+              max={horizonLimits[interval]}
+              suffix={label('barsAbout', {
+                span: barsSpan(config.horizons[interval], interval, label),
+              })}
               onChange={(bars) =>
                 patch({ horizons: { ...config.horizons, [interval]: bars } })
               }
@@ -277,7 +282,9 @@ export function StrategyRulesView({
         stats={FORECAST_INTERVALS.map((interval) => ({
           name: label('horizonFor', { interval }),
           value: config.horizons[interval],
-          note: label('bars'),
+          note: label('barsAbout', {
+            span: barsSpan(config.horizons[interval], interval, label),
+          }),
         }))}
       />
       <table className={tableClass}>

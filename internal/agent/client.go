@@ -23,6 +23,8 @@ var (
 
 	MaxRetryTimes = 3
 
+	// retryableErrors are failures of the connection, for what has no status to go by. An
+	// answer with a status is judged by that: see StatusError.
 	retryableErrors = []string{
 		"EOF",
 		"timeout",
@@ -32,13 +34,7 @@ var (
 		"no such host",
 		"stream error",   // HTTP/2 stream error
 		"INTERNAL_ERROR", // Server internal error
-		"status 429",     // Rate limit / upstream gateway throttling
-		"rate_limit_error",
 		"upstream_empty_output",
-		"status 502", // Bad Gateway
-		"status 503", // Service Unavailable
-		"status 520", // Cloudflare origin error
-		"status 524", // Cloudflare timeout
 	}
 
 	// CallCallback is called after each request to a model, failed ones included.
@@ -172,41 +168,9 @@ func (client *BaseClient) CallWithMessages(systemPrompt, userPrompt string) (str
 		return "", fmt.Errorf("model API key not set, please call SetAPIKey first")
 	}
 
-	// Fixed retry flow
-	var lastErr error
-	maxRetries := client.Cfg.MaxRetries
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if attempt > 1 {
-			client.Log.Warnf("⚠️  model API call failed, retrying (%d/%d)...", attempt, maxRetries)
-		}
-
-		// Call the fixed single-call flow
-		result, err := client.Hooks.Call(systemPrompt, userPrompt)
-		if err == nil {
-			if attempt > 1 {
-				client.Log.Infof("✓ model API retry succeeded")
-			}
-			return result, nil
-		}
-
-		lastErr = err
-		// Check if error is retryable via hooks (supports custom retry strategy)
-		if !client.Hooks.IsRetryableError(err) {
-			return "", err
-		}
-
-		// Wait before retry
-		if attempt < maxRetries {
-			waitTime := client.Cfg.RetryWaitBase * time.Duration(attempt)
-			client.Log.Infof("⏳ Waiting %v before retry...", waitTime)
-			if err := sleepWithContext(context.Background(), waitTime); err != nil {
-				return "", err
-			}
-		}
-	}
-
-	return "", fmt.Errorf("still failed after %d retries: %w", maxRetries, lastErr)
+	return retrying(client, context.Background(), func() (string, error) {
+		return client.Hooks.Call(systemPrompt, userPrompt)
+	})
 }
 
 func (client *BaseClient) SetAuthHeader(reqHeader http.Header) {
@@ -242,16 +206,6 @@ func (client *BaseClient) BuildRequestBody(systemPrompt, userPrompt string) map[
 		"role":    "user",
 		"content": userPrompt,
 	})
-
-	// Guard: truncate messages if they would exceed the model's context window
-	if client.Cfg.MaxContext > 0 {
-		truncated, removed := truncateMessages(messages, client.Cfg.MaxContext, client.MaxTokens)
-		if removed > 0 {
-			client.Log.Warnf("⚠️  [%s] Context guard: truncated %d oldest messages to fit within %d token limit",
-				client.String(), removed, client.Cfg.MaxContext)
-			messages = truncated
-		}
-	}
 
 	// Build request body
 	requestBody := map[string]interface{}{
@@ -316,7 +270,7 @@ func (client *BaseClient) BuildUrl() string {
 	if client.UseFullURL {
 		return client.BaseURL
 	}
-	return fmt.Sprintf("%s/chat/completions", client.BaseURL)
+	return strings.TrimRight(client.BaseURL, "/") + "/chat/completions"
 }
 
 func (client *BaseClient) BuildRequest(url string, jsonData []byte) (*http.Request, error) {
@@ -412,7 +366,7 @@ func (client *BaseClient) exchange(ctx context.Context, requestBody map[string]a
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned error (status %d): %s", resp.StatusCode, string(body))
+		return nil, newStatusError(resp, body)
 	}
 
 	response, err := client.Hooks.ParseResponseFull(body)
@@ -435,8 +389,16 @@ func (client *BaseClient) IsRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var policy interface{ Retryable() bool }
-	if errors.As(err, &policy) && !policy.Retryable() {
+	var broken streamBroken
+	if errors.As(err, &broken) {
+		return false
+	}
+	var refused *StatusError
+	if errors.As(err, &refused) {
+		return refused.Retryable()
+	}
+	// A call that ran out of time, or was stopped, has already had its chance.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	errStr := err.Error()

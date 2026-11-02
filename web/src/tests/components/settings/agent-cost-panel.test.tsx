@@ -64,6 +64,7 @@ it('shows tokens and estimated cost per model and flags unpriced calls', async (
   mocks.summary.mockResolvedValue({
     total: 0.0123,
     count: 3,
+    failed_count: 0,
     unpriced_count: 1,
     prompt_tokens: 12000,
     completion_tokens: 800,
@@ -71,6 +72,7 @@ it('shows tokens and estimated cost per model and flags unpriced calls', async (
       'deepseek-v3': {
         total: 0.0123,
         count: 2,
+        failed_count: 0,
         unpriced_count: 0,
         prompt_tokens: 10000,
         completion_tokens: 600,
@@ -78,6 +80,7 @@ it('shows tokens and estimated cost per model and flags unpriced calls', async (
       'my-local-model': {
         total: 0,
         count: 1,
+        failed_count: 0,
         unpriced_count: 1,
         prompt_tokens: 2000,
         completion_tokens: 200,
@@ -98,6 +101,7 @@ it('reports an empty period without inventing costs', async () => {
   mocks.summary.mockResolvedValue({
     total: 0,
     count: 0,
+    failed_count: 0,
     unpriced_count: 0,
     prompt_tokens: 0,
     completion_tokens: 0,
@@ -105,7 +109,7 @@ it('reports an empty period without inventing costs', async () => {
   })
   show()
   expect(
-    await screen.findByText('No model calls recorded in this period.')
+    await screen.findByText('No model calls recorded in this period')
   ).toBeVisible()
   expect(screen.getByText('$0.00')).toBeVisible()
 })
@@ -114,13 +118,14 @@ it('narrows the summary to one trader', async () => {
   mocks.summary.mockResolvedValue({
     total: 0,
     count: 0,
+    failed_count: 0,
     unpriced_count: 0,
     prompt_tokens: 0,
     completion_tokens: 0,
     by_model: {},
   })
   show()
-  await screen.findByText('No model calls recorded in this period.')
+  await screen.findByText('No model calls recorded in this period')
   expect(mocks.summary).toHaveBeenLastCalledWith('today', true, undefined)
 
   await screen.findByRole('option', { name: 'Trend follower' })
@@ -130,4 +135,72 @@ it('narrows the summary to one trader', async () => {
   await waitFor(() =>
     expect(mocks.summary).toHaveBeenLastCalledWith('today', true, 't1')
   )
+})
+
+it('says what made the calls and what failed', async () => {
+  const row = {
+    total: 0.5,
+    count: 2,
+    failed_count: 1,
+    unpriced_count: 0,
+    prompt_tokens: 100,
+    completion_tokens: 10,
+  }
+  mocks.summary.mockResolvedValue({
+    ...row,
+    by_model: { 'deepseek-flash': row },
+    by_feature: { futures: row },
+    recent_errors: [
+      {
+        id: 9,
+        feature: 'futures',
+        model: 'deepseek-flash',
+        error: 'HTTP 400: no such model',
+        created_at: '2026-11-02T12:00:00Z',
+      },
+    ],
+  })
+  show()
+  // Both the calls and the failures have this column.
+  expect(await screen.findAllByText('Made by')).toHaveLength(2)
+  expect(screen.getByText('1 failed')).toBeVisible()
+})
+
+it('shows a failure on one line and the whole of it once pressed', async () => {
+  const row = {
+    total: 0,
+    count: 1,
+    failed_count: 1,
+    unpriced_count: 0,
+    prompt_tokens: 0,
+    completion_tokens: 0,
+  }
+  const error = 'HTTP 400: no such model'
+  mocks.summary.mockResolvedValue({
+    ...row,
+    by_model: { 'deepseek-flash': row },
+    by_feature: { futures: row },
+    recent_errors: [
+      {
+        id: 9,
+        feature: 'futures',
+        model: 'deepseek-flash',
+        error,
+        created_at: '2026-11-02T12:00:00Z',
+      },
+    ],
+  })
+  show()
+  const line = await screen.findByRole('button', { name: error })
+  expect(line).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.getAllByText(error)).toHaveLength(1)
+
+  fireEvent.click(line)
+  expect(line).toHaveAttribute('aria-expanded', 'true')
+  expect(screen.getAllByText(error)).toHaveLength(2)
+
+  // Anywhere on the row closes it again.
+  fireEvent.click(line.closest('tr')!.cells[1])
+  expect(line).toHaveAttribute('aria-expanded', 'false')
+  expect(screen.getAllByText(error)).toHaveLength(1)
 })

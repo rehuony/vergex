@@ -3,7 +3,11 @@ import { CopyPlus, Pencil, Plus, Power, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '@/api'
-import type { ForecastConfig, ForecastStrategy } from '@/api/forecast'
+import {
+  FORECAST_INTERVALS,
+  type ForecastConfig,
+  type ForecastStrategy,
+} from '@/api/forecast'
 import {
   RailItem,
   SplitRail,
@@ -118,10 +122,19 @@ export function ForecastStrategiesPage() {
   const rulesFrom = (from: string): ForecastConfig | null => {
     if (!data) return null
     const source = data.strategies.find((strategy) => strategy.id === from)
-    return withEveryFactor(
+    const config = withEveryFactor(
       source?.config ?? data.default_config,
       data.default_config
     )
+    // Rules saved before the limits still have to meet them to be saved again.
+    const horizons = { ...config.horizons }
+    for (const interval of FORECAST_INTERVALS) {
+      horizons[interval] = Math.min(
+        horizons[interval],
+        data.horizon_limits[interval]
+      )
+    }
+    return { ...config, horizons }
   }
 
   // Leaving a draft with changes asks first. It reports whether the draft is gone.
@@ -168,17 +181,27 @@ export function ForecastStrategiesPage() {
   const noneOn =
     draft &&
     !Object.values(draft.config.factors).some((factor) => factor.enabled)
+  // A market with no weight has no call to make, and would wait forever for one.
+  const oneSided =
+    draft &&
+    !(['trending', 'ranging'] as const).every((market) =>
+      Object.values(draft.config.factors).some(
+        (factor) => factor.enabled && factor[market] !== 0
+      )
+    )
   const draftMessage = !draft?.tried
     ? undefined
     : noneOn
       ? label('needFactor')
-      : !draft.name.trim()
-        ? label('needName')
-        : undefined
+      : oneSided
+        ? label('needBothMarkets')
+        : !draft.name.trim()
+          ? label('needName')
+          : undefined
 
   const save = async () => {
     if (!draft) return
-    if (noneOn || !draft.name.trim()) {
+    if (noneOn || oneSided || !draft.name.trim()) {
       setDraft({ ...draft, tried: true })
       return
     }
@@ -248,6 +271,7 @@ export function ForecastStrategiesPage() {
     ) ?? false
 
   const isActive = selected?.id === data?.active_strategy_id
+  const lastOne = data?.strategies.length === 1
   const badges = (strategy: ForecastStrategy) => (
     <>
       {strategy.id === data?.active_strategy_id && (
@@ -285,7 +309,7 @@ export function ForecastStrategiesPage() {
       label: label('deleteStrategy'),
       icon: Trash2,
       danger: true,
-      disabled: strategy.id === data?.active_strategy_id,
+      disabled: strategy.id === data?.active_strategy_id || lastOne,
       onSelect: () => void remove(strategy),
     },
   ]
@@ -433,6 +457,7 @@ export function ForecastStrategiesPage() {
                   <div className="border-t border-vergex-line">
                     <StrategyRules
                       config={draft.config}
+                      horizonLimits={data?.horizon_limits ?? {}}
                       onChange={(config) => setDraft({ ...draft, config })}
                       language={language}
                     />
@@ -528,9 +553,11 @@ export function ForecastStrategiesPage() {
                       title={
                         isActive
                           ? label('inUseNoDelete')
-                          : label('deleteStrategy')
+                          : lastOne
+                            ? label('lastNoDelete')
+                            : label('deleteStrategy')
                       }
-                      disabled={isActive || busy}
+                      disabled={isActive || lastOne || busy}
                       onClick={() => void remove(selected)}
                     >
                       <Trash2 className="size-4" />
@@ -558,6 +585,7 @@ export function ForecastStrategiesPage() {
                     <StrategyPerformance
                       strategyId={selected.id}
                       retired={selected.retired}
+                      inUse={isActive}
                       language={language}
                     />
                   ) : (

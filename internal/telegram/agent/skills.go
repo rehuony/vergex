@@ -80,12 +80,13 @@ var skillTools = []agent.Tool{
 			"action":     enum("query for status and balance, positions for what an account holds", "query", "positions"),
 			"target_ref": refSchema,
 		}, "action")),
-	tool(skillAccount, "Read trading data of one trader: balance, positions, history, trades, orders, decisions, statistics, agent costs. scope=overview lists all traders.",
+	tool(skillAccount, "Read trading data of one trader: balance, positions, history, trades, orders, decisions, statistics, agent costs. scope=overview lists all traders. decisions lists the latest cycles with what was decided, what happened and any error; decision_detail adds one cycle's reasoning.",
 		object(map[string]any{
-			"scope":      enum("data to read", "overview", "balance", "positions", "position_history", "trades", "orders", "open_orders", "decisions", "statistics", "agent_costs"),
-			"trader_ref": refSchema,
-			"symbol":     str("optional symbol filter, e.g. BTCUSDT"),
-			"limit":      map[string]any{"type": "integer", "description": "optional row limit"},
+			"scope":       enum("data to read", "overview", "balance", "positions", "position_history", "trades", "orders", "open_orders", "decisions", "decision_detail", "statistics", "agent_costs"),
+			"trader_ref":  refSchema,
+			"symbol":      str("optional symbol filter, e.g. BTCUSDT"),
+			"limit":       map[string]any{"type": "integer", "description": "optional row limit"},
+			"decision_id": map[string]any{"type": "integer", "description": "for decision_detail: the id of a cycle from decisions"},
 		}, "scope")),
 	tool(skillClose, "Close one open position of a trader at market. Always held for user confirmation.",
 		object(map[string]any{
@@ -142,6 +143,26 @@ type accountInfo struct {
 	HasSecret bool   `json:"has_secret_key"`
 	HasPass   bool   `json:"has_passphrase"`
 	Testnet   bool   `json:"testnet"`
+}
+
+// where says which account a trader acts on and what kind of money that is, for what the
+// user is asked to confirm. An account that cannot be read says nothing rather than guess.
+func (a *Agent) where(accountID string) string {
+	accounts, err := a.accounts()
+	if err != nil {
+		return ""
+	}
+	zh := a.zh("")
+	for _, e := range accounts {
+		switch {
+		case e.ID != accountID:
+		case e.Testnet:
+			return status(zh, fmt.Sprintf("，账户“%s”（测试网）", e.Name), fmt.Sprintf(" on account \"%s\" (testnet)", e.Name))
+		default:
+			return status(zh, fmt.Sprintf("，账户“%s”（实盘）", e.Name), fmt.Sprintf(" on account \"%s\" (real money)", e.Name))
+		}
+	}
+	return ""
 }
 
 func (e accountInfo) label() string {
@@ -354,25 +375,29 @@ func (a *Agent) traderManagement(arguments string) map[string]any {
 
 func (a *Agent) traderLifecycle(action string, t traderInfo) map[string]any {
 	id := url.PathEscape(t.TraderID)
+	zh := a.zh("")
+	where := a.where(t.AccountID)
 	switch action {
 	case "start":
 		if t.IsRunning {
 			return map[string]any{"status": "already_running", "trader": t.Name}
 		}
-		return a.hold(fmt.Sprintf("start trader \"%s\" (live trading, kind: %s)", t.Name, orDash(t.Kind)), func() (string, error) {
+		summary := status(zh, fmt.Sprintf("启动交易员“%s”%s，类型 %s", t.Name, where, orDash(t.Kind)), fmt.Sprintf("start trader \"%s\"%s (kind: %s)", t.Name, where, orDash(t.Kind)))
+		return a.hold(summary, func() (string, error) {
 			return "", a.api.do("POST", "/api/traders/"+id+"/start", nil, nil)
 		})
 	case "stop":
 		if !t.IsRunning {
 			return map[string]any{"status": "already_stopped", "trader": t.Name}
 		}
-		return a.hold(fmt.Sprintf("stop running trader \"%s\"", t.Name), func() (string, error) {
+		summary := status(zh, fmt.Sprintf("停止运行中的交易员“%s”%s", t.Name, where), fmt.Sprintf("stop running trader \"%s\"%s", t.Name, where))
+		return a.hold(summary, func() (string, error) {
 			return "", a.api.do("POST", "/api/traders/"+id+"/stop", nil, nil)
 		})
 	default: // delete
-		summary := fmt.Sprintf("delete trader \"%s\"", t.Name)
+		summary := status(zh, fmt.Sprintf("删除交易员“%s”%s", t.Name, where), fmt.Sprintf("delete trader \"%s\"%s", t.Name, where))
 		if t.IsRunning {
-			summary += " (it is running and will be stopped)"
+			summary += status(zh, "（正在运行，会先停止）", " (it is running and will be stopped)")
 		}
 		return a.hold(summary, func() (string, error) {
 			return "", a.api.do("DELETE", "/api/traders/"+id, nil, nil)
@@ -453,7 +478,7 @@ func (a *Agent) createTrader(args traderArgs) map[string]any {
 		out["warnings"] = created.Warnings
 	}
 	if s.AutoStart {
-		for k, v := range a.traderLifecycle("start", traderInfo{TraderID: created.TraderID, Name: s.Name, Kind: created.Kind}) {
+		for k, v := range a.traderLifecycle("start", traderInfo{TraderID: created.TraderID, Name: s.Name, Kind: created.Kind, AccountID: account.ID}) {
 			out[k] = v
 		}
 	}
@@ -466,12 +491,13 @@ func (a *Agent) updateTrader(args traderArgs) map[string]any {
 		return bad
 	}
 	id := url.PathEscape(t.TraderID)
+	zh := a.zh("")
 	body := map[string]any{}
 	s := args.Slots
 	var changes []string
 	if s.Name != "" {
 		body["name"] = s.Name
-		changes = append(changes, "name → "+s.Name)
+		changes = append(changes, status(zh, "名称 → ", "name → ")+s.Name)
 	}
 	if s.Model != "" {
 		models, err := a.models()
@@ -483,7 +509,7 @@ func (a *Agent) updateTrader(args traderArgs) map[string]any {
 			return toMap(rerr)
 		}
 		body["agent_model_id"] = m.ID
-		changes = append(changes, "model → "+m.Name)
+		changes = append(changes, status(zh, "模型 → ", "model → ")+m.Name)
 	}
 	if s.Account != "" {
 		accounts, err := a.accounts()
@@ -495,20 +521,20 @@ func (a *Agent) updateTrader(args traderArgs) map[string]any {
 			return toMap(rerr)
 		}
 		body["account_id"] = e.ID
-		changes = append(changes, "account → "+e.Name)
+		changes = append(changes, status(zh, "账户 → ", "account → ")+e.Name)
 	}
 	if len(s.ConfigPatch) > 0 {
 		body["config"] = s.ConfigPatch
 		patch, _ := json.Marshal(s.ConfigPatch)
-		changes = append(changes, "config "+truncate(string(patch), 400))
+		changes = append(changes, status(zh, "配置 ", "config ")+truncate(string(patch), 400))
 	}
 	if s.ScanIntervalMinutes > 0 {
 		body["scan_interval_minutes"] = s.ScanIntervalMinutes
-		changes = append(changes, fmt.Sprintf("scan interval → %d min", s.ScanIntervalMinutes))
+		changes = append(changes, status(zh, fmt.Sprintf("决策间隔 → %d 分钟", s.ScanIntervalMinutes), fmt.Sprintf("scan interval → %d min", s.ScanIntervalMinutes)))
 	}
 	if s.InitialBalance > 0 {
 		body["initial_balance"] = s.InitialBalance
-		changes = append(changes, fmt.Sprintf("initial balance → %g", s.InitialBalance))
+		changes = append(changes, status(zh, fmt.Sprintf("初始余额 → %g", s.InitialBalance), fmt.Sprintf("initial balance → %g", s.InitialBalance)))
 	}
 	if len(changes) == 0 {
 		return missing("at least one field to change (name, model, account, config_patch, scan_interval_minutes, initial_balance)")
@@ -516,14 +542,15 @@ func (a *Agent) updateTrader(args traderArgs) map[string]any {
 	apply := func() (string, error) {
 		return "", a.api.do("PUT", "/api/traders/"+id, body, nil)
 	}
-	summary := fmt.Sprintf("update trader \"%s\": %s", t.Name, strings.Join(changes, ", "))
+	where := a.where(t.AccountID)
+	summary := status(zh, fmt.Sprintf("修改交易员“%s”%s：%s", t.Name, where, strings.Join(changes, "，")), fmt.Sprintf("update trader \"%s\"%s: %s", t.Name, where, strings.Join(changes, ", ")))
 	risky := kind.TouchesRisk(t.Kind, s.ConfigPatch)
 	if t.IsRunning {
 		// Nothing but the config of a running agent trader changes without a restart.
 		if t.Kind == kind.Agent && len(body) == 1 && len(s.ConfigPatch) > 0 {
-			return a.hold(summary+" (it takes effect on the trader's next cycle)", apply)
+			return a.hold(summary+status(zh, "（下一周期生效）", " (it takes effect on the trader's next cycle)"), apply)
 		}
-		return a.hold(summary+" (the running trader will be restarted)", apply)
+		return a.hold(summary+status(zh, "（运行中的交易员会重启）", " (the running trader will be restarted)"), apply)
 	}
 	if risky {
 		return a.hold(summary, apply)
@@ -631,11 +658,16 @@ func (a *Agent) accountManagement(arguments string) map[string]any {
 // ── account_query ───────────────────────────────────────────────────────────
 
 type accountArgs struct {
-	Scope     string     `json:"scope"`
-	TraderRef *targetRef `json:"trader_ref"`
-	Symbol    string     `json:"symbol"`
-	Limit     int        `json:"limit"`
+	Scope      string     `json:"scope"`
+	TraderRef  *targetRef `json:"trader_ref"`
+	Symbol     string     `json:"symbol"`
+	Limit      int        `json:"limit"`
+	DecisionID int64      `json:"decision_id"`
 }
+
+// decisionRows is how many cycles a read of decisions lists unless asked for another
+// number: each runs to a few thousand characters, and a result has room for maxResultChars.
+const decisionRows = 5
 
 // accountPaths are what each scope reads under /api/traders/:id.
 var accountPaths = map[string]string{
@@ -645,7 +677,7 @@ var accountPaths = map[string]string{
 	"trades":           "/trades",
 	"orders":           "/orders",
 	"open_orders":      "/open-orders",
-	"decisions":        "/decisions/latest",
+	"decisions":        "/decisions/summary",
 	"statistics":       "/statistics",
 }
 
@@ -662,12 +694,18 @@ func (a *Agent) accountQuery(arguments string) map[string]any {
 		return map[string]any{"traders": list}
 	}
 	path, ok := accountPaths[args.Scope]
-	if !ok && args.Scope != "agent_costs" {
+	if !ok && args.Scope != "agent_costs" && args.Scope != "decision_detail" {
 		return map[string]any{"error": "unsupported_scope", "scope": args.Scope}
 	}
 	t, bad := a.resolveTrader(args.TraderRef)
 	if bad != nil {
 		return bad
+	}
+	if args.Scope == "decision_detail" {
+		return a.decisionDetail(t, args.DecisionID)
+	}
+	if args.Scope == "decisions" && args.Limit == 0 {
+		args.Limit = decisionRows
 	}
 	path = "/api/traders/" + url.PathEscape(t.TraderID) + path
 	q := url.Values{}
@@ -686,6 +724,21 @@ func (a *Agent) accountQuery(arguments string) map[string]any {
 		return errResult(err)
 	}
 	return map[string]any{"trader": t.Name, "scope": args.Scope, "data": rawResult(raw)}
+}
+
+// decisionDetail reads one cycle without the prompts, which would fill the whole result
+// and push out what the cycle came to.
+func (a *Agent) decisionDetail(t traderInfo, id int64) map[string]any {
+	if id <= 0 {
+		return missing("decision_id")
+	}
+	var record map[string]any
+	if err := a.api.do("GET", fmt.Sprintf("/api/traders/%s/decisions/%d", url.PathEscape(t.TraderID), id), nil, &record); err != nil {
+		return errResult(err)
+	}
+	delete(record, "system_prompt")
+	delete(record, "input_prompt")
+	return map[string]any{"trader": t.Name, "scope": "decision_detail", "data": record}
 }
 
 // accountPositions reads what each account holds. One that cannot be read says so, and
@@ -866,7 +919,7 @@ func (a *Agent) forecastQuery(arguments string) map[string]any {
 	if err != nil {
 		return errResult(err)
 	}
-	return map[string]any{"scope": args.Scope, "note": "Forecast is experimental and connected to no trading.", "data": rawResult(raw)}
+	return map[string]any{"scope": args.Scope, "note": "Forecast is experimental and connected to no trading. confidence is how far the score is from 50, not a probability, so call it strength.", "data": rawResult(raw)}
 }
 
 // ── close_position ──────────────────────────────────────────────────────────
@@ -917,7 +970,9 @@ func (a *Agent) closePosition(arguments string) map[string]any {
 		return map[string]any{"error": "position_not_found", "trader": t.Name, "open_positions": open}
 	}
 	id := url.PathEscape(t.TraderID)
-	return a.hold(fmt.Sprintf("close %s %s position of trader \"%s\" at market", symbol, side, t.Name), func() (string, error) {
+	zh, where := a.zh(""), a.where(t.AccountID)
+	summary := status(zh, fmt.Sprintf("按市价平掉交易员“%s”的 %s %s 持仓%s", t.Name, symbol, side, where), fmt.Sprintf("close %s %s position of trader \"%s\"%s at market", symbol, side, t.Name, where))
+	return a.hold(summary, func() (string, error) {
 		return "", a.api.do("POST", "/api/traders/"+id+"/close-position", map[string]any{"symbol": symbol, "side": side}, nil)
 	})
 }

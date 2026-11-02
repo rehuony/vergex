@@ -35,7 +35,7 @@ export function SelectedPlanActions({
   if (!record) return null
   const state = [
     planStateLabel(run?.state || record.state, language),
-    // A testnet account's name already says so.
+    // Only real money is called out here: a testnet plan says so when it is reviewed.
     !record.plan.snapshot.testnet && label('liveTrading'),
     accountName,
   ]

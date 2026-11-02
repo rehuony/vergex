@@ -13,6 +13,20 @@ export const intervalMillis: Record<ForecastInterval, number> = {
   '1d': 24 * 60 * 60_000,
 }
 
+// How long some bars are, in the largest unit that reads well.
+export const barsSpan = (
+  bars: number,
+  interval: ForecastInterval,
+  label: (key: string, params?: Record<string, string | number>) => string
+) => {
+  const minutes = (bars * intervalMillis[interval]) / 60_000
+  if (minutes >= 48 * 60)
+    return label('spanDays', { count: Math.round(minutes / (24 * 60)) })
+  if (minutes >= 60)
+    return label('spanHours', { count: Math.round(minutes / 60) })
+  return label('spanMinutes', { count: minutes })
+}
+
 export const fmtPrice = (value: number | null | undefined) =>
   value === null || value === undefined || !Number.isFinite(value)
     ? '—'
@@ -24,8 +38,9 @@ export const fmtPrice = (value: number | null | undefined) =>
 export const fmtPct = (value: number, signed = false, digits = 2) =>
   `${signed && value > 0 ? '+' : ''}${value.toFixed(digits)}%`
 
+// No rate yet is not a rate of nothing: a 0.0% next to it would read as every call wrong.
 export const fmtRate = (rate: number | null | undefined) =>
-  `${((rate ?? 0) * 100).toFixed(1)}%`
+  rate === null || rate === undefined ? '—' : `${(rate * 100).toFixed(1)}%`
 
 export const fmtTime = (ms: number) =>
   new Date(ms).toLocaleString(activeLanguage(), {

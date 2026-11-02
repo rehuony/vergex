@@ -71,7 +71,7 @@ export function useFuturesTrades({
       stop: '',
       target: '',
       rationale:
-        'User-defined conditional prices, subject to mathematical validation; neither approved nor executed.',
+        'User-defined conditional prices, subject to mathematical validation; neither approved nor executed',
       execution: { kind: 'limit' },
     }),
     [levels, setLevels] = useState('')
@@ -110,7 +110,7 @@ export function useFuturesTrades({
           replacement = checked
         } else if (!runSettled(checked.state)) {
           throw new Error(
-            'The previous trade is still active. Review Positions and orders before placing another.'
+            'The previous trade is still active. Review Positions and orders before placing another'
           )
         }
         checkingPreviousTrade = false
@@ -187,7 +187,7 @@ export function useFuturesTrades({
       await reload()
       setOrderNotice(
         checked.state === 'completed'
-          ? 'Previous trade is closed. Your account is ready for a new order. Review a plan when you are ready.'
+          ? 'Previous trade is closed. Your account is ready for a new order. Review a plan when you are ready'
           : ''
       )
     } catch (e) {

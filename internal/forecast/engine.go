@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,8 @@ type Engine struct {
 	backtestRun    int64
 	cancelBacktest context.CancelFunc
 	calibrated     time.Time
+	// Language gives the language alerts are written in. Nil means English.
+	Language func() string
 }
 
 // skip is why a series has no forecast for its newest candle.
@@ -103,7 +106,7 @@ func (e *Engine) Tick(ctx context.Context) {
 		service.Report(service.Forecast, service.Running, "")
 	}
 	e.calibrateIfDue(strategy)
-	e.alert(ctx, created)
+	e.alert(ctx, strategy.Name, created)
 }
 
 // record forecasts every candle that closed since the last round. It also reports how
@@ -381,7 +384,7 @@ func Score(prob float64) int { return int(math.Round(prob * 100)) }
 // alert sends watchlist calls crossing the threshold, once each time: a series that
 // alerted is silent until its score comes back inside. After downtime a series catches
 // up on several candles, and only the newest can alert, if it has only just closed.
-func (e *Engine) alert(ctx context.Context, created []Signal) {
+func (e *Engine) alert(ctx context.Context, strategy string, created []Signal) {
 	if e.notify == nil || len(created) == 0 {
 		return
 	}
@@ -397,6 +400,10 @@ func (e *Engine) alert(ctx context.Context, created []Signal) {
 	for _, symbol := range marketSettings.Watchlist {
 		watched[symbol] = true
 	}
+	language := "en"
+	if e.Language != nil {
+		language = e.Language()
+	}
 	newest := map[int64]*Signal{}
 	for i := range created {
 		if held := newest[created[i].SeriesID]; held == nil || created[i].OpenTime > held.OpenTime {
@@ -404,7 +411,7 @@ func (e *Engine) alert(ctx context.Context, created []Signal) {
 		}
 	}
 	now := e.now().UnixMilli()
-	var lines []string
+	lines := []string{alertHeading(language, strategy)}
 	var fired, rearmed []int64
 	for i := range created {
 		signal := &created[i]
@@ -414,8 +421,8 @@ func (e *Engine) alert(ctx context.Context, created []Signal) {
 		switch {
 		case !beyondThreshold(signal, settings.AlertThreshold):
 			rearmed = append(rearmed, signal.SeriesID)
-		case now < signal.OpenTime+2*intervalMillis(signal.Interval) && !e.Store.alertArm(signal.SeriesID):
-			lines = append(lines, alertLine(signal))
+		case slices.Contains(settings.AlertIntervals, signal.Interval) && now < signal.OpenTime+2*intervalMillis(signal.Interval) && !e.Store.alertArm(signal.SeriesID):
+			lines = append(lines, alertLine(language, signal))
 			fired = append(fired, signal.SeriesID)
 		}
 	}
@@ -424,7 +431,7 @@ func (e *Engine) alert(ctx context.Context, created []Signal) {
 			logger.Warnf("Forecast: %v", err)
 		}
 	}
-	if len(lines) == 0 {
+	if len(fired) == 0 {
 		return
 	}
 	if err := e.notify(ctx, strings.Join(lines, "\n")); err != nil {
@@ -451,17 +458,56 @@ func beyondThreshold(signal *Signal, threshold int) bool {
 	return false
 }
 
-func alertLine(signal *Signal) string {
+func alertHeading(language, strategy string) string {
+	if language == "zh" {
+		return "📈 预测信号（策略：" + strategy + "）"
+	}
+	return "📈 Forecast signals (strategy: " + strategy + ")"
+}
+
+func alertLine(language string, signal *Signal) string {
+	score := Score(signal.DisplayProb)
+	span := int64(signal.Horizon) * intervalMillis(signal.Interval)
+	if language == "zh" {
+		direction := "上涨"
+		if signal.Direction == DirectionDown {
+			direction = "下跌"
+		}
+		value := fmt.Sprintf("评分 %d", score)
+		if signal.Calibrated {
+			value = fmt.Sprintf("%d%%", score)
+		}
+		return fmt.Sprintf("%s %s：%s，%s，约 %s内", signal.Symbol, signal.Interval, direction, value, roughSpan(language, span))
+	}
 	direction := "Up"
 	if signal.Direction == DirectionDown {
 		direction = "Down"
 	}
-	score := Score(signal.DisplayProb)
 	value := fmt.Sprintf("Score %d", score)
 	if signal.Calibrated {
 		value = fmt.Sprintf("%d%%", score)
 	}
-	return fmt.Sprintf("Forecast %s %s: %s, %s over the next %d bars", signal.Symbol, signal.Interval, direction, value, signal.Horizon)
+	return fmt.Sprintf("%s %s: %s, %s, over about %s", signal.Symbol, signal.Interval, direction, value, roughSpan(language, span))
+}
+
+// roughSpan says how long a stretch of time is in the largest unit that reads well, since
+// nobody works out four 15m bars in their head.
+func roughSpan(language string, millis int64) string {
+	minutes := int(math.Round(float64(millis) / 60000))
+	amount, unit := minutes, "minute"
+	switch {
+	case minutes >= 48*60:
+		amount, unit = int(math.Round(float64(minutes)/(24*60))), "day"
+	case minutes >= 60:
+		amount, unit = int(math.Round(float64(minutes)/60)), "hour"
+	}
+	if language == "zh" {
+		return fmt.Sprintf("%d %s", amount, map[string]string{"minute": "分钟", "hour": "小时", "day": "天"}[unit])
+	}
+	if amount != 1 {
+		unit += "s"
+	}
+	return fmt.Sprintf("%d %s", amount, unit)
 }
 
 // Candles reads local candles as Klines, for backtests.

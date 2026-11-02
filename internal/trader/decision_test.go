@@ -181,7 +181,7 @@ func TestAnArchivedTraderIsGoneButItsHistoryStays(t *testing.T) {
 	if err := st.Accounts.Delete(row.UserID, row.AccountID); !errors.Is(err, gorm.ErrForeignKeyViolated) {
 		t.Fatalf("an account in use: %v", err)
 	}
-	if err := st.Models.Delete(row.UserID, row.AgentModelID); !errors.Is(err, gorm.ErrForeignKeyViolated) {
+	if err := st.Models.Delete(row.UserID, row.AgentModelID); !errors.Is(err, gorm.ErrCheckConstraintViolated) {
 		t.Fatalf("a model in use: %v", err)
 	}
 

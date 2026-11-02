@@ -136,7 +136,7 @@ func (s Snapshot) Validate(now time.Time) error {
 	// A small forward clock difference is distinct from stale data. The local
 	// machine measured ~7s behind exchange clocks; still bound the tolerance.
 	if !s.SourceTime.IsZero() && s.SourceTime.After(now.Add(10*time.Second)) {
-		return rejected("clock", nil, "Venue time is over 10 seconds ahead of the local clock. Synchronize the clock before planning or execution.")
+		return rejected("clock", nil, "Venue time is over 10 seconds ahead of the local clock. Synchronize the clock before planning or execution")
 	}
 	return nil
 }
@@ -307,7 +307,7 @@ func Compile(s Snapshot, c Constraints, i Idea, now time.Time) (Plan, error) {
 		if c.SizingPolicy == SizingAccountMargin {
 			return p, rejected("belowMinimum", map[string]string{"quantity": string(number(q)), "notional": string(number(mul(q, e))), "minQty": string(s.MinQty), "minNotional": string(s.MinNotional)}, fmt.Sprintf("Available margin and risk budget allow quantity %s (notional %s), below venue minimum quantity %s or notional %s", number(q), number(mul(q, e)), s.MinQty, s.MinNotional))
 		}
-		return p, fmt.Errorf("Risk, notional and liquidity constraints allow quantity %s (notional %s), below venue minimum quantity %s or notional %s. Top-of-book side size is %s; participation is capped at 10%%. Changing the target cannot remove liquidity or minimum-order limits.", number(q), number(mul(q, e)), s.MinQty, s.MinNotional, number(liquidity))
+		return p, fmt.Errorf("Risk, notional and liquidity constraints allow quantity %s (notional %s), below venue minimum quantity %s or notional %s. Top-of-book side size is %s; participation is capped at 10%%. Changing the target cannot remove liquidity or minimum-order limits", number(q), number(mul(q, e)), s.MinQty, s.MinNotional, number(liquidity))
 	}
 	p = Plan{Snapshot: s, Constraints: c, Idea: i, Quantity: number(q), Risk: number(mul(q, loss)), Reward: number(mul(q, gain)), RewardRisk: number(div(gain, loss)), Created: now, Expires: now.Add(60 * time.Second)}
 	p.SizingLimit = limit

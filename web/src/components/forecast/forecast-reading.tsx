@@ -1,6 +1,10 @@
 import type { ReactNode } from 'react'
 import { Star } from 'lucide-react'
-import type { ForecastDetail, ForecastSignal } from '@/api/forecast'
+import {
+  tooFewMoments,
+  type ForecastDetail,
+  type ForecastSignal,
+} from '@/api/forecast'
 import { Panel } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
 import { t, type Language } from '@/i18n'
@@ -181,11 +185,13 @@ export function ForecastFigures({
   const latest = detail?.latest
   const result = detail?.result
   const stats = detail?.stats
+  const thin = tooFewMoments(stats?.moments)
   const readings = result?.derivatives
   const shownPrice = price ?? latest?.close
   const closes = (time: number) =>
     latest ? fmtTime(time + intervalMillis[latest.interval]) : '—'
-  // A figure being read is a bar, and one the call has nothing for is 0.
+  // A figure being read is a bar, and one the call has nothing for is 0, or "—" where 0 is
+  // a reading of its own.
   const read = (value: ReactNode) => (detail ? value : <Skeleton />)
   return (
     <Panel>
@@ -231,24 +237,38 @@ export function ForecastFigures({
         </Figure>
         <Figure
           name={label('hitRate')}
+          className={thin ? 'text-vergex-muted' : undefined}
           note={
             stats ? label('callsCount', { count: stats.samples }) : undefined
           }
         >
           {read(fmtRate(stats?.hit_rate))}
         </Figure>
-        <Figure name={label('chanceRate')}>
+        <Figure
+          name={label('chanceRate')}
+          className={thin ? 'text-vergex-muted' : undefined}
+        >
           {read(fmtRate(stats?.chance_rate))}
         </Figure>
         <Figure name={label('funding')}>
-          {read(`${((readings?.funding ?? 0) * 100).toFixed(4)}%`)}
+          {read(
+            readings?.funding == null
+              ? '—'
+              : `${(readings.funding * 100).toFixed(4)}%`
+          )}
         </Figure>
         <Figure name={label('openInterest')}>
-          {read(fmtPct(readings?.oi_change_pct ?? 0, true))}
+          {read(
+            readings?.oi_change_pct == null
+              ? '—'
+              : fmtPct(readings.oi_change_pct, true)
+          )}
         </Figure>
         <Figure name={label('longShort')}>
           {read(
-            `z ${(readings?.long_short_z ?? 0) > 0 ? '+' : ''}${(readings?.long_short_z ?? 0).toFixed(2)}`
+            readings?.long_short_z == null
+              ? '—'
+              : `z ${readings.long_short_z > 0 ? '+' : ''}${readings.long_short_z.toFixed(2)}`
           )}
         </Figure>
         <Figure

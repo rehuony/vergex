@@ -1,6 +1,15 @@
 import { useEffect, useId, useState, type FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, Copy, Landmark, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import {
+  BookOpen,
+  Check,
+  Copy,
+  Landmark,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import type { Account, AccountState, KeyPermissions } from '@/types'
 import { t, type Language } from '@/i18n'
@@ -23,7 +32,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { AppSelect } from '@/components/ui/select'
 import { AccountLedger } from './account-ledger'
 import {
-  SettingActions,
   SettingBack,
   SettingBadge,
   SettingItem,
@@ -265,12 +273,9 @@ export function AccountSettings({ language }: { language: Language }) {
                       disabled={phase === 'checking'}
                       onClick={() => void verify(account.id)}
                       // An icon alone on phones, where the name needs the room.
-                      className="max-sm:w-9 max-sm:px-0"
+                      className="max-sm:size-10 max-sm:px-0"
                     >
-                      <RefreshCw
-                        className="size-4 sm:hidden"
-                        aria-hidden="true"
-                      />
+                      <RefreshCw className="size-4" />
                       <span className="max-sm:sr-only">
                         {t('connections.verify', language)}
                       </span>
@@ -281,8 +286,12 @@ export function AccountSettings({ language }: { language: Language }) {
                       variant="secondary"
                       aria-label={`${t('connections.edit', language)} ${name}`}
                       onClick={() => setEditing(account.id)}
+                      className="max-sm:size-10 max-sm:px-0"
                     >
-                      {t('connections.edit', language)}
+                      <Pencil className="size-4" />
+                      <span className="max-sm:sr-only">
+                        {t('connections.edit', language)}
+                      </span>
                     </Button>
                   </SettingItem>
                 )
@@ -437,9 +446,16 @@ function AccountForm({
       return
     }
     if (
-      !(await confirmToast(t('confirmDeleteAccount', language), {
-        tone: 'danger',
-      }))
+      !(await confirmToast(
+        t('confirmDeleteAccount', language, {
+          name: existing.name || existing.venue_name,
+        }),
+        {
+          title: t('deleteAccountTitle', language),
+          okText: t('delete', language),
+          tone: 'danger',
+        }
+      ))
     )
       return
     await run(async () => {
@@ -496,180 +512,191 @@ function AccountForm({
   }
 
   return (
-    <form onSubmit={save} aria-label={t('accountsTab', language)}>
-      <SettingBack
-        onBack={onDone}
-        backLabel={t('back', language)}
-        icon={venueIcon(type)}
-        title={
-          existing
-            ? existing.name || existing.venue_name
-            : t('connections.addAccount', language)
-        }
-        badge={
-          existing && stateBadge(state, listPhase(state, states), language)
-        }
-        detail={
-          existing && (
-            <span title={problem || undefined}>
-              {[environment(existing, language), problem]
-                .filter(Boolean)
-                .join(' · ')}
-            </span>
-          )
-        }
-      >
-        {existing && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="sm"
-            className="max-sm:h-10"
-            onClick={() => setLedgerOpen(true)}
-          >
-            {t('connections.ledger.title', language)}
-          </Button>
-        )}
-      </SettingBack>
-      {!existing && (
-        <SettingRow
-          label={t('connections.venue', language)}
-          htmlFor={`${id}-type`}
-        >
-          <AppSelect
-            id={`${id}-type`}
-            value={type}
-            onChange={setType}
-            options={Object.entries(VENUES).map(([value, label]) => ({
-              value,
-              label,
-            }))}
-            className="h-9 w-auto min-w-0 flex-1"
-          />
-          <Button
-            type="button"
-            variant="option"
-            aria-pressed={testnet}
-            onClick={() => setTestnet((on) => !on)}
-          >
-            {t('connections.testnet', language)}
-          </Button>
-        </SettingRow>
-      )}
-      <SettingRow
-        label={t('connections.accountName', language)}
-        htmlFor={`${id}-name`}
-      >
-        <input
-          id={`${id}-name`}
-          type="text"
-          required
-          value={accountName}
-          onChange={(e) => setAccountName(e.target.value)}
-          placeholder={t('accountConfig.accountNamePlaceholder', language)}
-          className={inputClass}
-        />
-      </SettingRow>
-      {existing && (
-        <SettingRow label={t('connections.equity', language)}>
-          {state?.status === 'ok' ? (
-            <>
-              <span className="mono text-sm text-vergex-ink">
-                {balance(state)}
-              </span>
-              {state.available_balance !== undefined && (
-                <span className="text-xs text-vergex-muted">
-                  {t('connections.available', language)}{' '}
-                  <span className="mono">
-                    {funds(state.available_balance)} {state.asset}
-                  </span>
+    <form
+      onSubmit={save}
+      aria-label={t('accountsTab', language)}
+      className="h-full"
+    >
+      <SettingList
+        head={
+          <SettingBack
+            onBack={onDone}
+            backLabel={t('back', language)}
+            icon={venueIcon(type)}
+            title={
+              existing
+                ? existing.name || existing.venue_name
+                : t('connections.addAccount', language)
+            }
+            badge={
+              existing && stateBadge(state, listPhase(state, states), language)
+            }
+            detail={
+              existing && (
+                <span title={problem || undefined}>
+                  {[environment(existing, language), problem]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </span>
-              )}
-            </>
-          ) : listPhase(state, states) === 'checking' ? (
-            <Skeleton className="w-28" />
-          ) : (
-            <span className="mono text-sm text-vergex-muted">—</span>
-          )}
-        </SettingRow>
-      )}
-      {keyRow(
-        'API Key',
-        'key',
-        apiKey,
-        setApiKey,
-        'enterAPIKey',
-        existing?.has_api_key
-      )}
-      {keyRow(
-        'Secret Key',
-        'secret',
-        secretKey,
-        setSecretKey,
-        'enterSecretKey',
-        existing?.has_secret_key
-      )}
-      {okx &&
-        keyRow(
-          'Passphrase',
-          'passphrase',
-          passphrase,
-          setPassphrase,
-          'enterPassphrase',
-          existing?.has_passphrase
-        )}
-      <SettingRow label={t('connections.serverIP', language)}>
-        {serverIP?.public_ip ? (
-          <>
-            <code className="font-mono text-sm text-vergex-ink">
-              {serverIP.public_ip}
-            </code>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-7 px-2 text-xs"
-              onClick={() => void copyIP(serverIP.public_ip)}
-            >
-              {copied ? (
-                <Check className="size-3.5" />
-              ) : (
-                <Copy className="size-3.5" />
-              )}
-              {t(copied ? 'ipCopied' : 'copyIP', language)}
-            </Button>
-          </>
-        ) : (
-          <Skeleton className="w-28" />
-        )}
-      </SettingRow>
-      <SettingActions
+              )
+            }
+          >
+            {existing && (
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="max-sm:h-10"
+                onClick={() => setLedgerOpen(true)}
+              >
+                <BookOpen className="size-4" />
+                {t('connections.ledger.title', language)}
+              </Button>
+            )}
+          </SettingBack>
+        }
         message={
           message ||
           (canTravel === false && t('connections.insecure', language))
         }
+        actions={
+          <>
+            {existing && (
+              <Button
+                type="button"
+                size="sm"
+                variant="danger"
+                disabled={busy}
+                onClick={() => void remove()}
+              >
+                <Trash2 className="size-4" />
+                {t('delete', language)}
+              </Button>
+            )}
+            <Button
+              type="submit"
+              size="sm"
+              variant="primary"
+              disabled={!canSave || busy}
+            >
+              <Check className="size-4" />
+              {busy ? t('saving', language) : t('saveConfig', language)}
+            </Button>
+          </>
+        }
       >
-        {existing && (
-          <Button
-            type="button"
-            size="sm"
-            variant="danger"
-            disabled={busy}
-            onClick={() => void remove()}
+        {!existing && (
+          <SettingRow
+            label={t('connections.venue', language)}
+            htmlFor={`${id}-type`}
           >
-            <Trash2 className="size-4" />
-            {t('delete', language)}
-          </Button>
+            <AppSelect
+              id={`${id}-type`}
+              value={type}
+              onChange={setType}
+              options={Object.entries(VENUES).map(([value, label]) => ({
+                value,
+                label,
+              }))}
+              className="h-9 w-auto min-w-0 flex-1"
+            />
+            <Button
+              type="button"
+              variant="option"
+              aria-pressed={testnet}
+              onClick={() => setTestnet((on) => !on)}
+            >
+              {t('connections.testnet', language)}
+            </Button>
+          </SettingRow>
         )}
-        <Button
-          type="submit"
-          size="sm"
-          variant="primary"
-          disabled={!canSave || busy}
+        <SettingRow
+          label={t('connections.accountName', language)}
+          htmlFor={`${id}-name`}
         >
-          {busy ? t('saving', language) : t('saveConfig', language)}
-        </Button>
-      </SettingActions>
+          <input
+            id={`${id}-name`}
+            type="text"
+            required
+            value={accountName}
+            onChange={(e) => setAccountName(e.target.value)}
+            placeholder={t('accountConfig.accountNamePlaceholder', language)}
+            className={inputClass}
+          />
+        </SettingRow>
+        {existing && (
+          <SettingRow label={t('connections.equity', language)}>
+            {state?.status === 'ok' ? (
+              <>
+                <span className="mono text-sm text-vergex-ink">
+                  {balance(state)}
+                </span>
+                {state.available_balance !== undefined && (
+                  <span className="text-xs text-vergex-muted">
+                    {t('connections.available', language)}{' '}
+                    <span className="mono">
+                      {funds(state.available_balance)} {state.asset}
+                    </span>
+                  </span>
+                )}
+              </>
+            ) : listPhase(state, states) === 'checking' ? (
+              <Skeleton className="w-28" />
+            ) : (
+              <span className="mono text-sm text-vergex-muted">—</span>
+            )}
+          </SettingRow>
+        )}
+        {keyRow(
+          'API Key',
+          'key',
+          apiKey,
+          setApiKey,
+          'enterAPIKey',
+          existing?.has_api_key
+        )}
+        {keyRow(
+          'Secret Key',
+          'secret',
+          secretKey,
+          setSecretKey,
+          'enterSecretKey',
+          existing?.has_secret_key
+        )}
+        {okx &&
+          keyRow(
+            'Passphrase',
+            'passphrase',
+            passphrase,
+            setPassphrase,
+            'enterPassphrase',
+            existing?.has_passphrase
+          )}
+        <SettingRow label={t('connections.serverIP', language)}>
+          {serverIP?.public_ip ? (
+            <>
+              <code className="min-w-0 flex-1 truncate font-mono text-sm text-vergex-ink">
+                {serverIP.public_ip}
+              </code>
+              <Button
+                type="button"
+                size="sm"
+                className="max-sm:h-10"
+                onClick={() => void copyIP(serverIP.public_ip)}
+              >
+                {copied ? (
+                  <Check className="size-4" />
+                ) : (
+                  <Copy className="size-4" />
+                )}
+                {t(copied ? 'ipCopied' : 'copyIP', language)}
+              </Button>
+            </>
+          ) : (
+            <Skeleton className="w-28" />
+          )}
+        </SettingRow>
+      </SettingList>
     </form>
   )
 }

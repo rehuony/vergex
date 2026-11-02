@@ -121,6 +121,18 @@ export interface DecisionRecord {
   execution_log: string[]
   success: boolean
   error_message?: string
+  /** What the cycle's calls to the model came to, on a record read in full. */
+  model_use?: {
+    model: string
+    calls: number
+    failed: number
+    prompt_tokens: number
+    completion_tokens: number
+    cost_usd: number
+    unpriced: boolean
+    duration_ms: number
+    finish_reason: string
+  }
 }
 
 // Stored totals of one trader. A value is absent until something was recorded.

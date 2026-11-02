@@ -1,6 +1,5 @@
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { api } from '@/api'
-import { AGENT_PROVIDER_CONFIG } from '@/constants/model-providers'
 import type { AgentModel, Account } from '@/types'
 
 // models and exchange accounts are edited in settings, over whatever page
@@ -24,9 +23,7 @@ export const MODEL_CATALOG_KEY = 'model-catalog'
 
 // The model a connection is set to: the name given to it, else its provider's default.
 export const connectionModel = (model: AgentModel) =>
-  model.customModelName ||
-  AGENT_PROVIDER_CONFIG[model.provider]?.defaultModel ||
-  model.name
+  model.customModelName || model.defaultModel || model.name
 
 // What each connection's provider offers, its own model first. Providers rarely change
 // this, and a provider that will not say leaves just the model it is set to.

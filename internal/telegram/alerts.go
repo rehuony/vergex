@@ -37,6 +37,10 @@ const (
 	// accountFailingFor is how long an account's reads must keep failing to be worth a
 	// message: a network hiccup clears by itself.
 	accountFailingFor = 5 * time.Minute
+	// alertLate is how old an event must be for its message to say when it happened.
+	alertLate = 2 * time.Minute
+	// maxAlertDetail bounds what an error adds to a line: a provider's message can run long.
+	maxAlertDetail = 300
 )
 
 const (
@@ -98,6 +102,9 @@ type alertWatcher struct {
 	sources AlertSources
 	send    func(ctx context.Context, text string) error
 	now     func() time.Time
+	// delivered holds the parts already sent of a message that failed part way, so trying
+	// again sends only the rest.
+	delivered map[string]bool
 }
 
 // StartAlerts watches for events worth telling the user about until ctx ends.
@@ -155,26 +162,27 @@ func (w *alertWatcher) check(ctx context.Context) {
 		logger.Warnf("Telegram alerts: read traders: %v", err)
 		return
 	}
+	p := &pending{cfg: cfg, lang: w.stores.Telegram.GetLanguage(), set: map[string]int64{}}
+	testnet := w.testnetAccounts(user)
 	ids := make([]string, 0, len(traders))
 	names := make(map[string]string, len(traders))
 	for _, trader := range traders {
 		ids = append(ids, trader.ID)
-		names[trader.ID] = trader.Name
+		names[trader.ID] = traderLabel(p.lang, trader.Name, testnet[trader.AccountID])
 	}
 
-	p := &pending{cfg: cfg, lang: w.stores.Telegram.GetLanguage(), set: map[string]int64{}}
 	now := w.now().UnixMilli()
 	w.checkOrders(ids, names, now, p)
 	w.checkActions(ids, names, now, p)
 	w.checkPositions(ids, names, now, p)
-	w.checkTraderState(traders, now, p)
+	w.checkTraderState(traders, names, now, p)
 	w.checkPlans(ctx, user, now, p)
 	w.checkFuturesPositions(user, now, p)
 	w.checkProblems(user, now, p)
 	w.checkDailyReport(user, p)
 
 	if len(p.lines) > 0 {
-		if err := w.send(ctx, strings.Join(p.lines, "\n")); err != nil {
+		if err := w.deliver(ctx, strings.Join(p.lines, "\n")); err != nil {
 			// Marks stay where they are, so the same events go out next time.
 			logger.Warnf("Telegram alerts: send: %v", err)
 			service.Report(service.TelegramAlerts, service.Degraded, err.Error())
@@ -193,6 +201,24 @@ func (w *alertWatcher) check(ctx context.Context) {
 			logger.Warnf("Telegram alerts: clear mark: %v", err)
 		}
 	}
+}
+
+// deliver sends a message in parts, skipping those an earlier try already got through.
+func (w *alertWatcher) deliver(ctx context.Context, text string) error {
+	for _, part := range splitMessage(text) {
+		if w.delivered[part] {
+			continue
+		}
+		if err := w.send(ctx, part); err != nil {
+			return err
+		}
+		if w.delivered == nil {
+			w.delivered = map[string]bool{}
+		}
+		w.delivered[part] = true
+	}
+	w.delivered = nil
+	return nil
 }
 
 // since returns where a stream continues from. A stream seen for the first time
@@ -220,7 +246,7 @@ func (w *alertWatcher) checkOrders(ids []string, names map[string]string, now in
 		return
 	}
 	for _, order := range orders {
-		p.add(AlertOrderRejected, orderRejectedLine(p.lang, order, names[order.TraderID]))
+		p.add(AlertOrderRejected, w.dated(orderRejectedLine(p.lang, order, names[order.TraderID]), order.UpdatedAt, now))
 		p.set[markOrders] = order.UpdatedAt
 	}
 }
@@ -236,7 +262,7 @@ func (w *alertWatcher) checkActions(ids []string, names map[string]string, now i
 		return
 	}
 	for _, action := range actions {
-		p.add(AlertOrderRejected, actionFailedLine(p.lang, action, names[action.TraderID]))
+		p.add(AlertOrderRejected, w.dated(actionFailedLine(p.lang, action, names[action.TraderID]), action.Timestamp.UnixMilli(), now))
 		p.set[markActions] = action.Timestamp.UnixMilli()
 	}
 }
@@ -252,14 +278,14 @@ func (w *alertWatcher) checkPositions(ids []string, names map[string]string, now
 		return
 	}
 	for _, position := range positions {
-		p.add(AlertPositionClosed, positionClosedLine(p.lang, position, names[position.TraderID]))
+		p.add(AlertPositionClosed, w.dated(positionClosedLine(p.lang, position, names[position.TraderID]), position.ExitTime, now))
 		p.set[markPositions] = position.ExitTime
 	}
 }
 
 // checkTraderState reports safe mode and blocked trading once each time they
 // begin; a mark that clears re-arms the alert.
-func (w *alertWatcher) checkTraderState(traders []*trader.Trader, now int64, p *pending) {
+func (w *alertWatcher) checkTraderState(traders []*trader.Trader, names map[string]string, now int64, p *pending) {
 	if w.sources.TraderStatus == nil {
 		return
 	}
@@ -267,11 +293,34 @@ func (w *alertWatcher) checkTraderState(traders []*trader.Trader, now int64, p *
 		status := w.sources.TraderStatus(trader.ID)
 		safeMode, _ := status["safe_mode"].(bool)
 		reason, _ := status["safe_mode_reason"].(string)
-		w.standing(markSafeMode+trader.ID, safeMode, now, p, safeModeLine(p.lang, trader.Name, reason))
+		w.standing(markSafeMode+trader.ID, safeMode, now, p, safeModeLine(p.lang, names[trader.ID], reason))
 		blocked, _ := status["trading_blocked"].(bool)
 		reason, _ = status["trading_error"].(string)
-		w.standing(markBlocked+trader.ID, blocked, now, p, tradingBlockedLine(p.lang, trader.Name, reason))
+		w.standing(markBlocked+trader.ID, blocked, now, p, tradingBlockedLine(p.lang, names[trader.ID], reason))
 	}
+}
+
+// testnetAccounts says which of the user's accounts hold test money.
+func (w *alertWatcher) testnetAccounts(user string) map[string]bool {
+	accounts, err := w.stores.Accounts.ListNames(user)
+	if err != nil {
+		logger.Warnf("Telegram alerts: read accounts: %v", err)
+		return nil
+	}
+	testnet := make(map[string]bool, len(accounts))
+	for _, row := range accounts {
+		testnet[row.ID] = row.Testnet
+	}
+	return testnet
+}
+
+// dated says when an event happened if the message is going out late, as after downtime or
+// a failed send, when it would otherwise read as just now.
+func (w *alertWatcher) dated(line string, at, now int64) string {
+	if at <= 0 || now-at < alertLate.Milliseconds() {
+		return line
+	}
+	return line + " (" + time.UnixMilli(at).In(w.now().Location()).Format("01-02 15:04") + ")"
 }
 
 func (w *alertWatcher) checkPlans(ctx context.Context, user string, now int64, p *pending) {
@@ -315,7 +364,7 @@ func (w *alertWatcher) checkProblems(user string, now int64, p *pending) {
 	for _, row := range accounts {
 		failure, ok := failing[row.ID]
 		if ok && w.now().Sub(failure.Since) >= accountFailingFor {
-			lines[markAccount+row.ID] = withDetail(fmt.Sprintf(pick(p.lang, "Account unreadable: %s", "账户无法读取：%s"), row.Name), failure.Reason)
+			lines[markAccount+row.ID] = withDetail(fmt.Sprintf(pick(p.lang, "🚨 Account unreadable: %s", "🚨 账户无法读取：%s"), row.Name), failure.Reason)
 		}
 	}
 	w.ongoing(markAccount, AlertSystem, lines, now, p)
@@ -351,22 +400,14 @@ func (w *alertWatcher) ongoing(prefix, kind string, lines map[string]string, now
 // its position closing, by a stop or a target as much as by hand. Both come from the
 // ledger, which the account's sync keeps.
 func (w *alertWatcher) checkFuturesPositions(user string, now int64, p *pending) {
-	accounts, err := w.stores.Accounts.ListNames(user)
-	if err != nil {
-		logger.Warnf("Telegram alerts: read accounts: %v", err)
-		return
-	}
-	testnet := make(map[string]bool, len(accounts))
-	for _, row := range accounts {
-		testnet[row.ID] = row.Testnet
-	}
+	testnet := w.testnetAccounts(user)
 	if since, ok := w.since(markFuturesOpened, now, p); ok {
 		positions, err := w.stores.Positions.FuturesOpenedSince(since, alertBatch)
 		if err != nil {
 			logger.Warnf("Telegram alerts: %v", err)
 		}
 		for _, position := range positions {
-			p.add(AlertPlanAttention, futuresFilledLine(p.lang, position, testnet[position.AccountID]))
+			p.add(AlertPlanAttention, w.dated(futuresFilledLine(p.lang, position, testnet[position.AccountID]), position.EntryTime, now))
 			p.set[markFuturesOpened] = position.EntryTime
 		}
 	}
@@ -376,7 +417,7 @@ func (w *alertWatcher) checkFuturesPositions(user string, now int64, p *pending)
 			logger.Warnf("Telegram alerts: %v", err)
 		}
 		for _, position := range positions {
-			p.add(AlertPositionClosed, positionClosedLine(p.lang, position, futuresName(p.lang, testnet[position.AccountID])))
+			p.add(AlertPositionClosed, w.dated(positionClosedLine(p.lang, position, futuresName(p.lang, testnet[position.AccountID])), position.ExitTime, now))
 			p.set[markFuturesClosed] = position.ExitTime
 		}
 	}
@@ -465,8 +506,8 @@ func (w *alertWatcher) dailyReport(user string, from, to time.Time, lang string)
 		cost = "$" + strconv.FormatFloat(summary.TotalUSD, 'f', 2, 64)
 	}
 	return fmt.Sprintf(pick(lang,
-		"Daily report, %s UTC\nEquity: %s\nRealized: %s\nOpen positions: %s\nModel cost: %s",
-		"每日汇总，%s UTC\n权益：%s\n已实现：%s\n持仓：%s\n模型花费：%s"),
+		"📊 Daily report, %s UTC\nEquity: %s\nRealized: %s\nOpen positions: %s\nModel cost, all calls: %s",
+		"📊 每日汇总，%s UTC\n权益：%s\n已实现：%s\n持仓：%s\n模型花费（全部调用）：%s"),
 		from.Format("2006-01-02"), equity, realized, holding, cost), true
 }
 
@@ -489,18 +530,30 @@ func pick(lang, en, zh string) string {
 }
 
 func withDetail(line, detail string) string {
+	detail = strings.TrimSpace(detail)
 	if detail == "" {
 		return line
+	}
+	if runes := []rune(detail); len(runes) > maxAlertDetail {
+		detail = string(runes[:maxAlertDetail]) + "…"
 	}
 	return line + ": " + detail
 }
 
+// traderLabel is a trader as an alert names it, so test money never reads as real.
+func traderLabel(lang, name string, testnet bool) string {
+	if testnet {
+		return name + pick(lang, " (testnet)", "（测试网）")
+	}
+	return name
+}
+
 func orderRejectedLine(lang string, order *account.TraderOrder, trader string) string {
-	return fmt.Sprintf(pick(lang, "Order rejected: %s %s, %s", "订单被拒：%s %s，%s"), order.Symbol, order.Side, trader)
+	return withDetail(fmt.Sprintf(pick(lang, "❌ Order rejected: %s %s, %s", "❌ 订单被拒：%s %s，%s"), order.Symbol, order.Side, trader), order.Error)
 }
 
 func actionFailedLine(lang string, action trader.FailedAction, trader string) string {
-	line := fmt.Sprintf(pick(lang, "Order failed: %s %s, %s", "下单失败：%s %s，%s"), action.Symbol, action.Action, trader)
+	line := fmt.Sprintf(pick(lang, "❌ Order failed: %s %s, %s", "❌ 下单失败：%s %s，%s"), action.Symbol, action.Action, trader)
 	return withDetail(line, action.Error)
 }
 
@@ -509,19 +562,19 @@ func positionClosedLine(lang string, position *account.TraderPosition, trader st
 	if position.RealizedPnL >= 0 {
 		pnl = "+" + pnl
 	}
-	return fmt.Sprintf(pick(lang, "Position closed: %s %s, %s, P/L %s USDT", "持仓已平：%s %s，%s，盈亏 %s USDT"), position.Symbol, strings.ToLower(position.Side), trader, pnl)
+	return fmt.Sprintf(pick(lang, "💰 Position closed: %s %s, %s, P/L %s USDT", "💰 持仓已平：%s %s，%s，盈亏 %s USDT"), position.Symbol, strings.ToLower(position.Side), trader, pnl)
 }
 
 func safeModeLine(lang, trader, reason string) string {
-	return withDetail(fmt.Sprintf(pick(lang, "Safe mode: %s", "安全模式：%s"), trader), reason)
+	return withDetail(fmt.Sprintf(pick(lang, "⚠️ Safe mode: %s", "⚠️ 安全模式：%s"), trader), reason)
 }
 
 func tradingBlockedLine(lang, trader, reason string) string {
-	return withDetail(fmt.Sprintf(pick(lang, "Trading blocked: %s", "交易受阻：%s"), trader), reason)
+	return withDetail(fmt.Sprintf(pick(lang, "⚠️ Trading blocked: %s", "⚠️ 交易受阻：%s"), trader), reason)
 }
 
 func planAttentionLine(lang string, run PlanRun) string {
-	return withDetail(fmt.Sprintf(pick(lang, "Futures plan needs attention: %s", "合约交易计划需要处理：%s"), run.Symbol), run.Error)
+	return withDetail(fmt.Sprintf(pick(lang, "⚠️ Futures plan needs attention: %s", "⚠️ 合约交易计划需要处理：%s"), run.Symbol), run.Error)
 }
 
 func futuresName(lang string, testnet bool) string {
@@ -532,7 +585,7 @@ func futuresName(lang string, testnet bool) string {
 }
 
 func futuresFilledLine(lang string, position *account.TraderPosition, testnet bool) string {
-	return fmt.Sprintf(pick(lang, "Entry filled: %s %s, %.8g at %.8g, %s", "入场已成交：%s %s，%.8g @ %.8g，%s"),
+	return fmt.Sprintf(pick(lang, "✅ Entry filled: %s %s, %.8g at %.8g, %s", "✅ 入场已成交：%s %s，%.8g @ %.8g，%s"),
 		position.Symbol, strings.ToLower(position.Side), position.EntryQuantity, position.EntryPrice, futuresName(lang, testnet))
 }
 
@@ -540,15 +593,15 @@ func problemLine(lang string, problem Problem) string {
 	var line string
 	switch problem.Kind {
 	case ProblemService:
-		line = pick(lang, "Service failed: %s", "服务故障：%s")
+		line = pick(lang, "🚨 Service failed: %s", "🚨 服务故障：%s")
 	case ProblemTraderHalt:
-		line = pick(lang, "Trader stopped opening positions: %s", "交易员已停止开仓：%s")
+		line = pick(lang, "🚨 Trader stopped opening positions: %s", "🚨 交易员已停止开仓：%s")
 	case ProblemTraderLoad:
-		line = pick(lang, "Trader could not start: %s", "交易员无法启动：%s")
+		line = pick(lang, "🚨 Trader could not start: %s", "🚨 交易员无法启动：%s")
 	case ProblemFillSkipped:
-		line = pick(lang, "Trade not booked: %s", "成交未入账：%s")
+		line = pick(lang, "🚨 Trade not booked: %s", "🚨 成交未入账：%s")
 	default:
-		line = pick(lang, "Problem: %s", "问题：%s")
+		line = pick(lang, "🚨 Problem: %s", "🚨 问题：%s")
 	}
 	detail := problem.Detail
 	if lang == "zh" && problem.Kind == ProblemTraderHalt {
@@ -563,5 +616,5 @@ var haltReasonZh = strings.NewReplacer("max drawdown exceeded", "超过最大回
 
 // TestAlertText is the message Settings sends to check that alerts arrive.
 func TestAlertText(lang string) string {
-	return pick(lang, "Vergex alerts are working.", "Vergex 告警工作正常。")
+	return pick(lang, "Vergex alerts are working", "Vergex 告警工作正常")
 }

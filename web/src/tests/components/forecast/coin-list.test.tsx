@@ -127,5 +127,5 @@ it('stars a coin without opening it, and filters to the watchlist and to calls',
 it('says what to do when the watchlist is empty', () => {
   localStorage.setItem('vergex.forecast.filter', 'watchlist')
   render(list([coin('AAAUSDT', 0.9)]))
-  expect(screen.getByText('Star a coin to keep it here.')).toBeVisible()
+  expect(screen.getByText('Star a coin to keep it here')).toBeVisible()
 })

@@ -183,7 +183,7 @@ export function DialogSteps({
             )}
             <li
               aria-current={active ? 'step' : undefined}
-              className={`flex items-center gap-1.5 ${active ? 'font-medium text-vergex-ink' : 'text-vergex-muted'}`}
+              className={`flex items-center gap-1.5 whitespace-nowrap ${active ? 'font-medium text-vergex-ink' : 'text-vergex-muted'}`}
             >
               <span
                 className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${
@@ -196,7 +196,10 @@ export function DialogSteps({
               >
                 {done ? <Check className="h-3 w-3" /> : index + 1}
               </span>
-              {label}
+              {/* A phone has room to name only the step it is on. */}
+              <span className={active ? undefined : 'max-sm:sr-only'}>
+                {label}
+              </span>
             </li>
           </Fragment>
         )

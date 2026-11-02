@@ -59,7 +59,7 @@ export function atMark(position: AccountPosition, mark?: number) {
 // Expand JavaScript scientific notation without rounding exchange observations.
 export function positionDecimal(value: number): string {
   if (!Number.isFinite(value) || value <= 0)
-    throw new Error('Invalid position value; no close was sent.')
+    throw new Error('Invalid position value; no close was sent')
   const [coefficient, exponent] = String(value).split('e')
   if (exponent === undefined) return coefficient
   const [whole, fraction = ''] = coefficient.split('.')
@@ -129,7 +129,7 @@ export async function closeAccountPosition(
     }
     if (!cleared)
       throw new Error(
-        'Entry cancellation is not confirmed. No close was sent. Check the exchange before retrying.'
+        'Entry cancellation is not confirmed. No close was sent. Check the exchange before retrying'
       )
   }
   // Never retry a close automatically, including after an ambiguous timeout.

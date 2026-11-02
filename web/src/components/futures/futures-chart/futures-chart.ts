@@ -58,7 +58,6 @@ import {
 // painted on top.
 
 const initialBars = 500
-const maxBars = 4800
 const retryAfterMs = 3000
 const retryAtMostMs = 30000
 
@@ -135,7 +134,7 @@ export class WorkspaceChart implements FuturesChart {
         ? document.getElementById(options.container || 'chart-container')
         : options.container
     if (!container) {
-      this.fail('Chart container is missing. Reload the page and try again.')
+      this.fail('Chart container is missing. Reload the page and try again')
       return
     }
     try {
@@ -167,9 +166,7 @@ export class WorkspaceChart implements FuturesChart {
       this.autoscale(base)
     )
     candles.attachPrimitive(this.overlay)
-    chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (range && range.from < 20) this.loadOlder()
-    })
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => this.loadOlder())
     this.chart = chart
     window.addEventListener(THEME_EVENT, this.repaintTheme)
     this.candles = candles
@@ -215,7 +212,7 @@ export class WorkspaceChart implements FuturesChart {
 
   async whenReady() {
     if (this.disposed || !this.chart)
-      throw new Error(this.loadError || 'Chart is not ready yet. Try again.')
+      throw new Error(this.loadError || 'Chart is not ready yet. Try again')
   }
 
   private history(to: number, count: number) {
@@ -223,7 +220,7 @@ export class WorkspaceChart implements FuturesChart {
   }
 
   private setRows(rows: CandleRow[]) {
-    this.rows = rows.slice(-maxBars)
+    this.rows = rows
     this.times = this.rows.map((r) => r.time)
     this.candles?.setData(this.rows.map(toBar))
     this.volume?.setData(this.rows.map(toVolume))
@@ -287,7 +284,7 @@ export class WorkspaceChart implements FuturesChart {
     if (!this.rows.length) {
       this.onAvailability(
         false,
-        'The exchange returned no candles for this market. Check the symbol and try again.'
+        'The exchange returned no candles for this market. Check the symbol and try again'
       )
       this.onStatus('No candles available for this market', true)
     } else {
@@ -305,23 +302,33 @@ export class WorkspaceChart implements FuturesChart {
     this.connectFeed(scene)
   }
 
+  // Older candles are read a screenful before the view reaches them, however far it is
+  // zoomed out.
+  private wantsOlder() {
+    const range = this.chart?.timeScale().getVisibleLogicalRange()
+    return !!range && range.from < Math.max(20, range.to - range.from)
+  }
+
+  // Reads back as far as the view asks, which ends only at the market's first candle.
   private async loadOlder() {
     if (this.loadingOlder || this.exhausted || !this.rows.length) return
-    if (this.rows.length >= maxBars) return
+    if (!this.wantsOlder()) return
     const scene = this.scene
     this.loadingOlder = true
     try {
       const data = await this.history(this.rows[0].time, 300)
       if (scene !== this.scene || this.disposed) return
       if (data.exhausted || !data.candles.length) this.exhausted = true
-      const merged = new Map(this.rows.map((r) => [r.time, r]))
-      for (const row of data.candles) merged.set(row.time, row)
-      this.setRows([...merged.values()].sort((a, b) => a.time - b.time))
+      this.setRows([...data.candles, ...this.rows])
     } catch {
       /* scrolling further back is best effort */
+      return
     } finally {
       this.loadingOlder = false
     }
+    // The chart said where the view went while this read was still running, and a view
+    // left over empty space will not say it again.
+    void this.loadOlder()
   }
 
   private connectFeed(scene: number) {
@@ -380,15 +387,24 @@ export class WorkspaceChart implements FuturesChart {
       return false
     })
     if (gap) {
-      // Never append across a missing interval: refetch history instead.
+      // Never append across a missing interval: read what is missing instead. What the
+      // chart holds stays, unless the read could not reach back to it.
       this.onStatus('Backfilling missing candles…', true)
       try {
-        const fresh = await this.history(
-          Math.floor(Date.now() / 1000) + 1,
-          Math.max(initialBars, this.rows.length)
-        )
+        const to = Math.floor(Date.now() / 1000) + 1
+        const fresh = await this.history(to, Math.ceil((to - last) / step) + 1)
         if (this.source !== source || scene !== this.scene) return
-        this.setRows(fresh.candles)
+        if (!fresh.candles.length) return
+        const first = fresh.candles[0].time
+        if (first <= last + step) {
+          this.setRows([
+            ...this.rows.filter((r) => r.time < first),
+            ...fresh.candles,
+          ])
+        } else {
+          this.exhausted = false
+          this.setRows(fresh.candles)
+        }
         this.render()
       } catch {
         this.onStatus('Candle gap detected · reload the chart', true)
@@ -530,8 +546,8 @@ export class WorkspaceChart implements FuturesChart {
       }
   }
 
-  // What the account really holds, thin and dotted, so it reads apart from a plan's solid
-  // lines. Comparing plans is a look at what could be, so it hides them.
+  // What the account really holds, dotted, so it reads apart from a plan's solid lines.
+  // Comparing plans is a look at what could be, so it hides them.
   private renderHoldings() {
     this.removeLines(this.holdingLines)
     this.holdingLines = []
@@ -573,7 +589,7 @@ export class WorkspaceChart implements FuturesChart {
         candles.createPriceLine({
           price: Number(price),
           color,
-          lineWidth: 2,
+          lineWidth: 1,
           lineStyle: LineStyle.Solid,
           axisLabelVisible: true,
           title,

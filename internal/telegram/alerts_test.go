@@ -243,7 +243,7 @@ func TestDailyReportGoesOutOnceADayForRealAccounts(t *testing.T) {
 	if len(*sent) != 1 {
 		t.Fatalf("sent = %v", *sent)
 	}
-	for _, want := range []string{"Daily report, 2026-11-02 UTC", "Equity: 1234.50 USDT", "Realized: +10.00 USDT", "Open positions: 1 (ETHUSDT short)", "Model cost: $0.42"} {
+	for _, want := range []string{"Daily report, 2026-11-02 UTC", "Equity: 1234.50 USDT", "Realized: +10.00 USDT", "Open positions: 1 (ETHUSDT short)", "Model cost, all calls: $0.42"} {
 		if !strings.Contains((*sent)[0], want) {
 			t.Errorf("no %q in %q", want, (*sent)[0])
 		}
@@ -340,6 +340,82 @@ func TestSplitMessageKeepsLinesWithinTheLimit(t *testing.T) {
 	parts := splitMessage(line + "\n" + line + "\n" + line)
 	if len(parts) != 3 {
 		t.Fatalf("parts = %d", len(parts))
+	}
+}
+
+// One long line used to go out whole, be refused, and hold up every alert behind it.
+func TestALineTooLongForAMessageIsCut(t *testing.T) {
+	for _, line := range []string{strings.Repeat("x", 9000), strings.Repeat("🙂", 5000), strings.Repeat("字", 9000)} {
+		parts := splitMessage("first\n" + line + "\nlast")
+		if len(parts) < 2 {
+			t.Fatalf("%d parts", len(parts))
+		}
+		for _, part := range parts {
+			if size := utf16Len(part); size > 4096 {
+				t.Fatalf("a part of %d units", size)
+			}
+		}
+		if !strings.HasPrefix(parts[0], "first") || !strings.HasSuffix(parts[len(parts)-1], "last") {
+			t.Fatal("the lines around it were lost")
+		}
+	}
+}
+
+func TestAMessageFailingPartWayResendsOnlyTheRest(t *testing.T) {
+	line := strings.Repeat("x", 3000)
+	text := line + "\n" + line + "1\n" + line + "2"
+	var sent []string
+	failing := true
+	w := &alertWatcher{send: func(_ context.Context, part string) error {
+		if failing && len(sent) == 1 {
+			return errors.New("down")
+		}
+		sent = append(sent, part)
+		return nil
+	}}
+	if err := w.deliver(context.Background(), text); err == nil {
+		t.Fatal("expected the failure to be reported")
+	}
+	failing = false
+	if err := w.deliver(context.Background(), text); err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 3 {
+		t.Fatalf("%d parts went out, want each of 3 once", len(sent))
+	}
+	// A later message that happens to repeat a part goes out in full.
+	if err := w.deliver(context.Background(), line); err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 4 {
+		t.Fatal("what was delivered before should not hold up a new message")
+	}
+}
+
+func TestAnEventReportedLateSaysWhenItHappened(t *testing.T) {
+	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	w := &alertWatcher{now: func() time.Time { return now }}
+	if got := w.dated("line", now.Add(-time.Minute).UnixMilli(), now.UnixMilli()); got != "line" {
+		t.Fatalf("a recent event: %q", got)
+	}
+	if got := w.dated("line", now.Add(-3*time.Hour).UnixMilli(), now.UnixMilli()); got != "line (11-02 09:00)" {
+		t.Fatalf("a late event: %q", got)
+	}
+}
+
+func TestTraderAlertsMarkTestMoneyAndLongDetailsAreCut(t *testing.T) {
+	if got := traderLabel("en", "Trend", true); got != "Trend (testnet)" {
+		t.Fatalf("label = %q", got)
+	}
+	if got := traderLabel("zh", "Trend", false); got != "Trend" {
+		t.Fatalf("label = %q", got)
+	}
+	if got := withDetail("line", strings.Repeat("x", 1000)); len([]rune(got)) > maxAlertDetail+10 {
+		t.Fatalf("detail not cut: %d", len(got))
+	}
+	order := &account.TraderOrder{Symbol: "BTCUSDT", Side: "BUY", Error: "margin too low"}
+	if got := orderRejectedLine("en", order, "Trend"); !strings.Contains(got, "margin too low") {
+		t.Fatalf("line = %q", got)
 	}
 }
 

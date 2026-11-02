@@ -103,7 +103,7 @@ export function FAQLayout() {
                 {t('helpNoMatch', language, { term: searchTerm })}
               </p>
               <Button
-                variant="soft"
+                variant="secondary"
                 size="sm"
                 className="mt-4"
                 onClick={() => setSearchTerm('')}

@@ -11,11 +11,11 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Vergex is an open-source, self-hosted agent trading terminal. A trader runs an agent on a schedule: it reads the candidate coins from its settings, market data and your account state, then decides and executes on your connected exchange — all on your own machine, with your keys never leaving your server.',
+            text: 'Vergex is an open-source, self-hosted agent trading terminal. A trader runs an agent on a schedule: it reads the candidate coins from its settings, market data and your account state, then decides and executes on your connected exchange — all on your own machine, with your keys never leaving your server',
           },
           {
             type: 'p',
-            text: 'You can set each trader up in its Settings section and run several side by side.',
+            text: 'You can set each trader up in its Settings section and run several side by side',
           },
         ],
       },
@@ -30,13 +30,13 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'A model provider API key (DeepSeek, OpenAI, Claude, …) under Settings → Agent models.',
-              'A Binance or OKX futures API key with trading permission (withdrawals disabled) under Settings → Trading accounts, and at least `12 USDT` available as margin.',
+              'A model provider API key (DeepSeek, OpenAI, Claude, …) under Settings → Agent models',
+              'A Binance or OKX futures API key with trading permission (withdrawals disabled) under Settings → Trading accounts, and at least `12 USDT` available as margin',
             ],
           },
           {
             type: 'p',
-            text: 'Starting a trader runs a server-side preflight that checks every prerequisite and points you at the exact step that is missing, so you cannot start a half-configured bot.',
+            text: 'Starting a trader runs a server-side preflight that checks every prerequisite and points you at the exact step that is missing, so you cannot start a half-configured bot',
           },
         ],
       },
@@ -46,7 +46,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Vergex trades USDT-margined crypto perpetuals on Binance and OKX. Candidate coins come from the trader’s settings: a static list, or free Binance rankings (open interest, volume, gainers and losers).',
+            text: 'Vergex trades USDT-margined crypto perpetuals on Binance and OKX. Candidate coins come from the trader’s settings: a static list, or free Binance rankings (open interest, volume, gainers and losers)',
           },
         ],
       },
@@ -56,11 +56,11 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Vergex connects directly to the model provider you choose, with your own API key: DeepSeek, OpenAI, Claude, Gemini, Qwen, Grok, Kimi or MiniMax. A custom base URL and model name let you use any OpenAI-compatible endpoint.',
+            text: 'Vergex connects directly to the model provider you choose, with your own API key: DeepSeek, OpenAI, Claude, Gemini, Qwen, Grok, Kimi or MiniMax. A custom base URL and model name let you use any OpenAI-compatible endpoint',
           },
           {
             type: 'p',
-            text: 'Token usage of every model call is recorded locally; estimated costs use public prices from models.dev. Models without a published price are tracked by tokens only. See Settings → Agent costs.',
+            text: 'Token usage of every model call is recorded locally; estimated costs use public prices from models.dev. Models without a published price are tracked by tokens only. See Settings → Agent costs',
           },
         ],
       },
@@ -70,15 +70,15 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'No one can promise that, and you should distrust anyone who does. The agent trades a systematic process, but markets are adversarial and past performance never guarantees future results.',
+            text: 'No one can promise that, and you should distrust anyone who does. The agent trades a systematic process, but markets are adversarial and past performance never guarantees future results',
           },
           {
             type: 'p',
-            text: 'Each trader is deliberately honest about performance: it separates realized from unrealized P/L and shows fees, profit factor and max drawdown from your real starting balance. Watch those numbers, start small, and only trade money you can afford to lose.',
+            text: 'Each trader is deliberately honest about performance: it separates realized from unrealized P/L and shows fees, profit factor and max drawdown from your real starting balance. Watch those numbers, start small, and only trade money you can afford to lose',
           },
           {
             type: 'note',
-            text: 'Trading involves substantial risk of loss. Vergex is software, not investment advice.',
+            text: 'Trading involves substantial risk of loss. Vergex is software, not investment advice',
           },
         ],
       },
@@ -95,15 +95,15 @@ export const faq: FAQContent = [
           {
             type: 'steps',
             items: [
-              'Create a dedicated API key on Binance or OKX for Vergex.',
-              'Enable futures trading only. Never enable withdrawals.',
-              'Restrict the key to your server IP (IP whitelist).',
-              'OKX also requires the passphrase you set when creating the key.',
+              'Create a dedicated API key on Binance or OKX for Vergex',
+              'Enable futures trading only. Never enable withdrawals',
+              'Restrict the key to your server IP (IP whitelist)',
+              'OKX also requires the passphrase you set when creating the key',
             ],
           },
           {
             type: 'p',
-            text: 'Keys are stored encrypted in your own database and only used by your server to trade.',
+            text: 'Keys are stored encrypted in your own database and only used by your server to trade',
           },
         ],
       },
@@ -118,14 +118,14 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'The model is enabled and has a credential.',
-              'Exchange API credentials are complete and the account is reachable.',
-              'Trading funds: at least `12 USDT` counting equity in open positions.',
+              'The model is enabled and has a credential',
+              'Exchange API credentials are complete and the account is reachable',
+              'Trading funds: at least `12 USDT` counting equity in open positions',
             ],
           },
           {
             type: 'p',
-            text: 'Each failing check names the exact fix. The same checks are enforced server-side on every start, so the UI cannot be bypassed accidentally.',
+            text: 'Each failing check names the exact fix. The same checks are enforced server-side on every start, so the UI cannot be bypassed accidentally',
           },
         ],
       },
@@ -146,15 +146,15 @@ export const faq: FAQContent = [
           {
             type: 'steps',
             items: [
-              'Build the universe — collect candidate coins from the trader’s coin source (a static list or a ranking-based source), minus excluded coins.',
-              'Read market context — multi-timeframe OHLCV candles plus the indicators enabled in the trader’s settings (EMA, MACD, RSI, ATR, Bollinger, volume, open interest, funding rate).',
-              'Add account context — equity, available margin, open positions and the trader’s own recent performance.',
-              'Decide and size — only setups clearing the trader’s confidence threshold and minimum risk/reward get positions; closes always execute before opens.',
+              'Build the universe — collect candidate coins from the trader’s coin source (a static list or a ranking-based source), minus excluded coins',
+              'Read market context — multi-timeframe OHLCV candles plus the indicators enabled in the trader’s settings (EMA, MACD, RSI, ATR, Bollinger, volume, open interest, funding rate)',
+              'Add account context — equity, available margin, open positions and the trader’s own recent performance',
+              'Decide and size — only setups clearing the trader’s confidence threshold and minimum risk/reward get positions; closes always execute before opens',
             ],
           },
           {
             type: 'p',
-            text: 'A final layer sits outside the agent entirely: hard risk controls (position cap, leverage caps, margin ceiling, trade throttle) reject any decision that violates them, no matter how confident the model is.',
+            text: 'A final layer sits outside the agent entirely: hard risk controls (position cap, leverage caps, margin ceiling, trade throttle) reject any decision that violates them, no matter how confident the model is',
           },
         ],
       },
@@ -165,9 +165,9 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Exchange market data — OHLCV candles, open interest and funding rate from free public APIs.',
-              'Your account via the exchange API — equity, available margin, open positions with PnL.',
-              'Its own history — closed trades feed win rate, profit factor and drawdown back into the next prompt, so the agent knows its recent form.',
+              'Exchange market data — OHLCV candles, open interest and funding rate from free public APIs',
+              'Your account via the exchange API — equity, available margin, open positions with PnL',
+              'Its own history — closed trades feed win rate, profit factor and drawdown back into the next prompt, so the agent knows its recent form',
             ],
           },
         ],
@@ -178,7 +178,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'A trader runs a scan cycle every 5–15 minutes depending on how you launched it (configurable per trader, minimum 3 minutes). The first cycle starts right after launch; a single cycle usually takes 30–60 seconds because the agent reads the full market context before deciding.',
+            text: 'A trader runs a scan cycle every 5–15 minutes depending on how you launched it (configurable per trader, minimum 3 minutes). The first cycle starts right after launch; a single cycle usually takes 30–60 seconds because the agent reads the full market context before deciding',
           },
         ],
       },
@@ -189,15 +189,15 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Your account: equity, available margin, open positions with PnL.',
-              'Candidate coins from the trader’s coin source.',
-              'Multi-timeframe candles and the enabled indicators per candidate.',
-              'Its own track record: win rate, profit factor, drawdown, recent trades.',
+              'Your account: equity, available margin, open positions with PnL',
+              'Candidate coins from the trader’s coin source',
+              'Multi-timeframe candles and the enabled indicators per candidate',
+              'Its own track record: win rate, profit factor, drawdown, recent trades',
             ],
           },
           {
             type: 'p',
-            text: 'Every cycle is stored as a decision record. A trader’s Decisions tab shows the reasoning, actions and any blocked orders.',
+            text: 'Every cycle is stored as a decision record. A trader’s Decisions tab shows the reasoning, actions and any blocked orders',
           },
         ],
       },
@@ -212,10 +212,10 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Position-count cap from the trader’s settings — new opens are rejected at the cap.',
-              'Leverage limits per asset class (BTC/ETH vs altcoins).',
-              'A trade throttle blocks churn, e.g. closing a barely-moved position minutes after opening it.',
-              'Safe mode (below) protects the book when the model itself is failing.',
+              'Position-count cap from the trader’s settings — new opens are rejected at the cap',
+              'Leverage limits per asset class (BTC/ETH vs altcoins)',
+              'A trade throttle blocks churn, e.g. closing a barely-moved position minutes after opening it',
+              'Safe mode (below) protects the book when the model itself is failing',
             ],
           },
         ],
@@ -226,11 +226,11 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'If the model fails 3 cycles in a row (provider outage, exhausted API quota, bad responses), the trader enters safe mode: no new positions are opened, existing positions keep their protection, and the loop keeps retrying. It exits safe mode automatically on the next successful model call.',
+            text: 'If the model fails 3 cycles in a row (provider outage, exhausted API quota, bad responses), the trader enters safe mode: no new positions are opened, existing positions keep their protection, and the loop keeps retrying. It exits safe mode automatically on the next successful model call',
           },
           {
             type: 'p',
-            text: 'Safe mode shows on the trader in Auto trading and under Needs attention on the Dashboard, so it never happens silently.',
+            text: 'Safe mode shows on the trader in Auto trading and under Needs attention on the Dashboard, so it never happens silently',
           },
         ],
       },
@@ -241,13 +241,13 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Exchange trading fees on every order (Binance or OKX fee schedule).',
-              'Model provider costs, billed to your own provider account (token usage and estimated cost are shown under Settings → Agent costs).',
+              'Exchange trading fees on every order (Binance or OKX fee schedule)',
+              'Model provider costs, billed to your own provider account (token usage and estimated cost are shown under Settings → Agent costs)',
             ],
           },
           {
             type: 'p',
-            text: 'Fees are the silent killer of high-frequency strategies. A trader’s Performance tab shows fees beside realized P/L, split by hold time and side, so you can see whether they are eating the edge.',
+            text: 'Fees are the silent killer of high-frequency strategies. A trader’s Performance tab shows fees beside realized P/L, split by hold time and side, so you can see whether they are eating the edge',
           },
         ],
       },
@@ -258,9 +258,9 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Stop: use Stop on a trader in Auto trading, or Stop all there. Stopping halts the decision loop; open positions remain open and are yours to manage.',
-              'Manual close: close a position from its trader’s Positions tab, or from Positions and orders on Futures. Manual closes sync back into the position history.',
-              'Emergencies: you can always manage positions directly on the exchange; Vergex never locks you out of your own account.',
+              'Stop: use Stop on a trader in Auto trading, or Stop all there. Stopping halts the decision loop; open positions remain open and are yours to manage',
+              'Manual close: close a position from its trader’s Positions tab, or from Positions and orders on Futures. Manual closes sync back into the position history',
+              'Emergencies: you can always manage positions directly on the exchange; Vergex never locks you out of your own account',
             ],
           },
         ],
@@ -282,15 +282,15 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Coins: a static list, a ranking (open interest, volume, gainers, losers) or a mix of them, plus coins to always exclude.',
-              'Risk: a preset profile or the individual limits, such as positions, leverage, position caps, margin usage and minimum confidence.',
-              'Market data: the timeframes and bars the model reads, and which indicators are worked out from them.',
-              'Prompt: the sections of the system prompt, and your own instructions added after them.',
+              'Coins: a static list, a ranking (open interest, volume, gainers, losers) or a mix of them, plus coins to always exclude',
+              'Risk: a preset profile or the individual limits, such as positions, leverage, position caps, margin usage and minimum confidence',
+              'Market data: the timeframes and bars the model reads, and which indicators are worked out from them',
+              'Prompt: the sections of the system prompt, and your own instructions added after them',
             ],
           },
           {
             type: 'p',
-            text: 'A trader’s kind, agent or grid, is set when you create it and cannot change. A new trader starts from a preset or a copy of another trader. The bar at the bottom estimates how many tokens each cycle will use.',
+            text: 'A trader’s kind, agent or grid, is set when you create it and cannot change. A new trader starts from a preset or a copy of another trader. The bar at the bottom estimates how many tokens each cycle will use',
           },
         ],
       },
@@ -300,18 +300,18 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Dry run tries the settings as they stand in the form, saved or not, on live public market data and a 1000 USDT account that does not exist.',
+            text: 'Dry run tries the settings as they stand in the form, saved or not, on live public market data and a 1000 USDT account that does not exist',
           },
           {
             type: 'list',
             items: [
-              'Preview prompts builds the prompts the model would receive. It calls no model and costs nothing.',
-              'Run test also sends them to the model you choose, on your own API key, and your provider bills that request. The dialog states the estimated tokens first.',
+              'Preview prompts builds the prompts the model would receive. It calls no model and costs nothing',
+              'Run test also sends them to the model you choose, on your own API key, and your provider bills that request. The dialog states the estimated tokens first',
             ],
           },
           {
             type: 'note',
-            text: 'Neither places orders.',
+            text: 'Neither places orders',
           },
         ],
       },
@@ -321,7 +321,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Yes. A running agent trader reads its settings at the start of each cycle, so saved changes apply from its next cycle, including to coins and risk limits. A running grid trader restarts with the new settings.',
+            text: 'Yes. A running agent trader reads its settings at the start of each cycle, so saved changes apply from its next cycle, including to coins and risk limits. A running grid trader restarts with the new settings',
           },
         ],
       },
@@ -331,15 +331,15 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'It places layered orders across a price range on one symbol, within the investment and leverage you set. The range is either your own upper and lower price or worked out from ATR. The distribution sets how the size spreads across levels.',
+            text: 'It places layered orders across a price range on one symbol, within the investment and leverage you set. The range is either your own upper and lower price or worked out from ATR. The distribution sets how the size spreads across levels',
           },
           {
             type: 'p',
-            text: 'Grids earn in ranges and suffer in trends, so the trader checks for breakouts on 1h candles. A confirmed breakout of the short box reduces the position to 50%, the mid box pauses the grid and cancels its orders, and the long box also closes all positions. With direction adjustment on, breakouts can instead shift the grid to a long or short bias.',
+            text: 'Grids earn in ranges and suffer in trends, so the trader checks for breakouts on 1h candles. A confirmed breakout of the short box reduces the position to 50%, the mid box pauses the grid and cancels its orders, and the long box also closes all positions. With direction adjustment on, breakouts can instead shift the grid to a long or short bias',
           },
           {
             type: 'note',
-            text: 'Max drawdown, daily loss limit and stop loss act as hard stops.',
+            text: 'Max drawdown, daily loss limit and stop loss act as hard stops',
           },
         ],
       },
@@ -355,7 +355,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Futures plans one trade at a time with you. You discuss a market with the agent on a live chart, compare entry plans and approve one. It is not a running strategy, which is what a trader is, and it is not a backtester.',
+            text: 'Futures plans one trade at a time with you. You discuss a market with the agent on a live chart, compare entry plans and approve one. It is not a running strategy, which is what a trader is, and it is not a backtester',
           },
         ],
       },
@@ -366,10 +366,10 @@ export const faq: FAQContent = [
           {
             type: 'steps',
             items: [
-              'Pick the market, exchange, account and leverage in the toolbar. Accounts are added in Settings.',
-              'Choose a model beside the chart and describe the trade. It can read market data, draw on the chart and draft plans, but it cannot approve or place orders.',
-              'Compare up to four drafts on the chart.',
-              'Review prices, quantities, schedule, costs and account, then click Confirm and place live order. Only that click locks and starts the plan.',
+              'Pick the market, exchange, account and leverage in the toolbar. Accounts are added in Settings',
+              'Choose a model beside the chart and describe the trade. It can read market data, draw on the chart and draft plans, but it cannot approve or place orders',
+              'Compare up to four drafts on the chart',
+              'Review prices, quantities, schedule, costs and account, then click Confirm and place live order. Only that click locks and starts the plan',
             ],
           },
         ],
@@ -381,15 +381,15 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Market: sent right after approval within an approved price bound.',
-              'Limit: one limit entry.',
-              'Ladder: 2–8 weighted limit prices released together.',
-              'TWAP: 2–24 fixed-price slices, 5–300 seconds apart, at most one hour in total. Late slices expire instead of catching up.',
+              'Market: sent right after approval within an approved price bound',
+              'Limit: one limit entry',
+              'Ladder: 2–8 weighted limit prices released together',
+              'TWAP: 2–24 fixed-price slices, 5–300 seconds apart, at most one hour in total. Late slices expire instead of catching up',
             ],
           },
           {
             type: 'p',
-            text: 'A draft expires five minutes after it is created, and unfilled limit entries expire after 15 minutes.',
+            text: 'A draft expires five minutes after it is created, and unfilled limit entries expire after 15 minutes',
           },
         ],
       },
@@ -399,11 +399,11 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'No. Stop-loss and take-profit orders are placed after entry fills are seen, about every two seconds, so there is a gap between fill and protection, and placing them can fail. Very small partial fills may need handling by hand. Stops do not guarantee a maximum loss.',
+            text: 'No. Stop-loss and take-profit orders are placed after entry fills are seen, about every two seconds, so there is a gap between fill and protection, and placing them can fail. Very small partial fills may need handling by hand. Stops do not guarantee a maximum loss',
           },
           {
             type: 'note',
-            text: 'Stopping a plan cancels unsent and pending entries. It does not close filled positions or remove their protection.',
+            text: 'Stopping a plan cancels unsent and pending entries. It does not close filled positions or remove their protection',
           },
         ],
       },
@@ -413,7 +413,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'It becomes “needs attention” and does not resume entries. Use Reconcile exchange state to resume reconciliation and protection monitoring. Stop and target orders already on the exchange keep working while the server is down.',
+            text: 'It becomes “needs attention” and does not resume entries. Use Reconcile exchange state to resume reconciliation and protection monitoring. Stop and target orders already on the exchange keep working while the server is down',
           },
         ],
       },
@@ -430,9 +430,9 @@ export const faq: FAQContent = [
           {
             type: 'steps',
             items: [
-              'Create a bot with @BotFather and paste its token into Settings → Telegram.',
-              'Send /start to your bot. It binds to your account.',
-              'Choose the model, or leave it on auto-select.',
+              'Create a bot with @BotFather and paste its token into Settings → Telegram',
+              'Send /start to your bot. It binds to your account',
+              'Choose the model, or leave it on auto-select',
             ],
           },
         ],
@@ -444,15 +444,15 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Create, update, start, stop and delete traders, and change their settings.',
-              'Answer questions about balances, positions, orders, decisions, statistics and agent costs.',
-              'Close a position.',
-              'Diagnose why a trader will not start, a model or account fails, or an order did not go through.',
+              'Create, update, start, stop and delete traders, and change their settings',
+              'Answer questions about balances, positions, orders, decisions, statistics and agent costs',
+              'Close a position',
+              'Diagnose why a trader will not start, a model or account fails, or an order did not go through',
             ],
           },
           {
             type: 'p',
-            text: 'It uses the same server checks and risk limits as the web pages. Keys and endpoints for models and accounts can only be changed in the web UI.',
+            text: 'It uses the same server checks and risk limits as the web pages. Keys and endpoints for models and accounts can only be changed in the web UI',
           },
         ],
       },
@@ -462,11 +462,11 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Risky actions wait for you: starting, stopping or deleting a trader, updating a running trader, closing a position, and changing a trader’s risk or grid settings. Your next message must be an explicit confirmation such as “confirm” or “yes”; anything else cancels it, and it expires after 5 minutes.',
+            text: 'Risky actions wait for you: starting, stopping or deleting a trader, updating a running trader, closing a position, and changing a trader’s risk or grid settings. Your next message must be an explicit confirmation such as “confirm” or “yes”; anything else cancels it, and it expires after 5 minutes',
           },
           {
             type: 'p',
-            text: 'Code makes that check, not the model.',
+            text: 'Code makes that check, not the model',
           },
         ],
       },
@@ -482,11 +482,11 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Forecast scores where a coin may go next from locally stored candles and derivatives data, records each call and checks it later. It is an experiment to find out whether such signals have value. Nothing in Vergex trades on it.',
+            text: 'Forecast scores where a coin may go next from locally stored candles and derivatives data, records each call and checks it later. It is an experiment to find out whether such signals have value. Nothing in Vergex trades on it',
           },
           {
             type: 'note',
-            text: 'So far it has shown no edge. On two years of BTC, ETH and SOL, the default strategy was right 49.9% of the time while price rose 50.5% of the time anyway, and lost money per signal after fees.',
+            text: 'So far it has shown no edge. On two years of BTC, ETH and SOL, the default strategy was right 49.9% of the time while price rose 50.5% of the time anyway, and lost money per signal after fees',
           },
         ],
       },
@@ -496,7 +496,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'A raw score is not a probability, so it shows as `Score 68`. Once a strategy and interval have 200 non-overlapping verified forecasts, the scores are matched to what actually happened and shown as `68%`.',
+            text: 'A raw score is not a probability, so it shows as `Score 68`. Once a strategy and interval have 200 non-overlapping verified forecasts, the scores are matched to what actually happened and shown as `68%`',
           },
         ],
       },
@@ -506,7 +506,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Every closed candle gets one forecast. When its target candle closes, 4 bars later by default, the call is judged: Hit if the direction was right, Miss if not, and Not judged if it was Neutral or price did not move. Each coin’s page shows its record.',
+            text: 'Every closed candle gets one forecast. When its target candle closes, 4 bars later by default, the call is judged: Hit if the direction was right, Miss if not, and Not judged if it was Neutral or price did not move. Each coin’s page shows its record',
           },
         ],
       },
@@ -517,15 +517,15 @@ export const faq: FAQContent = [
           {
             type: 'steps',
             items: [
-              'Open Forecast → Strategies and change the factors, weights, thresholds or horizons.',
-              'Save as a new strategy. Saved strategies never change, and records stay with the strategy that made them.',
-              'Run a backtest on it from Forecast → Backtests.',
-              'If the result holds up, put it to use from Forecast → Strategies.',
+              'Open Forecast → Strategies and change the factors, weights, thresholds or horizons',
+              'Save as a new strategy. Saved strategies never change, and records stay with the strategy that made them',
+              'Run a backtest on it from Forecast → Backtests',
+              'If the result holds up, put it to use from Forecast → Strategies',
             ],
           },
           {
             type: 'note',
-            text: 'A strategy tuned until it looks good on past data usually fails on new data. Compare it against the base rate, on data you did not tune it on.',
+            text: 'A strategy tuned until it looks good on past data usually fails on new data. Compare it against the base rate, on data you did not tune it on',
           },
         ],
       },
@@ -535,7 +535,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Forecast → Settings sets a watchlist, kept at 15m, 1h, 4h and 1d, and how many top coins by volume to keep at 1h, 4h and 1d. Opening any other coin fetches it on demand. Candles are stored locally and only new ones are fetched, within a small share of the Binance request allowance, and collection steps aside when the IP is busy.',
+            text: 'Forecast → Settings sets a watchlist, kept at 15m, 1h, 4h and 1d, and how many top coins by volume to keep at 1h, 4h and 1d. Opening any other coin fetches it on demand. Candles are stored locally and only new ones are fetched, within a small share of the Binance request allowance, and collection steps aside when the IP is busy',
           },
         ],
       },
@@ -545,7 +545,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Yes, over Telegram. Watchlist coins alert when a score crosses the threshold in Forecast → Settings, once each time, and again only after coming back inside. Turn it off with Forecast signals in Settings → Telegram.',
+            text: 'Yes, over Telegram. Watchlist coins alert when a score crosses the threshold in Forecast → Settings, once each time, and again only after coming back inside. Turn it off with Forecast signals in Settings → Telegram',
           },
         ],
       },
@@ -561,20 +561,20 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'A read-only overview. Actions live on the page each thing belongs to, and the rows here link there.',
+            text: 'A read-only overview. Actions live on the page each thing belongs to, and the rows here link there',
           },
           {
             type: 'list',
             items: [
-              'Needs attention: problems such as safe mode, an account that cannot be read or a Futures plan that needs reconciling.',
-              'The scene: every part of the system, and each real event travelling between them as it happens.',
-              'Events: what happened in the last 24 hours, which you can filter and open.',
-              'Positions across every trader and Futures plan.',
+              'Needs attention: problems such as safe mode, an account that cannot be read or a Futures plan that needs reconciling',
+              'The scene: every part of the system, and each real event travelling between them as it happens',
+              'Events: what happened in the last 24 hours, which you can filter and open',
+              'Positions across every trader and Futures plan',
             ],
           },
           {
             type: 'note',
-            text: 'If an account cannot be read, its numbers show as “—” rather than 0, and the overview says some accounts could not be read.',
+            text: 'If an account cannot be read, its numbers show as “—” rather than 0, and the overview says some accounts could not be read',
           },
         ],
       },
@@ -585,10 +585,10 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Equity: live account value including unrealized P/L.',
-              'Realized P/L: net result of closed trades only; win rate, profit factor and drawdown are computed from these.',
-              'Profit factor: gross wins ÷ gross losses on closed trades; above 1.0 means the closed trades are net positive.',
-              'Max drawdown: the worst peak-to-trough dip of the realized equity curve, measured against your real starting balance.',
+              'Equity: live account value including unrealized P/L',
+              'Realized P/L: net result of closed trades only; win rate, profit factor and drawdown are computed from these',
+              'Profit factor: gross wins ÷ gross losses on closed trades; above 1.0 means the closed trades are net positive',
+              'Max drawdown: the worst peak-to-trough dip of the realized equity curve, measured against your real starting balance',
             ],
           },
         ],
@@ -600,7 +600,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'They measure different things. Realized P/L only counts closed trades; total P/L also includes the unrealized gains of positions still open. A trader can be down on its closed trades while its open positions carry enough unrealized profit to put the total in the green, and vice versa.',
+            text: 'They measure different things. Realized P/L only counts closed trades; total P/L also includes the unrealized gains of positions still open. A trader can be down on its closed trades while its open positions carry enough unrealized profit to put the total in the green, and vice versa',
           },
         ],
       },
@@ -610,7 +610,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'A trader’s Decisions tab lists every cycle with the actions taken, the model call duration and any blocked orders with the guard that fired (throttle, position cap, risk control). Open a cycle to read its prompts, reasoning and the model’s raw response.',
+            text: 'A trader’s Decisions tab lists every cycle with the actions taken, the model call duration and any blocked orders with the guard that fired (throttle, position cap, risk control). Open a cycle to read its prompts, reasoning and the model’s raw response',
           },
         ],
       },
@@ -627,9 +627,9 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'All secrets (model provider keys and exchange API keys) are AES-256 encrypted at rest in your own database.',
-              'Optional RSA transport encryption protects secrets in flight between browser and server.',
-              'Vergex is self-hosted: nothing is sent to any third-party server. The code is open source and auditable.',
+              'All secrets (model provider keys and exchange API keys) are AES-256 encrypted at rest in your own database',
+              'Optional RSA transport encryption protects secrets in flight between browser and server',
+              'Vergex is self-hosted: nothing is sent to any third-party server. The code is open source and auditable',
             ],
           },
         ],
@@ -640,7 +640,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Not if the API key cannot withdraw. Create the exchange API key with trading permission only — disable withdrawals and set an IP whitelist. Your funds stay in your own exchange account.',
+            text: 'Not if the API key cannot withdraw. Create the exchange API key with trading permission only — disable withdrawals and set an IP whitelist. Your funds stay in your own exchange account',
           },
         ],
       },
@@ -650,7 +650,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'By design, an instance is single-operator: the first account registered becomes the operator and registration closes ("System already initialized"). This prevents strangers from creating accounts on an exposed deployment. Run one instance per operator.',
+            text: 'By design, an instance is single-operator: the first account registered becomes the operator and registration closes ("System already initialized"). This prevents strangers from creating accounts on an exposed deployment. Run one instance per operator',
           },
         ],
       },
@@ -671,14 +671,14 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Docker: run `make up` (creates .env with fresh keys on first run, then builds and starts the containers).',
-              'Windows: install Docker Desktop and run the same commands from WSL.',
-              'From source: Go and Node.js, then `make run-backend` and `make run-frontend`.',
+              'Docker: run `make up` (creates .env with fresh keys on first run, then builds and starts the containers)',
+              'Windows: install Docker Desktop and run the same commands from WSL',
+              'From source: Go and Node.js, then `make run-backend` and `make run-frontend`',
             ],
           },
           {
             type: 'p',
-            text: 'Then open `http://127.0.0.1:8000`. The web UI proxies the API under /api/. For remote access, put a TLS reverse proxy in front (see docs/deployment.md).',
+            text: 'Then open `http://127.0.0.1:8000`. The web UI proxies the API under /api/. For remote access, put a TLS reverse proxy in front (see docs/deployment.md)',
           },
         ],
       },
@@ -688,7 +688,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Pull your repository changes and run `make up` to rebuild. Your database lives in the `vergex-postgres` volume and your keys in .env, so both survive updates. Running traders are restarted automatically after the backend comes back.',
+            text: 'Pull your repository changes and run `make up` to rebuild. Your database lives in the `vergex-postgres` volume and your keys in .env, so both survive updates. Running traders are restarted automatically after the backend comes back',
           },
         ],
       },
@@ -698,20 +698,20 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Read the message: every preflight failure names its fix and routes you to the right setup step — fix the model credential, complete the exchange API key, or deposit trading USDT. Balances are re-checked live, so once you fix the item the launch goes through.',
+            text: 'Read the message: every preflight failure names its fix and routes you to the right setup step — fix the model credential, complete the exchange API key, or deposit trading USDT. Balances are re-checked live, so once you fix the item the launch goes through',
           },
         ],
       },
       {
         id: 'account-unreachable',
-        question: 'The account shows "invalid credentials" or "unavailable".',
+        question: 'The account shows "invalid credentials" or "unavailable"',
         blocks: [
           {
             type: 'list',
             items: [
-              'Invalid credentials: the saved API key was revoked, expired or mistyped — create a new key and update the account.',
-              'Unavailable: the exchange API did not respond; the account state is cached for 30 seconds, so wait and refresh.',
-              'CEX keys: verify trading permission, IP whitelist, and that futures/perp access is enabled.',
+              'Invalid credentials: the saved API key was revoked, expired or mistyped — create a new key and update the account',
+              'Unavailable: the exchange API did not respond; the account state is cached for 30 seconds, so wait and refresh',
+              'CEX keys: verify trading permission, IP whitelist, and that futures/perp access is enabled',
             ],
           },
         ],
@@ -723,20 +723,20 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Backend: `docker logs vergex-backend` (or the terminal running `make run-backend`).',
-              'Per-cycle agent reasoning and errors: a trader’s Decisions tab.',
-              'Frontend build/runtime issues: browser devtools console.',
+              'Backend: `docker logs vergex-backend` (or the terminal running `make run-backend`)',
+              'Per-cycle agent reasoning and errors: a trader’s Decisions tab',
+              'Frontend build/runtime issues: browser devtools console',
             ],
           },
         ],
       },
       {
         id: 'port-conflicts',
-        question: 'Port 8000 or 3000 is already in use.',
+        question: 'Port 8000 or 3000 is already in use',
         blocks: [
           {
             type: 'p',
-            text: 'Stop the conflicting service or choose other host ports in .env (`VERGEX_FRONTEND_PORT`, and `VERGEX_BACKEND_PORT` if you published the API), then run `make up` again.',
+            text: 'Stop the conflicting service or choose other host ports in .env (`VERGEX_FRONTEND_PORT`, and `VERGEX_BACKEND_PORT` if you published the API), then run `make up` again',
           },
         ],
       },

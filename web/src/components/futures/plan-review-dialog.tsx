@@ -88,9 +88,9 @@ export function PlanReviewDialog({
             {label('details')}
           </summary>
           <p className="mt-2 text-vergex-muted">
-            {label(market ? 'marketNote' : 'limitNote')}{' '}
-            {label('protectionNote')}
+            {label(market ? 'marketNote' : 'limitNote')}
           </p>
+          <p className="mt-1 text-vergex-muted">{label('protectionNote')}</p>
         </details>
         <table className="w-full text-left tabular-nums">
           <thead className="text-xs text-vergex-muted">

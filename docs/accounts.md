@@ -46,7 +46,7 @@ An account can be on a venue's test environment, with test money. Press **Testne
 
 The account's balance, positions, orders and fills are all on the test environment, and a [Futures](futures.md) plan on it reads its book there. Everything else stays on the real market: charts, candles, rankings and what a trader's model reads. The two sit close together but not on the same price, so a stop very near the price can be refused.
 
-Wherever an order, a position or a trader on such an account is in question, it says so. The account switcher on the Futures page lists names as they are. Its money does not count towards the Dashboard's total equity and realized today, nor the equity on the Auto trading overview. Its events and positions still show.
+Its name shows as it is, with nothing added, so give it one that says what it is. Settings lists it under a heading of its own, and the review dialog of a [Futures](futures.md) plan says the order is a testnet one. In a list to choose from, two accounts of the same name are told apart by their ID. Its money does not count towards the Dashboard's total equity and realized today, nor the equity on the Auto trading overview. Its events and positions still show.
 
 A testnet account proves the flow, not a real key's permissions or IP allowlist. Use a small account before real money.
 

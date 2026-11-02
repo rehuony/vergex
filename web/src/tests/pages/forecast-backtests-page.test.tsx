@@ -124,8 +124,21 @@ it('opens the form when there is no run yet, and starts one', async () => {
   expect(request.to).toBeGreaterThan(request.from)
 })
 
+it('offers no download when no history is short', async () => {
+  show()
+  await screen.findByRole('button', { name: 'Run backtest' })
+  await waitFor(() => expect(mocks.coverage).toHaveBeenCalled())
+  expect(screen.queryByRole('button', { name: 'Download history' })).toBeNull()
+  expect(screen.queryByText('Download derivatives')).toBeNull()
+})
+
 it('asks for derivatives with the history unless turned off', async () => {
   mocks.backfill.mockResolvedValue(undefined)
+  mocks.coverage.mockResolvedValue({
+    coverage: [
+      { symbol: 'BTCUSDT', interval: '1h', candles: 0, first: 0, last: 0 },
+    ],
+  })
   show()
   const download = await screen.findByRole('button', {
     name: 'Download history',
@@ -144,7 +157,7 @@ it('takes a custom range and refuses one that runs backwards', async () => {
   fireEvent.change(screen.getByLabelText('To'), {
     target: { value: '2026-02-01' },
   })
-  expect(screen.getByText('The range must end after it starts.')).toBeVisible()
+  expect(screen.getByText('The range must end after it starts')).toBeVisible()
   expect(screen.getByRole('button', { name: 'Run backtest' })).toBeDisabled()
 
   fireEvent.change(screen.getByLabelText('To'), {
@@ -209,7 +222,7 @@ it('stops a running run, and says why one failed', async () => {
 
   const entries = within(rail()).getAllByTitle('BTC · 1h')
   fireEvent.click(entries[1])
-  expect(await screen.findByText('This run was stopped.')).toBeVisible()
+  expect(await screen.findByText('This run was stopped')).toBeVisible()
   fireEvent.click(entries[2])
   expect(
     await screen.findByText('This run failed: out of memory')
@@ -302,4 +315,60 @@ it('runs one again from what it tested, and deletes one after asking', async () 
   await waitFor(() => expect(mocks.start).toHaveBeenCalled())
   expect(mocks.start.mock.calls[0][0].symbols).toEqual(['ETHUSDT', 'SOLUSDT'])
   expect(mocks.start.mock.calls[0][0].intervals).toEqual(['4h'])
+})
+
+it('says what a run really tested when history fell short of what it asked for', async () => {
+  const asked = {
+    symbols: ['BTCUSDT'],
+    intervals: ['1h'],
+    from: new Date('2024-11-02T00:00:00').getTime(),
+    to: new Date('2026-11-02T00:00:00').getTime(),
+  }
+  mocks.runs.mockResolvedValue({
+    backtests: [
+      run({
+        id: 3,
+        options: asked,
+        tested_from: new Date('2026-10-28T12:00:00').getTime(),
+        tested_to: new Date('2026-10-31T12:00:00').getTime(),
+      }),
+    ],
+  })
+  show()
+  expect(await screen.findByText('Short')).toBeVisible()
+  expect(screen.getByText(/Oct 28, 2026 – Oct 31, 2026/)).toBeVisible()
+})
+
+it('says nothing more when a run tested about what it asked for', async () => {
+  const from = new Date('2026-01-01T00:00:00').getTime()
+  const to = new Date('2026-07-01T00:00:00').getTime()
+  mocks.runs.mockResolvedValue({
+    backtests: [
+      run({
+        id: 3,
+        options: { symbols: ['BTCUSDT'], intervals: ['1h'], from, to },
+        tested_from: from + 86400000,
+        tested_to: to - 86400000,
+      }),
+    ],
+  })
+  show()
+  await screen.findByText(/BTC · 1h/)
+  expect(screen.queryByText('Short')).toBeNull()
+})
+
+it('says a run was not found rather than showing another', async () => {
+  mocks.runs.mockResolvedValue({ backtests: [run({ id: 3 })] })
+  show('/forecast/backtests?run=999')
+  expect(await screen.findByText(/Run 999 was not found/)).toBeVisible()
+})
+
+it("says a restart stopped a run, in the reader's language", async () => {
+  mocks.runs.mockResolvedValue({
+    backtests: [
+      run({ id: 3, status: 'failed', error: 'interrupted by a restart' }),
+    ],
+  })
+  show()
+  expect(await screen.findByText(/A restart stopped this run/)).toBeVisible()
 })

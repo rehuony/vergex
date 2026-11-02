@@ -66,7 +66,7 @@ export function BasicSection({
           disabled={locked}
           options={accounts.map((account) => ({
             value: account.id,
-            label: accountLabel(account),
+            label: accountLabel(account, accounts),
           }))}
           onChange={(account) => onPatch({ account })}
         />

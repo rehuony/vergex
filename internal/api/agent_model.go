@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
@@ -28,6 +27,7 @@ type SafeModelConfig struct {
 	HasAPIKey       bool   `json:"has_api_key"`
 	CustomAPIURL    string `json:"customApiUrl"`    // Custom API URL (usually not sensitive)
 	CustomModelName string `json:"customModelName"` // Custom model name (not sensitive)
+	DefaultModel    string `json:"defaultModel"`    // What it calls with no custom name
 }
 
 // ModelConfigUpdate is a single model's update payload. It is a named type
@@ -79,6 +79,9 @@ func (s *Server) handleGetModelConfigs(c *gin.Context) {
 			HasAPIKey:       model.APIKey != "",
 			CustomAPIURL:    model.CustomAPIURL,
 			CustomModelName: model.CustomModelName,
+		}
+		if native, ok := findNativeProvider(model.Provider); ok {
+			safeModel.DefaultModel = native.DefaultModel
 		}
 
 		safeModels = append(safeModels, safeModel)
@@ -202,6 +205,41 @@ func (s *Server) handleUpdateModelConfigs(c *gin.Context) {
 
 	logger.Infof("✓ model config updated: %+v", SanitizeModelConfigForLog(req.Models))
 	c.JSON(http.StatusOK, gin.H{"message": "Model configuration updated"})
+}
+
+// handleDeleteModel removes a model and its key. A trader in use still needs it, so that
+// refuses, naming them.
+func (s *Server) handleDeleteModel(c *gin.Context) {
+	userID := c.GetString("user_id")
+	model, err := s.stores.Models.Get(userID, c.Param("id"))
+	if err != nil {
+		SafeNotFound(c, "Model")
+		return
+	}
+	traders, err := s.stores.Traders.ListByAgentModelID(userID, model.ID)
+	if err != nil {
+		SafeInternalError(c, "Delete the model", err)
+		return
+	}
+	if len(traders) > 0 {
+		names := make([]string, len(traders))
+		for i, trader := range traders {
+			names[i] = trader.Name
+		}
+		c.JSON(http.StatusConflict, gin.H{
+			"error":        "These traders use this model: " + strings.Join(names, ", "),
+			"error_key":    "connections.inUse",
+			"error_params": gin.H{"names": strings.Join(names, ", ")},
+		})
+		return
+	}
+	if err := s.stores.Models.Delete(userID, model.ID); err != nil {
+		SafeInternalError(c, "Delete the model", err)
+		return
+	}
+	// Telegram may have been set to it, and keeps its clients until it reloads.
+	s.reloadTelegram()
+	c.JSON(http.StatusOK, gin.H{"deleted": model.ID})
 }
 
 // TestModelConfigRequest holds the model form's current values. A blank
@@ -339,41 +377,10 @@ func (s *Server) handleModelFormList(c *gin.Context) {
 	answerModelList(c, providerID, apiKey, baseURL)
 }
 
-var modelTestStatusPrefix = regexp.MustCompile(`^API returned error \(status (\d+)\): `)
-
 // modelTestError turns a provider error into one short line: the provider's own
 // message where the body is JSON, never the API key.
 func modelTestError(err error, apiKey string) string {
-	msg := strings.TrimPrefix(err.Error(), "still failed after 1 retries: ")
-	if i := strings.Index(msg, "{"); i >= 0 {
-		var body struct {
-			Error   json.RawMessage `json:"error"`
-			Message string          `json:"message"`
-		}
-		if json.Unmarshal([]byte(msg[i:]), &body) == nil {
-			var nested struct {
-				Message string `json:"message"`
-			}
-			var plain string
-			switch {
-			case json.Unmarshal(body.Error, &nested) == nil && nested.Message != "":
-				msg = msg[:i] + nested.Message
-			case json.Unmarshal(body.Error, &plain) == nil && plain != "":
-				msg = msg[:i] + plain
-			case body.Message != "":
-				msg = msg[:i] + body.Message
-			}
-		}
-	}
-	msg = modelTestStatusPrefix.ReplaceAllString(msg, "HTTP $1: ")
-	if apiKey != "" {
-		msg = strings.ReplaceAll(msg, apiKey, "***")
-	}
-	msg = strings.Join(strings.Fields(msg), " ")
-	if runes := []rune(msg); len(runes) > 200 {
-		msg = string(runes[:200]) + "…"
-	}
-	return msg
+	return agent.ProviderMessage(err, apiKey)
 }
 
 func findNativeProvider(id string) (nativeProvider, bool) {
@@ -423,7 +430,7 @@ var nativeProviders = []nativeProvider{
 func defaultModelConfigs() []SafeModelConfig {
 	models := make([]SafeModelConfig, 0, len(nativeProviders))
 	for _, p := range nativeProviders {
-		models = append(models, SafeModelConfig{ID: p.ID, Name: p.Name, Provider: p.ID})
+		models = append(models, SafeModelConfig{ID: p.ID, Name: p.Name, Provider: p.ID, DefaultModel: p.DefaultModel})
 	}
 	return models
 }

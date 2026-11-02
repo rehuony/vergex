@@ -119,12 +119,12 @@ it('says when an edit reaches a running trader', async () => {
   show(true)
   await openRisk()
   expect(
-    screen.queryByText('A running trader picks this up on its next cycle.')
+    screen.queryByText('A running trader picks this up on its next cycle')
   ).toBeNull()
 
   setMaxPositions('5')
   expect(
-    screen.getByText('A running trader picks this up on its next cycle.')
+    screen.getByText('A running trader picks this up on its next cycle')
   ).toBeVisible()
 })
 

@@ -1,6 +1,12 @@
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import type { BacktestRun, ForecastStats } from '@/api/forecast'
+import {
+  ENOUGH_MOMENTS,
+  tooFewMoments,
+  type BacktestRun,
+  type ForecastCalibrationStatus,
+  type ForecastStats,
+} from '@/api/forecast'
 import {
   cellClass,
   headClass,
@@ -28,6 +34,7 @@ const bandName = (band: string) =>
 const statsRow = (name: string, stats: ForecastStats): BreakdownRow => ({
   name,
   samples: stats.samples,
+  moments: stats.moments,
   hit: stats.hit_rate,
   chance: stats.chance_rate,
   afterFees: stats.avg_return_after_fee_pct,
@@ -38,10 +45,13 @@ const statsRow = (name: string, stats: ForecastStats): BreakdownRow => ({
 export function StrategyPerformance({
   strategyId,
   retired,
+  inUse,
   language,
 }: {
   strategyId: string
   retired: boolean
+  // Curves are only tried for the strategy in use.
+  inUse: boolean
   language: Language
 }) {
   const label = (key: string, params?: Record<string, string | number>) =>
@@ -58,6 +68,13 @@ export function StrategyPerformance({
   if (!data) {
     return <PanelLoading />
   }
+
+  const shownAs = (row: ForecastCalibrationStatus) =>
+    row.active && row.built_at
+      ? label('probabilitySince', { date: fmtDate(row.built_at) })
+      : row.moments < row.needed
+        ? label('scoreWord')
+        : label(inUse ? 'scoreFailedCheck' : 'scoreNotChecked')
 
   const latestRun: BacktestRun | undefined = runs?.backtests.find(
     (run) =>
@@ -93,6 +110,7 @@ export function StrategyPerformance({
       </Link>
     ),
     samples: summary?.samples ?? null,
+    moments: summary ? summary.moments || null : 0,
     hit: summary?.hit_rate ?? null,
     chance: summary?.chance_rate ?? null,
     afterFees:
@@ -115,20 +133,27 @@ export function StrategyPerformance({
           },
           {
             name: label('afterFeesShort'),
-            value: fmtPct(overall.avg_return_after_fee_pct ?? 0, true),
+            value:
+              overall.avg_return_after_fee_pct === null
+                ? '—'
+                : fmtPct(overall.avg_return_after_fee_pct, true),
             note: label('perSignal'),
-            gain: overall.avg_return_after_fee_pct,
+            gain: tooFewMoments(overall.moments)
+              ? null
+              : overall.avg_return_after_fee_pct,
           },
           {
             name: label('samples'),
             value: overall.samples,
-            note: label('judgedCount', { count: overall.judged }),
+            note: `${label('judgedCount', { count: overall.judged })} · ${label('momentsCount', { count: overall.moments })}`,
           },
         ]}
       />
       <BreakdownTable
         head={{
           samples: label('samples'),
+          moments: label('momentsHead'),
+          tooFew: label('tooFewMoments', { count: ENOUGH_MOMENTS }),
           hit: label('hitRate'),
           chance: label('chanceRate'),
           afterFees: label('afterFeesShort'),
@@ -185,9 +210,7 @@ export function StrategyPerformance({
               <td className={cn(cellClass, 'text-vergex-ink')}>
                 {row.interval}
               </td>
-              <td className={cellClass}>
-                {label(row.active ? 'shownAsProbability' : 'scoreWord')}
-              </td>
+              <td className={cellClass}>{shownAs(row)}</td>
               <td className={cn(cellClass, numberClass)}>
                 {row.moments} / {row.needed}
               </td>

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '@/api'
+import { FORECAST_INTERVALS } from '@/api/forecast'
 import { NumberField, SymbolsField } from '@/components/common/form-fields'
 import { Panel, PanelLoading } from '@/components/common/panel'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -141,14 +142,15 @@ function CollectionPanel({ language }: { language: Language }) {
   )
 }
 
-// When a coin's call is strong enough to send an alert: one row, saved on leaving the
-// field or pressing Enter. The ref is what to save, because the field pulls an
-// out-of-range value back as it loses focus, in the same event this panel hears it in,
-// before the new state has reached a render.
+// What can send an alert: how strong a call and on which intervals, saved as they change,
+// the score on leaving the field or pressing Enter. The ref is what to save, because the
+// field pulls an out-of-range value back as it loses focus, in the same event this panel
+// hears it in, before the new state has reached a render.
 function AlertPanel({ language }: { language: Language }) {
   const label = labelsIn(language)
   const { data, error, refetch } = useQuery(forecastSettingsQuery)
   const [threshold, setThreshold] = useState(70)
+  const [intervals, setIntervals] = useState<string[]>([])
   const latest = useRef(threshold)
 
   const show = (value: number) => {
@@ -160,27 +162,45 @@ function AlertPanel({ language }: { language: Language }) {
     if (!data) return
     latest.current = data.alert_threshold
     setThreshold(data.alert_threshold)
+    setIntervals(data.alert_intervals)
   }, [data])
 
-  const save = async () => {
-    if (!data || latest.current === data.alert_threshold) return
+  const persist = async (alertIntervals: string[]) => {
     try {
-      await api.saveForecastSettings(latest.current)
+      await api.saveForecastSettings({
+        alert_threshold: latest.current,
+        alert_intervals: alertIntervals,
+      })
       await refetch()
       toast.success(label('saved'))
     } catch (err) {
-      show(data.alert_threshold)
+      if (data) {
+        show(data.alert_threshold)
+        setIntervals(data.alert_intervals)
+      }
       toast.error(err instanceof Error ? err.message : label('saveFailed'))
     }
+  }
+
+  const save = () => {
+    if (data && latest.current !== data.alert_threshold) void persist(intervals)
+  }
+
+  const toggleInterval = (interval: string) => {
+    const next = FORECAST_INTERVALS.filter((item) =>
+      item === interval ? !intervals.includes(item) : intervals.includes(item)
+    )
+    setIntervals(next)
+    void persist(next)
   }
 
   return (
     <Panel title={label('alerts')}>
       <div
         className="border-t border-vergex-line px-4"
-        onBlur={() => void save()}
+        onBlur={save}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && event.target instanceof HTMLElement)
+          if (event.key === 'Enter' && event.target instanceof HTMLInputElement)
             event.target.blur()
         }}
       >
@@ -189,20 +209,46 @@ function AlertPanel({ language }: { language: Language }) {
         ) : !data ? (
           <PanelLoading className="flex-1" />
         ) : (
-          <SettingRow
-            label={label('alertThreshold')}
-            htmlFor="forecast-alert"
-            className="grid-cols-[auto_minmax(0,1fr)] items-center gap-3 lg:grid-cols-[auto_minmax(0,1fr)] lg:gap-3"
-          >
-            <NumberField
-              id="forecast-alert"
-              value={threshold}
-              min={51}
-              max={99}
-              suffix={label('alertThresholdSuffix', { low: 100 - threshold })}
-              onChange={show}
-            />
-          </SettingRow>
+          <>
+            <SettingRow
+              label={label('alertThreshold')}
+              htmlFor="forecast-alert"
+              className="grid-cols-[auto_minmax(0,1fr)] items-center gap-3 lg:grid-cols-[auto_minmax(0,1fr)] lg:gap-3"
+            >
+              <NumberField
+                id="forecast-alert"
+                value={threshold}
+                min={51}
+                max={99}
+                suffix={label('alertThresholdSuffix', { low: 100 - threshold })}
+                onChange={show}
+              />
+            </SettingRow>
+            <SettingRow
+              label={label('alertIntervals')}
+              className="grid-cols-[auto_minmax(0,1fr)] items-center gap-3 lg:grid-cols-[auto_minmax(0,1fr)] lg:gap-3"
+            >
+              <div
+                role="group"
+                aria-label={label('alertIntervals')}
+                className="flex flex-wrap justify-end gap-1.5"
+              >
+                {FORECAST_INTERVALS.map((interval) => (
+                  <Button
+                    key={interval}
+                    type="button"
+                    variant="option"
+                    size="sm"
+                    aria-pressed={intervals.includes(interval)}
+                    onClick={() => toggleInterval(interval)}
+                    className="h-8 px-2.5 text-xs max-sm:h-10"
+                  >
+                    {interval}
+                  </Button>
+                ))}
+              </div>
+            </SettingRow>
+          </>
         )}
       </div>
     </Panel>

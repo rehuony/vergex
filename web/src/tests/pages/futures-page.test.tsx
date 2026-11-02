@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
     provider: string
     enabled: boolean
     has_api_key: boolean
+    defaultModel?: string
   }[],
   accounts: [] as {
     id: string
@@ -154,6 +155,7 @@ beforeEach(() => {
       id: 'model',
       name: 'Configured DeepSeek',
       provider: 'deepseek',
+      defaultModel: 'deepseek-v4-pro',
       enabled: true,
       has_api_key: true,
     },
@@ -527,7 +529,7 @@ it('offers a safe starting point, keeps real account activity separate and keeps
   fireEvent.click(screen.getByRole('tab', { name: 'Trade' }))
   fireEvent.click(screen.getByRole('button', { name: /Find a pullback entry/ }))
   expect(screen.getByLabelText('Trade idea')).toHaveValue(
-    'Find a pullback entry from the current structure: the level, what invalidates it and where to take profit. If there is no good level yet, say what to wait for.'
+    'Find a pullback entry from the current structure: the level, what invalidates it and where to take profit. If there is no good level yet, say what to wait for'
   )
   expect(screen.getByLabelText('Trade idea')).toHaveFocus()
   expect(mocks.stream).not.toHaveBeenCalled()
@@ -540,7 +542,7 @@ it('offers a safe starting point, keeps real account activity separate and keeps
   expect(screen.getByRole('region', { name: 'Entry plans' })).toBeVisible()
   showConversation()
   expect(screen.getByLabelText('Trade idea')).toHaveValue(
-    'Find a pullback entry from the current structure: the level, what invalidates it and where to take profit. If there is no good level yet, say what to wait for.'
+    'Find a pullback entry from the current structure: the level, what invalidates it and where to take profit. If there is no good level yet, say what to wait for'
   )
 })
 
@@ -1140,4 +1142,41 @@ it('keeps limits set by hand across a reload, for the next plan to use', async (
       constraints: expect.objectContaining({ min_reward_risk: '2.5' }),
     })
   )
+})
+
+it('shows the answer as it is written, and keeps what was written when stopped', async () => {
+  let abort: () => void = () => undefined
+  mocks.stream.mockImplementation(
+    async (
+      _input: unknown,
+      signal: AbortSignal,
+      emit: (event: { type: string; data: Record<string, unknown> }) => void
+    ) => {
+      emit({ type: 'iteration', data: { round: 1 } })
+      emit({ type: 'assistant_delta', data: { text: 'Written before a tool' } })
+      emit({ type: 'tool_start', data: { name: 'get_market', id: 'c1' } })
+      emit({ type: 'assistant_delta', data: { text: 'The answer ' } })
+      emit({ type: 'assistant_delta', data: { text: 'so far' } })
+      await new Promise<void>((_resolve, reject) => {
+        abort = () => reject(new DOMException('stopped', 'AbortError'))
+        signal.addEventListener('abort', abort)
+      })
+    }
+  )
+  open()
+  await waitFor(() =>
+    expect(screen.getByLabelText('Model')).toHaveValue('model deepseek-v4-pro')
+  )
+  const idea = screen.getByRole('textbox', { name: 'Trade idea' })
+  fireEvent.change(idea, { target: { value: 'What now?' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+
+  expect(await screen.findByText('The answer so far')).toBeVisible()
+  expect(screen.queryByText(/Written before a tool/)).toBeNull()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Stop planning' }))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Send' })).toBeVisible()
+  )
+  expect(screen.getByText('The answer so far')).toBeVisible()
 })

@@ -67,7 +67,7 @@ This is a clean rewrite with no old deployments or data to support, so the code 
 ## Stack and runtime
 
 - **Backend:** Go (module `vergex`), Gin, GORM with PostgreSQL, Starlark for Futures calculators. Logging is logrus, always through `internal/logger`.
-- **Frontend:** React 18, TypeScript, Vite, Tailwind v4, TanStack Query, lightweight-charts, three.js (the Dashboard's stage, in a chunk only that page loads), Vitest, ESLint with Prettier. The package manager is pnpm (`corepack enable`; the version is pinned in `web/package.json`).
+- **Frontend:** React 18, TypeScript, Vite, Tailwind v4, TanStack Query, lightweight-charts, three.js (the Dashboard's stage, in a chunk only that page loads), qrcode.react (Telegram's binding step), Vitest, ESLint with Prettier. The package manager is pnpm (`corepack enable`; the version is pinned in `web/package.json`).
 
 | Where | Backend | Frontend |
 | :---- | :------ | :------- |
@@ -97,7 +97,7 @@ Packages under `internal/`, in layers. Each depends only on those above it, and 
 | | `security/`, `security/auth`, `security/crypto` | SSRF checks; JWT; AES storage and RSA transport encryption |
 | | `database/` | Opens PostgreSQL, holds the SQL migrations, serializers and `core.settings`; `database/testdb` gives tests a database |
 | Shared domain | `user/` | The user and their password (`core.users`) |
-| | `agent/`, `agent/provider`, `agent/pricing` | Model clients and provider registry, request building, SSE streaming, token usage callback; the `agent.*` tables; models.dev price cache and cost estimates |
+| | `agent/`, `agent/provider`, `agent/pricing` | Model clients and provider registry, request building, streaming replies, token usage callback; the `agent.*` tables; models.dev price cache and cost estimates |
 | | `market/` | Candles and indicators for trading; reads a `LiveSource`, which `market/feed` provides; `market.Public` is the public market data Futures reads |
 | | `market/instrument` | What can be traded: venue, market kind and symbol, `Normalize` for naming a symbol, and order books. Market data and the ledger both refer to it |
 | | `market/ws` | One WebSocket connection to a changing set of topics, with what differs between venues behind a `Protocol` |
@@ -159,11 +159,15 @@ Details are in [docs/forecast.md](docs/forecast.md). `forecast.Evaluate` is pure
 
 ## Telegram assistant
 
-`internal/telegram/bot.go` receives messages and binds sessions. `internal/telegram/agent` keeps one Agent per session and handles each session's messages in order.
+`internal/telegram/bot.go` receives updates, and passes each through one gate before anything else: only the user bound with a one-time code from Settings, in their private chat, gets through, checked against what is saved (`binding.go`, `isOwner` in `bot.go`). Anyone else gets a fixed notice in English, and `visitors.go` keeps who they were for Settings to show. With no one bound, the code binds whether it comes after `/start`, as the link sends it, or on its own. `turn.go` runs that chat's messages one at a time, each with a placeholder saying what is under way, and `format.go` turns replies into Telegram's HTML. `internal/telegram/agent` holds the assistant.
 
 The assistant is a trading operations tool, not a general chatbot. The design is 80% fixed skills and 20% dynamic planning: Go code fixes the flow of known, frequent tasks, and the model only understands intent, picks a skill, fills in missing details and writes the reply. User-facing behaviour is in [docs/telegram.md](docs/telegram.md).
 
 `internal/telegram/alerts.go` pushes events to the bound chat and `notify.go` sends them. The watcher only reads, so it adds no exchange requests and never touches the trading loop.
+
+### Commands
+
+`/status`, `/positions` and `/traders` answer from the local API without the model (`agent/commands.go`). `/stop`, `/cancel`, `/lang`, `/help` and `/start` are the rest of the menu, published for the bound chat alone, with `/start` for every private chat (`bot.go`). It goes out before the bot reports running, and a refusal is retried with the bot reporting degraded until then. `/start` answers everyone with where they stand: not bound, access denied or welcome. A command is only for what fixed words can answer: everything else goes to a skill.
 
 ### Skills
 
@@ -174,7 +178,7 @@ The model sees only these skills (`internal/telegram/agent/skills.go`):
 | `trader_management` | create, update, delete, start, stop, query | Create takes a `kind` and `preset`, and auto-selects the model or account when only one is enabled. Update sends only `config_patch`; the server merges it |
 | `model_management` | query | Read-only; keys and endpoints change only in the web UI |
 | `account_management` | query, positions | Read-only, with account connection state; positions reads what an account holds, whoever opened it |
-| `account_query` | overview, balance, positions, position_history, trades, orders, open_orders, decisions, statistics, agent_costs | Read-only, per trader |
+| `account_query` | overview, balance, positions, position_history, trades, orders, open_orders, decisions, decision_detail, statistics, agent_costs | Read-only, per trader. Decisions read the summaries: a full record's prompts would fill a whole result |
 | `futures_query` | runs, drafts, results | Read-only, trimmed to what a chat needs; plans are approved and run in the web UI |
 | `forecast_query` | signals, detail | Read-only; Forecast is experimental and connected to no trading |
 | `close_position` | | Checks first that the position exists |
@@ -188,9 +192,9 @@ Targets are matched by id, then exact name (case-insensitive), then a unique nam
 
 ### Confirming high-risk actions (`confirm.go`)
 
-These actions are held rather than run: starting, stopping or deleting a trader; updating a running trader; `close_position`; and a `config_patch` touching the `RiskFields` of the trader's kind. The tool result returns `needs_confirmation` and a change summary for the model to relay.
+These actions are held rather than run: starting, stopping or deleting a trader; updating a running trader; `close_position`; and a `config_patch` touching the `RiskFields` of the trader's kind. The tool result returns `needs_confirmation`, and everything one turn holds waits as one batch.
 
-Go code decides whether to run it, not the model. The user's next message must be an explicit confirmation (`确认`, `confirm`, `yes` and so on); anything else cancels. A held action expires after 5 minutes.
+The bot, not the model, shows the batch: `Reply.Confirm` holds Go's summary of each action, with its account and whether that is real money, and `bot.go` sends it under confirm and cancel buttons. Go code decides whether to run it. The user presses a button, whose data names the batch, or replies with an explicit confirmation (`确认`, `confirm`, `yes` and so on); anything else cancels. Confirming runs every action and reports each. A held batch expires after 5 minutes.
 
 ### Adding skills
 
@@ -210,7 +214,7 @@ How the interface looks is in [DESIGN.md](DESIGN.md). This section is the code: 
 - File and directory names use kebab-case.
 - Imports use `./` within a directory and `@/` otherwise, never `../`.
 - Use named exports. Use a default export only where a framework requires one.
-- UI copy goes through `web/src/i18n`, imported from `@/i18n`, its one entry point. `locales/en` is the template, split by area; `locales/zh-cn` mirrors it file for file, and its types and `tests/i18n/locales.test.ts` fail on a missing key, an extra key or a changed placeholder. To add copy, add it to both. To add a language, add a folder and list it in `i18n/index.ts`. The language is chosen in the account menu, and otherwise follows the browser. Dates are written in it (`activeLanguage()`); numbers stay in `en-US`.
+- UI copy goes through `web/src/i18n`, imported from `@/i18n`, its one entry point. `locales/en` is the template, split by area; `locales/zh-cn` mirrors it file for file, and its types and `tests/i18n/locales.test.ts` fail on a missing key, an extra key or a changed placeholder. To add copy, add it to both, and end it without `.` or `。`, which the same test checks. To add a language, add a folder and list it in `i18n/index.ts`. The language is chosen in the account menu, and otherwise follows the browser. Dates are written in it (`activeLanguage()`); numbers stay in `en-US`.
 - New code must pass ESLint and Prettier.
 - Tests live in `web/src/tests/`, mirroring the source path after `src/`: the test for `components/ui/button.tsx` is `tests/components/ui/button.test.tsx`. A test that covers several components stays whole, under the directory of the area it covers. Not every file needs a test.
 
@@ -230,7 +234,7 @@ A functional area of a page is a `Panel` from `components/common/panel.tsx`. A r
 
 ### Dialogs
 
-Use `components/common/dialog.tsx`, and never hand-write a `fixed inset-0` overlay. `Dialog` provides the overlay, title, close button, Esc, focus trap, page scroll lock, scrolling body and bottom button bar, and mounts on `body`. The file also exports `DialogSteps`, `DialogField`, `DialogNote` and the input style constants.
+Use `components/common/dialog.tsx`, and never hand-write a `fixed inset-0` overlay. To ask before acting, use `confirmToast` from `components/common/notify.tsx`, whose `title` and `okText` name the action and whose `tone: 'danger'` marks a destructive one. `Dialog` provides the overlay, title, close button, Esc, focus trap, page scroll lock, scrolling body and bottom button bar, and mounts on `body`. The file also exports `DialogSteps`, `DialogField`, `DialogNote` and the input style constants.
 
 ### Controls
 
@@ -250,7 +254,7 @@ Settings sections, and other forms laid out the same way, use `components/common
 
 - **`SettingRow`** for each field: a fixed name column and a control at the standard height filling the rest, with dividers between rows and no helper text under fields.
 - **`SettingActions`** ends a group that saves together. Buttons sit on the right. Validation and result messages go in a single line on the left of the bar (`messageTone` sets error, success or in progress, as with the model test result), never under an input, so the layout doesn't jump.
-- **`SettingList`** for list sections (models, accounts): the list scrolls inside the section, and the bar with the add button stays pinned at the bottom.
+- **`SettingList`** for every window in Settings, lists and forms alike: what it holds scrolls between `head`, such as `SettingBack`, pinned at the top, and the bar with its buttons and any message, pinned at the bottom in the same place on each. A form goes around it so its buttons submit, or its button names the form with `form`. A window with nothing to do passes no `actions` and has no bar.
   - Each entry is a `SettingItem`: icon, name, a `SettingBadge` right after the name, and buttons on the right.
   - Opening one shows its form in the same section, with `SettingBack` at the top.
   - Loading, empty and error states use a centred `SettingState`.

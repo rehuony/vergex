@@ -10,6 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ModelSettings } from '@/components/settings/model-settings'
 
 const mocks = vi.hoisted(() => ({
+  remove: vi.fn(),
   models: vi.fn(),
   update: vi.fn(),
   test: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('@/api', () => ({
         id: 'deepseek',
         name: 'DeepSeek AI',
         provider: 'deepseek',
+        defaultModel: 'deepseek-v4-pro',
         defaultBaseUrl: 'https://api.deepseek.com',
       },
       {
@@ -36,6 +38,7 @@ vi.mock('@/api', () => ({
     ],
     getTraders: mocks.traders,
     updateModelConfigs: mocks.update,
+    deleteModel: mocks.remove,
     testModelConfig: mocks.test,
     listAvailableModels: mocks.list,
   },
@@ -49,6 +52,7 @@ beforeEach(() => {
       id: 'agent',
       name: 'My AI',
       provider: 'deepseek',
+      defaultModel: 'deepseek-v4-pro',
       enabled: true,
       has_api_key: true,
       customModelName: 'configured-model',
@@ -129,6 +133,23 @@ it('keeps the saved key when an edit leaves it blank', async () => {
   )
 })
 
+it('deletes a model outright, and says why when the server refuses', async () => {
+  mocks.remove.mockRejectedValueOnce(new Error('Used by Beta.'))
+  mocks.remove.mockResolvedValueOnce(undefined)
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit My AI' }))
+  await waitFor(() => expect(mocks.traders).toHaveBeenCalled())
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+  expect(await screen.findByText('Used by Beta.')).toBeVisible()
+  expect(mocks.remove).toHaveBeenCalledWith('agent')
+  expect(mocks.update).not.toHaveBeenCalled()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+  await waitFor(() => expect(mocks.remove).toHaveBeenCalledTimes(2))
+  expect(mocks.update).not.toHaveBeenCalled()
+})
+
 it('will not remove a model a trader uses', async () => {
   mocks.traders.mockResolvedValue([
     { trader_id: 't1', trader_name: 'Alpha', agent_model: 'agent' },
@@ -139,10 +160,10 @@ it('will not remove a model a trader uses', async () => {
   await new Promise((resolve) => setTimeout(resolve, 0))
   fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
   expect(
-    await screen.findByText('Used by Alpha. Delete those traders first.')
+    await screen.findByText('Used by Alpha. Delete those traders first')
   ).toBeVisible()
   expect(mocks.confirm).not.toHaveBeenCalled()
-  expect(mocks.update).not.toHaveBeenCalled()
+  expect(mocks.remove).not.toHaveBeenCalled()
 })
 
 it('centres a note while no model is connected', async () => {
@@ -219,6 +240,7 @@ it('keeps a different endpoint, and shows it again', async () => {
       id: 'agent',
       name: 'My AI',
       provider: 'deepseek',
+      defaultModel: 'deepseek-v4-pro',
       enabled: true,
       has_api_key: true,
       customApiUrl: 'https://proxy.example.com/v1',
@@ -299,6 +321,7 @@ it('fills in the provider default, and saves it as no name of its own', async ()
       id: 'agent',
       name: 'My AI',
       provider: 'deepseek',
+      defaultModel: 'deepseek-v4-pro',
       enabled: true,
       has_api_key: true,
     },

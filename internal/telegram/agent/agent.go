@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -22,7 +23,11 @@ type Agent struct {
 	memory       *Memory
 	systemPrompt string
 	userID       string
-	pending      *pendingAction
+	pending      *pendingBatch
+	// language is the one chosen with /lang, empty until one is.
+	language func() string
+	// lastZh is the language of the last message, for what answers a button.
+	lastZh bool
 
 	history        History
 	chatID         int64
@@ -30,17 +35,46 @@ type Agent struct {
 }
 
 // New creates an Agent for one chat session.
-func New(apiPort int, botToken, userID string, getClient func() agent.Client, systemPrompt string) *Agent {
+func New(apiPort int, token func() (string, error), userID string, getClient func() agent.Client, systemPrompt string, language func() string) *Agent {
 	return &Agent{
-		api:          newAPIClient(apiPort, botToken),
+		api:          newAPIClient(apiPort, token),
 		getClient:    getClient,
 		memory:       NewMemory(getClient()),
 		systemPrompt: systemPrompt,
 		userID:       userID,
+		language:     language,
 	}
 }
 
-// GenerateBotToken creates a long-lived JWT for the bot's internal API calls.
+// zh says whether what Go writes should be in Chinese: the language chosen with /lang, or
+// until one is, the language of the message being answered.
+func (a *Agent) zh(message string) bool {
+	switch a.language() {
+	case "zh":
+		return true
+	case "en":
+		return false
+	}
+	if message != "" {
+		a.lastZh = PrefersChinese(message)
+	}
+	return a.lastZh
+}
+
+func agentMessage(content string) agent.Message { return agent.Message{Content: content} }
+
+// languageName is a /lang setting as the model reads it.
+func languageName(lang string) string {
+	switch lang {
+	case "zh":
+		return "Simplified Chinese"
+	case "en":
+		return "English"
+	}
+	return ""
+}
+
+// GenerateBotToken creates a JWT for one of the bot's internal API calls.
 // userID must match the actual registered user's ID so bot-made changes
 // are visible in the frontend (shared user namespace).
 func GenerateBotToken(userID string) (string, error) {
@@ -104,6 +138,26 @@ func (a *Agent) buildAccountContext() string {
 	return sb.String()
 }
 
+// Progress is who hears how a turn is going.
+type Progress struct {
+	// Stage hears what is under way, in words for the user.
+	Stage func(string)
+	// Text hears the reply as it is written.
+	Text func(string)
+}
+
+func (p *Progress) stage(stage string) {
+	if p != nil && p.Stage != nil {
+		p.Stage(stage)
+	}
+}
+
+func (p *Progress) text(text string) {
+	if p != nil && p.Text != nil {
+		p.Text(text)
+	}
+}
+
 // Run processes one user message.
 //
 // A pending high-risk action is resolved first, deterministically: an explicit
@@ -111,27 +165,29 @@ func (a *Agent) buildAccountContext() string {
 // cancels it and is then handled normally. Otherwise the model loops over skill
 // calls until it returns a plain-text reply. On the first message of a
 // conversation the account state is injected.
-// onChunk is optional; when set it is called once with the complete final reply text.
-func (a *Agent) Run(userMessage string, onChunk func(string)) string {
+// progress hears what is under way, and may be nil. Ending ctx ends the turn: a turn stopped
+// by the user drops what it was holding, one that ran out of time still shows it.
+func (a *Agent) Run(ctx context.Context, userMessage string, progress *Progress) Reply {
 	a.record("user", agent.Message{Content: userMessage})
-	zh := prefersChinese(userMessage)
+	zh := a.zh(userMessage)
 	notice := ""
 	if p := a.takePending(); p != nil {
 		switch {
 		case isConfirmation(userMessage) && p.expired():
-			notice = status(zh, "⌛ 确认已超时，操作未执行："+p.summary, "⌛ Confirmation expired, nothing was executed: "+p.summary)
-			return a.finish(userMessage, notice, "", onChunk)
+			notice = status(zh, "⌛ 确认已超时，操作未执行：\n"+p.summary(), "⌛ Confirmation expired, nothing was executed:\n"+p.summary())
+			return a.finish(userMessage, notice, "")
 		case isConfirmation(userMessage):
-			logger.Infof("Agent: user confirmed pending action: %s", p.summary)
-			return a.finish(userMessage, runPending(p, zh), "", onChunk)
+			logger.Infof("Agent: user confirmed pending actions: %s", p.summary())
+			progress.stage(status(zh, "正在执行…", "Running it…"))
+			return a.finish(userMessage, runPending(p, zh), "")
 		default:
-			notice = status(zh, "已取消待确认操作："+p.summary, "Cancelled the pending action: "+p.summary)
+			notice = status(zh, "↩️ 已取消待确认操作：\n"+p.summary(), "↩️ Cancelled the pending actions:\n"+p.summary())
 		}
 	}
 
 	client := a.getClient()
 	if client == nil {
-		return "Assistant unavailable. Please configure a model in the Web UI."
+		return Reply{Text: status(zh, "助手不可用。请在网页上配置模型", "Assistant unavailable. Please configure a model in the web app")}
 	}
 
 	// Build initial user message: prepend account state on first turn, history on subsequent turns.
@@ -145,6 +201,9 @@ func (a *Agent) Run(userMessage string, onChunk func(string)) string {
 	if notice != "" {
 		firstUserContent += "\n[System: the previously pending action was cancelled because the user did not confirm it.]"
 	}
+	if name := languageName(a.language()); name != "" {
+		firstUserContent += "\n[System: the user's language setting is " + name + ". Reply in it unless they write in another language.]"
+	}
 
 	a.record(roleContext, agent.Message{Content: firstUserContent})
 
@@ -157,34 +216,42 @@ func (a *Agent) Run(userMessage string, onChunk func(string)) string {
 		return b.WithToolChoice("auto")
 	}
 
+	progress.stage(status(zh, "正在思考…", "Thinking…"))
 	for i := 0; i < maxIterations; i++ {
+		if ctx.Err() != nil {
+			return a.interrupted(ctx, userMessage, notice, zh)
+		}
 		req, err := builder().Build()
 		if err != nil {
 			logger.Errorf("Agent: failed to build request: %v", err)
 			break
 		}
-		req.Ctx = agent.WithConversation(context.Background(), a.conversation())
+		req.Ctx = agent.WithConversation(ctx, a.conversation())
 
-		resp, err := client.CallWithRequestFull(req)
+		resp, err := agent.Stream(client, req, progress.text)
+		if ctx.Err() != nil {
+			return a.interrupted(ctx, userMessage, notice, zh)
+		}
 		if err != nil {
 			logger.Errorf("Agent: model call failed (iteration %d): %v", i+1, err)
-			return "Assistant temporarily unavailable. Please try again."
+			return Reply{Text: "❌ " + agent.Classify(client, err).Describe(zh), Confirm: a.confirmation()}
 		}
 
-		// No tool calls → model returned a final text reply.
+		// No tool calls → model returned a final text reply. With nothing held, an empty one
+		// would leave the user looking at nothing.
 		if len(resp.ToolCalls) == 0 {
-			return a.finish(userMessage, joinNotice(notice, strings.TrimSpace(resp.Content)), resp.ReasoningContent, onChunk)
-		}
-
-		// Tool call iteration — show thinking indicator.
-		if onChunk != nil {
-			onChunk("⏳")
+			content := strings.TrimSpace(resp.Content)
+			if content == "" && a.pending == nil {
+				content = status(zh, "⚠️ 模型没有返回内容。请重试，或在设置里检查模型", "⚠️ The model returned nothing. Try again, or check the model in Settings")
+			}
+			return a.finish(userMessage, joinNotice(notice, content), resp.ReasoningContent)
 		}
 
 		a.record("assistant", agent.Message{Content: resp.Content, ReasoningContent: resp.ReasoningContent, ToolCalls: resp.ToolCalls})
 		turnMsgs = append(turnMsgs, agent.Message{Role: "assistant", ToolCalls: resp.ToolCalls})
 		for _, tc := range resp.ToolCalls {
 			logger.Infof("Agent: iter=%d skill=%s id=%s", i+1, tc.Function.Name, tc.ID)
+			progress.stage(stageOf(tc.Function.Name, tc.Function.Arguments, zh))
 			result := agent.Message{
 				Role:       "tool",
 				ToolCallID: tc.ID,
@@ -195,9 +262,25 @@ func (a *Agent) Run(userMessage string, onChunk func(string)) string {
 		}
 	}
 
-	// Safety: max iterations reached.
+	// Safety: max iterations reached. Nothing says the work got done, so neither does this.
 	logger.Warnf("Agent: max iterations (%d) reached for message: %q", maxIterations, userMessage)
-	return a.finish(userMessage, joinNotice(notice, "Operation completed. Please check your account for the latest status."), "", onChunk)
+	return a.finish(userMessage, joinNotice(notice, status(zh,
+		"⚠️ 这件事的步骤太多，我没有做完。可以拆开来问，或在网页上查看",
+		"⚠️ That took too many steps and I did not finish it. Try asking in smaller parts, or look in the web app")), "")
+}
+
+// interrupted ends a turn whose context ended. Whatever a stopped turn was holding goes
+// with it, since being told to stop is no time to ask for a confirmation.
+func (a *Agent) interrupted(ctx context.Context, userMessage, notice string, zh bool) Reply {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return a.finish(userMessage, joinNotice(notice, status(zh,
+			"⌛ 这件事超过了时限，我没有做完。已经执行的操作不会撤销",
+			"⌛ That ran out of time and I did not finish it. Anything already done stays done")), "")
+	}
+	a.pending = nil
+	return a.finish(userMessage, joinNotice(notice, status(zh,
+		"🛑 已停止。已经执行的操作不会撤销",
+		"🛑 Stopped. Anything already done stays done")), "")
 }
 
 func joinNotice(notice, reply string) string {
@@ -207,16 +290,22 @@ func joinNotice(notice, reply string) string {
 	return notice + "\n\n" + reply
 }
 
-// finish records the exchange and delivers the reply.
-func (a *Agent) finish(userMessage, reply, thinking string, onChunk func(string)) string {
-	if onChunk != nil {
-		onChunk(reply)
+// finish records the exchange and delivers the reply, with whatever now waits for an
+// answer. That goes on record too, so the model knows of it on the next turn.
+func (a *Agent) finish(userMessage, text, thinking string) Reply {
+	reply := Reply{Text: text, Confirm: a.confirmation()}
+	said := text
+	if a.pending != nil {
+		said = strings.TrimSpace(said + "\n\n[Waiting for the user's confirmation:\n" + a.pending.summary() + "]")
 	}
-	a.record("assistant", agent.Message{Content: reply, ReasoningContent: thinking})
+	a.record("assistant", agent.Message{Content: said, ReasoningContent: thinking})
 	a.memory.Add("user", userMessage)
-	a.memory.Add("assistant", reply)
+	a.memory.Add("assistant", said)
 	return reply
 }
+
+// Tidy does what can wait until a reply is out.
+func (a *Agent) Tidy() { a.memory.Tidy() }
 
 // ResetMemory clears conversation history and any pending action and begins a new
 // conversation (called on /start).

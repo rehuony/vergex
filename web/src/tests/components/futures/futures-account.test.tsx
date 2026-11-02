@@ -238,7 +238,7 @@ it('does not present a failed exchange read as an empty account', async () => {
   open()
   await screen.findByRole('alert')
   expect(
-    screen.queryByText('No open positions reported by this account.')
+    screen.queryByText('No open positions reported by this account')
   ).toBeNull()
   expect(screen.queryByRole('button', { name: 'Close position' })).toBeNull()
 })
@@ -531,7 +531,7 @@ it('offers only a way to add an account when there is none', () => {
       onRefresh={vi.fn().mockResolvedValue(undefined)}
     />
   )
-  expect(screen.getByText('No OKX account yet.')).toBeVisible()
+  expect(screen.getByText('No OKX account yet')).toBeVisible()
   expect(screen.getByRole('link', { name: 'Add an account' })).toHaveAttribute(
     'href',
     '?settings=accounts'

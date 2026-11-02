@@ -12,7 +12,7 @@ import {
 import { FuturesOrderBlocker } from '@/components/futures/futures-order-blocker'
 import { FuturesAccount } from '@/components/futures/futures-account'
 import {
-  accountLabel,
+  accountName as nameOfAccount,
   defaultMarket,
   preferredAccount as preferredTradingAccount,
   rememberAccount,
@@ -136,7 +136,7 @@ export function FuturesPage() {
     setPreferences,
   } = useFuturesData(setError, accountId)
   const account = accounts.find((a) => a.id === accountId)
-  const accountName = (row?: Account) => row && accountLabel(row, accounts)
+  const accountName = (row?: Account) => row && nameOfAccount(row, accounts)
   const records = useMemo(
     () => marketRecords(data, accountId, symbol, venue),
     [data, accountId, symbol, venue]
@@ -578,6 +578,7 @@ export function FuturesPage() {
           onNewIdea={newSession}
           messages={assistant.messages}
           trace={assistant.trace}
+          streaming={assistant.streaming}
           hasPlan={Boolean(current)}
           followRef={assistant.chatFollow}
           notices={

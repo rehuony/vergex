@@ -35,6 +35,10 @@
   --warning-bg: #fbf4e6;
   --warning-border: #ead7ac;
 
+  /* A QR code: dark on light in both themes, as cameras read it, so never overridden below */
+  --qr-ink: #1a1816;
+  --qr-ground: #ffffff;
+
   /* Elevation: flat elements have none; these are for layers that float */
   --scrim: rgba(26, 24, 22, 0.4);
   --shadow-float: 0 4px 16px rgba(26, 24, 22, 0.08);
@@ -190,6 +194,8 @@
   --color-vergex-on-ink: var(--on-ink);
   --color-vergex-ink-tint: var(--ink-tint);
   --color-vergex-ink-soft: var(--ink-soft);
+  --color-vergex-qr-ink: var(--qr-ink);
+  --color-vergex-qr-ground: var(--qr-ground);
   --color-vergex-muted: var(--muted);
   --color-vergex-faint: var(--faint);
   --color-vergex-success: var(--success);

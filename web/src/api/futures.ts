@@ -173,10 +173,10 @@ export async function futuresAPI<T>(
     if (action === 'close-position' && !r.ok) {
       const data = await r.json().catch(() => null)
       if (data?.close_state === 'not_submitted')
-        throw new CloseNotSubmittedError(data.error || 'No close was sent.')
+        throw new CloseNotSubmittedError(data.error || 'No close was sent')
       throw new Error(
         data?.error ||
-          'Close result is unconfirmed. Check the exchange before retrying.'
+          'Close result is unconfirmed. Check the exchange before retrying'
       )
     }
     return await handleJSONResponse<T>(r)
@@ -184,14 +184,14 @@ export async function futuresAPI<T>(
     if (controller.signal.aborted) {
       if (tradeAction)
         throw new Error(
-          'Order request timed out. Its result is unconfirmed. No automatic retry was made. Check Positions & orders and verify trade status before sending another request.'
+          'Order request timed out. Its result is unconfirmed. No automatic retry was made. Check Positions & orders and verify trade status before sending another request'
         )
       if (action === 'check-status')
         throw new Error(
-          'Trade status check timed out. The previous trade remains unverified. No new order was submitted by this check.'
+          'Trade status check timed out. The previous trade remains unverified. No new order was submitted by this check'
         )
       throw new Error(
-        'Request timed out. Check the account or service status before trying again. No automatic retry was made.'
+        'Request timed out. Check the account or service status before trying again. No automatic retry was made'
       )
     }
     throw error
@@ -247,7 +247,7 @@ export async function streamFutures(
       if (done) {
         if (!finished && !serverError)
           throw new Error(
-            'Planning connection ended without a result. No automatic retry was made; check the plan before retrying.'
+            'Planning connection ended without a result. No automatic retry was made; check the plan before retrying'
           )
         break
       }

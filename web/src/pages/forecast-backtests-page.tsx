@@ -34,6 +34,14 @@ import { t } from '@/i18n'
 import { cn } from '@/utils/cn'
 
 const CANCELED = 'canceled'
+const INTERRUPTED = 'interrupted by a restart'
+// A run that tested less than this share of what it asked for says so.
+const ENOUGH_OF_RANGE = 0.8
+
+const testedLess = (run: BacktestRun) =>
+  Boolean(run.tested_from && run.tested_to) &&
+  run.tested_to! - run.tested_from! <
+    (run.options.to - run.options.from) * ENOUGH_OF_RANGE
 
 // Past runs beside the report of the one opened, or the form for another. Each run in
 // the list shows its result, so runs can be compared at a glance. The address says which
@@ -69,10 +77,16 @@ export function ForecastBacktestsPage() {
     ) ?? false
   const running = list.some((run) => run.status === 'running')
   const wantsNew = askedRun === 'new' || (Boolean(askedStrategy) && !askedRun)
-  const current = wantsNew
-    ? undefined
-    : (list.find((run) => String(run.id) === askedRun) ?? list[0])
-  const showForm = wantsNew || (runs && list.length === 0)
+  const missingRun =
+    !wantsNew &&
+    Boolean(askedRun) &&
+    Boolean(runs) &&
+    !list.some((run) => String(run.id) === askedRun)
+  const current =
+    wantsNew || missingRun
+      ? undefined
+      : (list.find((run) => String(run.id) === askedRun) ?? list[0])
+  const showForm = wantsNew || (runs && list.length === 0 && !missingRun)
 
   const { data: whole } = useQuery({
     queryKey: ['forecast-backtest', current?.id],
@@ -89,8 +103,9 @@ export function ForecastBacktestsPage() {
     setParams({ run: 'new' }, { replace: true })
   }
   const started = async (run: BacktestRun) => {
-    open(run.id)
+    // In the list first, or it would read as a run that cannot be found.
     await refetch()
+    open(run.id)
   }
   const cancel = async (id: number) => {
     try {
@@ -150,6 +165,8 @@ export function ForecastBacktestsPage() {
       <SettingBadge tone={run.error === CANCELED ? 'muted' : 'danger'}>
         {label(run.error === CANCELED ? 'runCanceledShort' : 'runFailedShort')}
       </SettingBadge>
+    ) : testedLess(run) ? (
+      <SettingBadge>{label('testedLessShort')}</SettingBadge>
     ) : null
   const actionsFor = (run: BacktestRun): RailAction[] => [
     {
@@ -290,6 +307,12 @@ export function ForecastBacktestsPage() {
               onStarted={(run) => void started(run)}
               language={language}
             />
+          ) : missingRun ? (
+            <Panel className="flex-1">
+              <PanelState role="status">
+                {label('runNotFound', { id: askedRun ?? '' })}
+              </PanelState>
+            </Panel>
           ) : !current ? (
             <Panel className="flex-1">
               <PanelLoading />
@@ -321,8 +344,9 @@ export function ForecastBacktestsPage() {
                   className={cn('block truncate', renamingHere && 'invisible')}
                   title={coinsText(current)}
                 >
-                  {fmtDate(current.options.from)} –{' '}
-                  {fmtDate(current.options.to)} · {coinsText(current)}
+                  {fmtDate(current.tested_from ?? current.options.from)} –{' '}
+                  {fmtDate(current.tested_to ?? current.options.to)} ·{' '}
+                  {coinsText(current)}
                 </span>
               }
               actions={
@@ -399,9 +423,11 @@ export function ForecastBacktestsPage() {
                     </PanelState>
                   ) : (
                     <PanelState role="alert">
-                      {label('runFailedReason', {
-                        reason: current.error ?? '—',
-                      })}
+                      {current.error === INTERRUPTED
+                        ? label('runInterrupted')
+                        : label('runFailedReason', {
+                            reason: current.error ?? '—',
+                          })}
                     </PanelState>
                   )
                 ) : whole?.id === current.id && whole.report ? (

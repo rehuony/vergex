@@ -43,6 +43,8 @@ interface FuturesAssistantProps {
   onNewIdea: () => void
   messages: ChatMessage[]
   trace: ActivityItem[]
+  // The reply as the model writes it.
+  streaming: string
   hasPlan: boolean
   followRef: MutableRefObject<boolean>
   // The plans and the selected plan's details.
@@ -74,6 +76,7 @@ export function FuturesAssistant({
   onNewIdea,
   messages,
   trace,
+  streaming,
   hasPlan,
   followRef,
   plans,
@@ -122,6 +125,7 @@ export function FuturesAssistant({
         <AssistantThread
           messages={messages}
           trace={trace}
+          streaming={streaming}
           futuresBusy={futuresBusy}
           followRef={followRef}
         />

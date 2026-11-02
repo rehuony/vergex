@@ -104,7 +104,7 @@ export function OpenPositions({
   if (!positions) {
     return failed ? (
       <PanelState role="alert">
-        {[label('positionsFailed'), reason].filter(Boolean).join(' ')}
+        {[label('positionsFailed'), reason].filter(Boolean).join(': ')}
       </PanelState>
     ) : (
       <PanelLoading />

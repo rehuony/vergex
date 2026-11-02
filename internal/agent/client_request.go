@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"time"
 )
 
 // ============================================================
@@ -20,41 +19,9 @@ func (client *BaseClient) CallWithRequest(req *Request) (string, error) {
 		req.Model = client.Model
 	}
 
-	// Fixed retry flow
-	var lastErr error
-	maxRetries := client.Cfg.MaxRetries
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if attempt > 1 {
-			client.Log.Warnf("⚠️  model API call failed, retrying (%d/%d)...", attempt, maxRetries)
-		}
-
-		// Call single request
-		result, err := client.callWithRequest(req)
-		if err == nil {
-			if attempt > 1 {
-				client.Log.Infof("✓ model API retry succeeded")
-			}
-			return result, nil
-		}
-
-		lastErr = err
-		// Check if error is retryable
-		if !client.Hooks.IsRetryableError(err) {
-			return "", err
-		}
-
-		// Wait before retry
-		if attempt < maxRetries {
-			waitTime := client.Cfg.RetryWaitBase * time.Duration(attempt)
-			client.Log.Infof("⏳ Waiting %v before retry...", waitTime)
-			if err := sleepWithContext(contextFromRequest(req), waitTime); err != nil {
-				return "", err
-			}
-		}
-	}
-
-	return "", fmt.Errorf("still failed after %d retries: %w", maxRetries, lastErr)
+	return retrying(client, contextFromRequest(req), func() (string, error) {
+		return client.callWithRequest(req)
+	})
 }
 
 // CallWithRequestFull calls the model API and returns both text content and tool calls.
@@ -66,28 +33,9 @@ func (client *BaseClient) CallWithRequestFull(req *Request) (*Response, error) {
 		req.Model = client.Model
 	}
 
-	var lastErr error
-	maxRetries := client.Cfg.MaxRetries
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		if attempt > 1 {
-			client.Log.Warnf("⚠️  model API call failed, retrying (%d/%d)...", attempt, maxRetries)
-		}
-		result, err := client.callWithRequestFull(req)
-		if err == nil {
-			return result, nil
-		}
-		lastErr = err
-		if !client.Hooks.IsRetryableError(err) {
-			return nil, err
-		}
-		if attempt < maxRetries {
-			waitTime := client.Cfg.RetryWaitBase * time.Duration(attempt)
-			if err := sleepWithContext(contextFromRequest(req), waitTime); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return nil, fmt.Errorf("still failed after %d retries: %w", maxRetries, lastErr)
+	return retrying(client, contextFromRequest(req), func() (*Response, error) {
+		return client.callWithRequestFull(req)
+	})
 }
 
 // callWithRequestFull single call that returns Response (content + tool calls).
@@ -129,20 +77,6 @@ func (client *BaseClient) BuildRequestBodyFromRequest(req *Request) map[string]a
 			m["reasoning_content"] = msg.ReasoningContent
 		}
 		messages = append(messages, m)
-	}
-
-	// Guard: truncate messages if they would exceed the model's context window
-	maxOut := client.MaxTokens
-	if req.MaxTokens != nil {
-		maxOut = *req.MaxTokens
-	}
-	if client.Cfg.MaxContext > 0 {
-		truncated, removed := truncateMessagesAny(messages, client.Cfg.MaxContext, maxOut)
-		if removed > 0 {
-			client.Log.Warnf("⚠️  [%s] Context guard: truncated %d oldest messages to fit within %d token limit",
-				client.String(), removed, client.Cfg.MaxContext)
-			messages = truncated
-		}
 	}
 
 	// Build basic request body

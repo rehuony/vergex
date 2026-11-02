@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"time"
 
+	"vergex/internal/logger"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -106,6 +108,12 @@ func (s *Server) handleDecisionDetail(c *gin.Context) {
 	if record == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Decision not found"})
 		return
+	}
+	// A read of the cost that fails leaves it out, and the cycle is still worth showing.
+	if use, err := s.stores.Calls.ForConversation(record.ConversationID, time.Time{}); err != nil {
+		logger.Warnf("Read a decision's model calls: %v", err)
+	} else if use.Calls > 0 {
+		record.ModelUse = &use
 	}
 	c.JSON(http.StatusOK, record)
 }

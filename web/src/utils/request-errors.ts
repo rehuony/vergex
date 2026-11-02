@@ -36,6 +36,20 @@ export function formatRequestError(
 }
 import { t, type Language } from '@/i18n'
 
+// What a failed step of a streamed request says: the server's code in the user's language
+// with the provider's own line after it, or the server's words where it gave no code.
+export function eventErrorText(
+  data: Record<string, unknown>,
+  language: Language
+): string {
+  const key = typeof data.error_key === 'string' ? data.error_key : ''
+  const words = key ? t(key, language) : key
+  if (!key || words === key) return formatRequestError(data.message, language)
+  return typeof data.detail === 'string' && data.detail
+    ? `${words} (${data.detail})`
+    : words
+}
+
 // What the server said in the user's language, where it gave a code the interface has
 // wording for, and in the server's own words otherwise.
 export function codedText(

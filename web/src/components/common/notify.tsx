@@ -2,9 +2,12 @@ import { toast } from 'sonner'
 import type { ReactNode } from 'react'
 
 export interface ConfirmOptions {
-  title?: string
+  /** The action, as the button that opened this names it. */
+  title: string
+  /** What it does, which the title does not already say. */
   message?: string
-  okText?: string
+  /** Usually the title again, so the answer says what it does. */
+  okText: string
   cancelText?: string
   /** 'danger' paints the confirm button red for destructive actions. */
   tone?: 'danger'
@@ -24,7 +27,7 @@ export function setGlobalConfirm(
 // Confirmation dialog function, uses shadcn AlertDialog
 export function confirmToast(
   message: string,
-  options: ConfirmOptions = {}
+  options: ConfirmOptions
 ): Promise<boolean> {
   if (!globalConfirm) {
     console.error('ConfirmDialogProvider not initialized')

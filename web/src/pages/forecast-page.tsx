@@ -413,8 +413,7 @@ export function ForecastPage() {
               />
               <RecordList
                 signals={current?.signals ?? []}
-                hits={current?.stats.hits ?? 0}
-                misses={current?.stats.misses ?? 0}
+                stats={current?.stats}
                 language={language}
                 className="flex h-[440px] flex-col overflow-hidden"
               />

@@ -34,6 +34,19 @@ describe('locales', () => {
     }
   })
 
+  it('end what they say without a full stop', () => {
+    const faq = (language: 'en' | 'zh-CN') =>
+      leaves(faqCategories(language) as object)
+    for (const [key, text] of [
+      ...english,
+      ...chinese,
+      ...faq('en'),
+      ...faq('zh-CN'),
+    ]) {
+      expect(/(?<!\.)\.$|。$/.test(text), `${key}: ${text}`).toBe(false)
+    }
+  })
+
   it('answer the same questions in the same shape', () => {
     const shape = (language: 'en' | 'zh-CN') =>
       faqCategories(language).map((category) => [

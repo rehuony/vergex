@@ -116,7 +116,7 @@ func GetFullDecision(ctx *Context, agentClient agent.Client, engine *Engine, var
 			AgentDurationMs: agentCallDuration.Milliseconds(),
 			ConversationID:  conversationID,
 			Timestamp:       time.Now(),
-		}, fmt.Errorf("model API call failed: %w", err)
+		}, fmt.Errorf("model API call failed: %w", agent.Classify(agentClient, err))
 	}
 
 	// 5. Parse model response
@@ -142,6 +142,9 @@ func GetFullDecision(ctx *Context, agentClient agent.Client, engine *Engine, var
 	}
 
 	if err != nil {
+		if response.FinishReason == "length" || response.FinishReason == "max_tokens" {
+			return decision, fmt.Errorf("the model's reply was cut off at its length limit before it finished; raise VERGEX_AGENT_MAX_TOKENS or ask for less: %w", err)
+		}
 		return decision, fmt.Errorf("failed to parse model response: %w", err)
 	}
 

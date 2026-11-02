@@ -1,7 +1,9 @@
-import type {
-  BacktestMetrics,
-  BacktestReport,
-  FactorEdge,
+import {
+  ENOUGH_MOMENTS,
+  tooFewMoments,
+  type BacktestMetrics,
+  type BacktestReport,
+  type FactorEdge,
 } from '@/api/forecast'
 import {
   cellClass,
@@ -25,11 +27,12 @@ const pct = (value: number) => `${(value * 100).toFixed(1)}%`
 
 // Returns are only known where a call was made.
 const afterFees = (metrics: BacktestMetrics) =>
-  fmtPct(metrics.signals > 0 ? metrics.avg_return_after_fee_pct : 0, true)
+  metrics.signals > 0 ? fmtPct(metrics.avg_return_after_fee_pct, true) : '—'
 
 const metricsRow = (name: string, metrics: BacktestMetrics): BreakdownRow => ({
   name,
   samples: metrics.samples,
+  moments: metrics.moments || null,
   hit: metrics.hit_rate,
   chance: metrics.chance_rate,
   lift: metrics.lift,
@@ -38,6 +41,14 @@ const metricsRow = (name: string, metrics: BacktestMetrics): BreakdownRow => ({
 
 const sortedRows = (group: Record<string, BacktestMetrics>) =>
   Object.entries(group).sort(([a], [b]) => a.localeCompare(b))
+
+// The reasons a series can be skipped for, as the server words them. Anything else is
+// passed on as it came.
+const SKIP_REASONS: Record<string, string> = {
+  'not enough history': 'skipNoHistory',
+  'no horizon set': 'skipNoHorizon',
+  'unsupported interval': 'skipBadInterval',
+}
 
 const correlationText = (edge: FactorEdge) => {
   const correlation = edge.correlation ?? 0
@@ -55,10 +66,19 @@ export function BacktestReportView({
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`forecast.${key}`, language, params)
   const { overall } = report
+  const skippedItem = (item: string) => {
+    const split = item.indexOf(': ')
+    const reason = SKIP_REASONS[item.slice(split + 2)]
+    return split > 0 && reason
+      ? `${item.slice(0, split)}: ${label(reason)}`
+      : item
+  }
   const skipped =
     (report.skipped?.length ?? 0) > 0 ? (
       <p className="border-t border-vergex-line px-4 py-3 text-xs text-vergex-muted">
-        {label('skippedSeries', { items: report.skipped!.join('; ') })}
+        {label('skippedSeries', {
+          items: report.skipped!.map(skippedItem).join('; '),
+        })}
       </p>
     ) : null
 
@@ -89,12 +109,20 @@ export function BacktestReportView({
             name: label('afterFeesShort'),
             value: afterFees(overall),
             note: label('perSignal'),
-            gain: overall.signals > 0 ? overall.avg_return_after_fee_pct : null,
+            gain:
+              overall.signals > 0 && !tooFewMoments(overall.moments)
+                ? overall.avg_return_after_fee_pct
+                : null,
           },
           {
             name: label('samples'),
             value: overall.samples,
-            note: label('signalCount', { count: overall.signals }),
+            note: [
+              label('signalCount', { count: overall.signals }),
+              ...(overall.moments
+                ? [label('momentsCount', { count: overall.moments })]
+                : []),
+            ].join(' · '),
           },
         ]}
       />
@@ -113,6 +141,8 @@ export function BacktestReportView({
       <BreakdownTable
         head={{
           samples: label('samples'),
+          moments: label('momentsHead'),
+          tooFew: label('tooFewMoments', { count: ENOUGH_MOMENTS }),
           hit: label('hitRate'),
           chance: label('chanceRate'),
           lift: label('lift'),

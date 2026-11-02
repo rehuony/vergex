@@ -311,7 +311,7 @@ var resetTables = []string{
 	"futures.account_closes", "futures.run_orders", "futures.runs", "futures.plans", "futures.calculators",
 	"trader.decisions", "trader.cycles", "trader.position_peaks", "trader.equity_snapshots", "trader.traders",
 	"account.skipped_fills", "account.fills", "account.positions", "account.orders", "account.leases", "core.users", "agent.models", "agent.calls", "agent.conversations", "agent.messages", "account.accounts",
-	"telegram.bot", "telegram.alert_marks",
+	"telegram.bot", "telegram.alert_marks", "telegram.visitors",
 }
 
 const resetUserWarning = `This wipes Vergex back to a fresh install. It permanently deletes:
