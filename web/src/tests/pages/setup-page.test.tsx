@@ -30,7 +30,7 @@ describe('first-time setup', () => {
 
     expect(screen.queryByText(/Advanced Mode/i)).toBeNull()
     expect(
-      screen.queryByText(/configure models, wallets, and exchanges/i)
+      screen.queryByText(/configure models, wallets, and accounts/i)
     ).toBeNull()
   })
 

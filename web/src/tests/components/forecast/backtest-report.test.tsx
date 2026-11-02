@@ -1,11 +1,7 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, expect, it } from 'vitest'
 import type { BacktestMetrics, BacktestReport } from '@/api/forecast'
-import {
-  BacktestReportView,
-  hasEdge,
-  hitRateText,
-} from '@/components/forecast/backtest-report'
+import { BacktestReportView } from '@/components/forecast/backtest-report'
 
 afterEach(cleanup)
 
@@ -15,8 +11,10 @@ const metrics = (patch: Partial<BacktestMetrics> = {}): BacktestMetrics => ({
   hits: 40,
   misses: 40,
   hit_rate: 0.5,
+  chance_rate: 0.5,
   baseline_up: 0.5,
   brier: 0.25,
+  brier_candles: 0.25,
   baseline_brier: 0.25,
   lift: 0,
   avg_return_pct: 0,
@@ -39,27 +37,22 @@ const report = (overall: BacktestMetrics): BacktestReport => ({
   last_time: 2,
 })
 
-it('only claims an edge that beats the base rate and pays after fees', () => {
-  expect(hasEdge(metrics({ lift: 0.02, avg_return_after_fee_pct: 0.1 }))).toBe(
-    true
-  )
-  expect(hasEdge(metrics({ lift: 0.02, avg_return_after_fee_pct: -0.1 }))).toBe(
-    false
-  )
-  expect(hasEdge(metrics({ lift: -0.02, avg_return_after_fee_pct: 0.1 }))).toBe(
-    false
-  )
-})
-
-it('leads with the verdict and shows a missing hit rate as a dash', () => {
+it('shows a missing hit rate as a dash', () => {
   render(
     <BacktestReportView
-      id={3}
-      report={report(metrics({ lift: -0.1 }))}
+      report={report(metrics({ lift: -0.1, hit_rate: null }))}
       language="en"
     />
   )
-  expect(screen.getByText(/^No edge/)).toBeVisible()
-  expect(screen.getByText('Run 3')).toBeVisible()
-  expect(hitRateText(metrics({ hit_rate: null }))).toBe('—')
+  expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+})
+
+it('shows no return where no call was made', () => {
+  render(
+    <BacktestReportView
+      report={report(metrics({ signals: 0, hit_rate: null }))}
+      language="en"
+    />
+  )
+  expect(screen.queryByText('-0.10%')).toBeNull()
 })

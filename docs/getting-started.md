@@ -16,8 +16,8 @@ The first run creates `.env` from `.env.example`, generates `JWT_SECRET`, `DATA_
 | :------ | :----------- |
 | `make status` | Container state and the health endpoint |
 | `make logs SERVICE=vergex-backend` | Follow the backend log |
-| `make down` | Stop and remove the containers; the database volume and `data/` are kept |
-| `make regen-keys` | Regenerate all keys. Stored exchange and model keys become unreadable |
+| `make down` | Stop and remove the containers; the database volume is kept |
+| `make regen-keys` | Regenerate all keys. Stored account and model keys become unreadable |
 
 ## Run from source
 
@@ -35,16 +35,16 @@ make dev           # PostgreSQL from .env, backend on :3000, frontend on :8000 w
 
 The interface is in English or Simplified Chinese. It follows your browser until you choose one from the account menu.
 
-1. **Create the account.** The first registered user is the only user of the instance.
-2. **Add a model** in Settings → Models: see [models.md](models.md).
-3. **Add an exchange account** in Settings → Exchanges: see [exchanges.md](exchanges.md).
-4. **Plan a trade** in [Frontier](frontier.md), which asks for your approval on every order, or create a [strategy and a trader](traders.md), which places orders on its own once started.
+1. **Create the user.** The first registered user is the only user of the instance.
+2. **Add a model** in Settings → Agent models: see [models.md](models.md).
+3. **Add an account** in Settings → Trading accounts: see [accounts.md](accounts.md).
+4. **Plan a trade** in [Futures](futures.md), which asks for your approval on every order, or create a [trader](traders.md), which places orders on its own once started.
 
 Stopping the service does not close positions. Check the exchange after a restart.
 
 ## Configuration
 
-Settings come from `.env`; `.env.example` documents each one. Models, exchange accounts, traders and strategies are stored in the database and edited in the web UI.
+Settings come from `.env`; `.env.example` documents each one. Models, accounts and traders are stored in the database and edited in the web UI.
 
 | Setting | Default | Notes |
 | :------ | :------ | :---- |
@@ -54,24 +54,24 @@ Settings come from `.env`; `.env.example` documents each one. Models, exchange a
 | `TRANSPORT_ENCRYPTION` | `false` | Encrypt API keys in the browser before sending; needs HTTPS or localhost |
 | `CORS_ALLOWED_ORIGINS` | localhost origins | Only needed when the UI is served from another origin |
 
-The schema is migrated automatically at startup, by the SQL files in `internal/store/database/migrations`. Migrations only go forward: see [database.md](database.md).
+The schema is migrated automatically at startup, by the SQL files in `internal/database/migrations`. Migrations only go forward: see [database.md](database.md).
 
 ## Data and backups
 
-Relational data lives in PostgreSQL, in the `vergex-postgres` Docker volume. `data/` holds daily logs (`vergex_YYYY-MM-DD.log`), the cached model price list and Frontier's entry calculators. Back up the database with:
+Everything the backend keeps lives in PostgreSQL, in the `vergex-postgres` Docker volume; it writes no files. Logs go to standard output, so `make logs` shows them, and they last as long as the container. Back up the database with:
 
 ```bash
 docker exec vergex-postgres pg_dump -U vergex vergex > vergex.sql
 ```
 
-Exchange and model keys and the Telegram bot token are stored AES-encrypted with `DATA_ENCRYPTION_KEY`, so back up `.env`, `data/` and the database together and protect both.
+Account and model keys and the Telegram bot token are stored AES-encrypted with `DATA_ENCRYPTION_KEY`, so back up `.env` and the database together and protect both.
 
 What the models were sent and what they said is kept in `agent.messages` and never cleaned up automatically, not even when a trader is deleted, so keep an eye on the disk. These figures are estimates:
 
 | From | Growth |
 | :--- | :----- |
 | A trader | 10–22 KB a cycle. For one trader, 0.35–0.74 GB a year at the default 15-minute interval, 1.7–3.7 GB a year at 3 minutes |
-| Frontier | About 39 KB of workspace and market data per turn, plus the words and tool results |
+| Futures | About 39 KB of workspace and market data per turn, plus the words and tool results |
 | Telegram | Not measured |
 
 To see its current size:
@@ -80,13 +80,13 @@ To see its current size:
 docker exec vergex-postgres psql -U vergex -d vergex -c "SELECT pg_size_pretty(pg_total_relation_size('agent.messages'))"
 ```
 
-## Account recovery
+## User recovery
 
 Recovery is only available on the host, never over HTTP:
 
 ```bash
 docker exec -it vergex-backend ./vergex reset-password --email you@example.com
-docker exec -it vergex-backend ./vergex reset-account
+docker exec -it vergex-backend ./vergex reset-user
 ```
 
-`reset-account` permanently deletes the account and its data. From source, run the same subcommands with `go run ./cmd/vergex`.
+`reset-user` permanently deletes the user and their data. From source, run the same subcommands with `go run ./cmd/vergex`.

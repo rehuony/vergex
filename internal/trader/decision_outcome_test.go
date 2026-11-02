@@ -3,10 +3,10 @@ package trader
 import (
 	"errors"
 	"testing"
-	"vergex/internal/store"
+	"vergex/internal/account"
 )
 
-type rejectedAuthorizationTrader struct{ Trader }
+type rejectedAuthorizationTrader struct{ account.Trading }
 
 func (*rejectedAuthorizationTrader) CheckTradingAuthorization() error {
 	return errors.New("agent mismatch")
@@ -27,17 +27,17 @@ func TestCycleChecksAuthorizationBeforeFetchingDataOrCallingAgent(t *testing.T) 
 func TestDecisionExecutionOutcome(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
-		actions       []store.DecisionAction
+		actions       []DecisionAction
 		initial, want bool
 	}{
-		{"hold only", []store.DecisionAction{{Action: "hold", Success: true}}, true, true},
-		{"all failed with hold", []store.DecisionAction{{Action: "open_long"}, {Action: "close_long"}, {Action: "hold", Success: true}}, true, false},
-		{"partial failure", []store.DecisionAction{{Action: "open_long", Success: true}, {Action: "close_long"}}, true, false},
-		{"filled", []store.DecisionAction{{Action: "open_long", Success: true}}, true, true},
+		{"hold only", []DecisionAction{{Action: "hold", Success: true}}, true, true},
+		{"all failed with hold", []DecisionAction{{Action: "open_long"}, {Action: "close_long"}, {Action: "hold", Success: true}}, true, false},
+		{"partial failure", []DecisionAction{{Action: "open_long", Success: true}, {Action: "close_long"}}, true, false},
+		{"filled", []DecisionAction{{Action: "open_long", Success: true}}, true, true},
 		{"preserve upstream fault", nil, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			record := &store.DecisionRecord{Success: tc.initial, Decisions: tc.actions}
+			record := &DecisionRecord{Success: tc.initial, Decisions: tc.actions}
 			summarizeDecisionExecution(record)
 			if record.Success != tc.want {
 				t.Fatalf("record=%+v", record)

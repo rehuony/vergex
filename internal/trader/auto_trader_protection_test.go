@@ -3,16 +3,16 @@ package trader
 import (
 	"errors"
 	"testing"
-	"vergex/internal/trading"
+	"vergex/internal/account"
 )
 
 type emergencyCloseTestTrader struct {
-	trading.Trader
+	account.Trading
 	closeCalls    int
 	invalidations int
 	cancelCalls   int
 	positions     []map[string]interface{}
-	openOrders    []trading.OpenOrder
+	openOrders    []account.OpenOrder
 	cancelErr     error
 }
 
@@ -34,7 +34,7 @@ func (t *emergencyCloseTestTrader) CancelAllOrders(string) error {
 	t.cancelCalls++
 	return t.cancelErr
 }
-func (t *emergencyCloseTestTrader) GetOpenOrders(string) ([]trading.OpenOrder, error) {
+func (t *emergencyCloseTestTrader) GetOpenOrders(string) ([]account.OpenOrder, error) {
 	return t.openOrders, nil
 }
 
@@ -75,7 +75,7 @@ func TestEmergencyCloseUsesFreshPositionsAndVerifiesOrderCleanup(t *testing.T) {
 }
 
 func TestEmergencyCloseFailsIfProtectionOrdersRemain(t *testing.T) {
-	fake := &emergencyCloseTestTrader{openOrders: []trading.OpenOrder{{Symbol: "BTCUSDT"}}}
+	fake := &emergencyCloseTestTrader{openOrders: []account.OpenOrder{{Symbol: "BTCUSDT"}}}
 	at := &AutoTrader{trader: fake}
 	if err := at.emergencyClosePositionAndVerify("BTCUSDT", "long", 1); err == nil {
 		t.Fatal("expected remaining order to fail closed")

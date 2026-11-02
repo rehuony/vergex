@@ -1,7 +1,7 @@
 // Package pricing estimates model call costs from token usage using the public
 // models.dev price catalog (USD per million tokens).
 //
-// The catalog is cached on disk, loaded at startup and refreshed in the
+// The catalog is cached in core.settings, loaded at startup and refreshed in the
 // background every 24 hours. A failed download keeps the previous cache, so
 // cost estimation never blocks trading. Models that cannot be matched are
 // reported as unpriced instead of guessing a value.
@@ -14,14 +14,15 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"gorm.io/gorm"
+
+	"vergex/internal/database"
 	"vergex/internal/logger"
-	"vergex/internal/servicestate"
+	"vergex/internal/service"
 )
 
 const (
@@ -29,8 +30,8 @@ const (
 	SourceURL = "https://models.dev/api.json"
 	// RefreshInterval is how often the catalog is re-downloaded.
 	RefreshInterval = 24 * time.Hour
-	// CacheFileName is the cache file stored in the data directory.
-	CacheFileName = "model-pricing.json"
+	// settingsModule is the row in core.settings holding the cached catalog.
+	settingsModule = "agent_pricing"
 
 	longContextThreshold = 200_000
 	maxCatalogBytes      = 64 << 20
@@ -77,7 +78,7 @@ func (c Cost) Estimate(u Usage) float64 {
 // Catalog maps a models.dev provider id to its model prices.
 type Catalog map[string]map[string]Cost
 
-type cacheFile struct {
+type cachedCatalog struct {
 	FetchedAt time.Time `json:"fetched_at"`
 	Providers Catalog   `json:"providers"`
 }
@@ -198,15 +199,15 @@ type Service struct {
 	mu        sync.RWMutex
 	catalog   Catalog
 	fetchedAt time.Time
-	cachePath string
+	db        *gorm.DB
 	sourceURL string
 	client    *http.Client
 }
 
-// NewService creates a service caching the catalog under dataDir.
-func NewService(dataDir string) *Service {
+// NewService creates a service caching the catalog in the database.
+func NewService(db *gorm.DB) *Service {
 	return &Service{
-		cachePath: filepath.Join(dataDir, CacheFileName),
+		db:        db,
 		sourceURL: SourceURL,
 		client:    &http.Client{Timeout: 60 * time.Second},
 	}
@@ -231,15 +232,12 @@ func (s *Service) Estimate(provider, baseURL, model string, usage Usage) (float6
 	return cost.Estimate(usage), true
 }
 
-// LoadCache loads the on-disk cache, if present.
+// LoadCache loads the cached catalog, if present.
 func (s *Service) LoadCache() error {
-	data, err := os.ReadFile(s.cachePath)
-	if err != nil {
+	var cache cachedCatalog
+	found, err := database.LoadSetting(s.db, settingsModule, &cache)
+	if err != nil || !found {
 		return err
-	}
-	var cache cacheFile
-	if err := json.Unmarshal(data, &cache); err != nil {
-		return fmt.Errorf("decode pricing cache: %w", err)
 	}
 	s.mu.Lock()
 	s.catalog = cache.Providers
@@ -277,18 +275,7 @@ func (s *Service) Refresh(ctx context.Context) error {
 	s.fetchedAt = now
 	s.mu.Unlock()
 
-	encoded, err := json.Marshal(cacheFile{FetchedAt: now, Providers: catalog})
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(s.cachePath), 0o755); err != nil {
-		return err
-	}
-	tmp := s.cachePath + ".tmp"
-	if err := os.WriteFile(tmp, encoded, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.cachePath)
+	return database.PatchSetting(s.db, settingsModule, map[string]any{"fetched_at": now, "providers": catalog})
 }
 
 func (s *Service) age() time.Duration {
@@ -303,10 +290,10 @@ func (s *Service) age() time.Duration {
 // Start loads the cache and refreshes the catalog in the background until
 // ctx is cancelled.
 func (s *Service) Start(ctx context.Context) {
-	if err := s.LoadCache(); err != nil && !os.IsNotExist(err) {
+	if err := s.LoadCache(); err != nil {
 		logger.Warnf("⚠️ Failed to load model pricing cache: %v", err)
 	}
-	servicestate.Set(servicestate.AgentPricing, servicestate.Running, "")
+	service.Report(service.AgentPricing, service.Running, "")
 	go func() {
 		wait := RefreshInterval - s.age()
 		if wait < 0 {
@@ -320,12 +307,12 @@ func (s *Service) Start(ctx context.Context) {
 			}
 			if err := s.Refresh(ctx); err != nil {
 				logger.Warnf("⚠️ Failed to refresh model pricing from models.dev (keeping previous prices): %v", err)
-				servicestate.Set(servicestate.AgentPricing, servicestate.Degraded, "Keeping the previous prices")
+				service.Report(service.AgentPricing, service.Degraded, "Keeping the previous prices")
 				wait = time.Hour
 				continue
 			}
 			logger.Infof("💲 model pricing catalog refreshed from models.dev")
-			servicestate.Set(servicestate.AgentPricing, servicestate.Running, "")
+			service.Report(service.AgentPricing, service.Running, "")
 			wait = RefreshInterval
 		}
 	}()

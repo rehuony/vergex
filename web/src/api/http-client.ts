@@ -153,6 +153,7 @@ export class HttpClient {
       // Clean up
       localStorage.removeItem('auth_token')
       localStorage.removeItem('auth_user')
+      localStorage.removeItem('user_id')
 
       // Notify global listeners
       window.dispatchEvent(new Event('unauthorized'))

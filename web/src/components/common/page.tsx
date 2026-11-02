@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
@@ -36,8 +36,19 @@ interface PageProps {
 function PageTabs({ tabs }: { tabs: PageTab[] }) {
   const { pathname } = useLocation()
   const { language } = useLanguage()
+  const nav = useRef<HTMLElement>(null)
+  // On a narrow screen the current section can sit past the strip's edge.
+  useEffect(() => {
+    nav.current
+      ?.querySelector('[aria-current="page"]')
+      ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
+  }, [pathname])
   return (
-    <nav className="vergex-page-tabs" aria-label={t('pageSections', language)}>
+    <nav
+      ref={nav}
+      className="vergex-page-tabs"
+      aria-label={t('pageSections', language)}
+    >
       {tabs.map((tab) =>
         tab.isActive ? (
           <Link

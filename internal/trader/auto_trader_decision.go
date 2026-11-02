@@ -6,20 +6,21 @@ import (
 	"github.com/shopspring/decimal"
 	"math"
 	"time"
-	"vergex/internal/exchange/okx"
+	"vergex/internal/account"
 	"vergex/internal/logger"
 	"vergex/internal/market/instrument"
-	"vergex/internal/store"
-	"vergex/internal/trader/agent"
+	traderagent "vergex/internal/trader/agent"
+	"vergex/internal/trader/kind"
+	"vergex/internal/venue/okx"
 )
 
 // saveEquitySnapshot saves equity snapshot independently (for drawing profit curve, decoupled from agent decision)
-func (at *AutoTrader) saveEquitySnapshot(ctx *agent.Context) {
-	if at.store == nil || ctx == nil {
+func (at *AutoTrader) saveEquitySnapshot(ctx *traderagent.Context) {
+	if at.stores == nil || ctx == nil {
 		return
 	}
 
-	snapshot := &store.EquitySnapshot{
+	snapshot := &EquitySnapshot{
 		TraderID:         at.id,
 		Timestamp:        time.Now().UTC(),
 		TotalEquity:      ctx.Account.TotalEquity,
@@ -30,7 +31,7 @@ func (at *AutoTrader) saveEquitySnapshot(ctx *agent.Context) {
 		MarginUsedPct:    ctx.Account.MarginUsedPct,
 	}
 
-	if err := at.store.Equity().Save(snapshot); err != nil {
+	if err := at.stores.Equity.Save(snapshot); err != nil {
 		logger.Infof("⚠️ Failed to save equity snapshot: %v", err)
 	}
 }
@@ -40,15 +41,16 @@ func (at *AutoTrader) saveEquitySnapshot(ctx *agent.Context) {
 const cycleSaveWait = 5 * time.Second
 
 // saveDecision saves agent decision log to database (only records agent input/output, for debugging)
-func (at *AutoTrader) saveDecision(record *store.DecisionRecord) error {
+func (at *AutoTrader) saveDecision(record *DecisionRecord) error {
 	summarizeDecisionExecution(record)
-	if at.store == nil {
+	if at.stores == nil {
 		return nil
 	}
 
 	at.cycleNumber++
 	record.CycleNumber = at.cycleNumber
 	record.TraderID = at.id
+	record.Limits = at.limits()
 
 	if record.Timestamp.IsZero() {
 		record.Timestamp = time.Now().UTC()
@@ -56,7 +58,7 @@ func (at *AutoTrader) saveDecision(record *store.DecisionRecord) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), cycleSaveWait)
 	defer cancel()
-	if err := at.store.Decision().WithContext(ctx).LogDecision(record); err != nil {
+	if err := at.stores.Decisions.WithContext(ctx).LogDecision(record); err != nil {
 		logger.Infof("⚠️ Failed to save decision record: %v", err)
 		return err
 	}
@@ -65,7 +67,7 @@ func (at *AutoTrader) saveDecision(record *store.DecisionRecord) error {
 	return nil
 }
 
-func summarizeDecisionExecution(record *store.DecisionRecord) {
+func summarizeDecisionExecution(record *DecisionRecord) {
 	failed, attempted := 0, 0
 	for _, action := range record.Decisions {
 		if action.Action == "hold" || action.Action == "wait" {
@@ -99,7 +101,7 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"trader_id":       at.id,
 		"trader_name":     at.name,
 		"agent_model":     at.agentModel,
-		"exchange":        at.exchange,
+		"venue":           at.venue,
 		"is_running":      isRunning,
 		"start_time":      at.startTime.Format(time.RFC3339),
 		"runtime_minutes": int(time.Since(at.startTime).Minutes()),
@@ -111,12 +113,12 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"agent_provider":  agentProvider,
 	}
 
-	// Add strategy info
-	if at.config.StrategyConfig != nil {
-		result["strategy_type"] = at.config.StrategyConfig.StrategyType
-		if at.config.StrategyConfig.GridConfig != nil {
-			result["grid_symbol"] = at.config.StrategyConfig.GridConfig.Symbol
-		}
+	// Add what kind of trader it is
+	if at.config.Grid != nil {
+		result["kind"] = kind.Grid
+		result["grid_symbol"] = at.config.Grid.Symbol
+	} else {
+		result["kind"] = kind.Agent
 	}
 
 	// Runtime health: safe mode + agent fee wallet, so the dashboard can show a
@@ -233,54 +235,6 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 	}, nil
 }
 
-// GetPositions gets position list (for API)
-func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
-	positions, err := at.trader.GetPositions()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get positions: %w", err)
-	}
-
-	var result []map[string]interface{}
-	for _, pos := range positions {
-		symbol := pos["symbol"].(string)
-		side := pos["side"].(string)
-		entryPrice := pos["entryPrice"].(float64)
-		markPrice := pos["markPrice"].(float64)
-		quantity := pos["positionAmt"].(float64)
-		if quantity < 0 {
-			quantity = -quantity
-		}
-		unrealizedPnl := pos["unRealizedProfit"].(float64)
-		liquidationPrice := pos["liquidationPrice"].(float64)
-
-		leverage := 10
-		if lev, ok := pos["leverage"].(float64); ok {
-			leverage = int(lev)
-		}
-
-		// Calculate margin used
-		marginUsed := (quantity * markPrice) / float64(leverage)
-
-		// Calculate P&L percentage (based on margin)
-		pnlPct := calculatePnLPercentage(unrealizedPnl, marginUsed)
-
-		result = append(result, map[string]interface{}{
-			"symbol":             symbol,
-			"side":               side,
-			"entry_price":        entryPrice,
-			"mark_price":         markPrice,
-			"quantity":           quantity,
-			"leverage":           leverage,
-			"unrealized_pnl":     unrealizedPnl,
-			"unrealized_pnl_pct": pnlPct,
-			"liquidation_price":  liquidationPrice,
-			"margin_used":        marginUsed,
-		})
-	}
-
-	return result, nil
-}
-
 // recordOrder puts a placed order in the ledger, with what only placing it knows: who
 // placed it, why, and at what leverage. Its fills reach the ledger through the account's
 // sync, whichever gets there first. A failure is only logged: the order is already on
@@ -288,7 +242,7 @@ func (at *AutoTrader) GetPositions() ([]map[string]interface{}, error) {
 // ID in the ledger, or 0 without one.
 // action: open_long, open_short, close_long, close_short
 func (at *AutoTrader) recordOrder(orderResult map[string]interface{}, symbol, action string, quantity float64, leverage int) int64 {
-	if at.store == nil {
+	if at.stores == nil {
 		return 0
 	}
 	orderID := orderIDOf(orderResult["orderId"])
@@ -298,26 +252,26 @@ func (at *AutoTrader) recordOrder(orderResult map[string]interface{}, symbol, ac
 	}
 	clientOrderID, _ := orderResult["clientOrderId"].(string)
 
-	order := store.LedgerOrder{
-		AccountID:       at.exchangeID,
-		Source:          store.SourceTrader,
+	order := account.LedgerOrder{
+		AccountID:       at.accountID,
+		Source:          account.SourceTrader,
 		SourceID:        at.id,
-		Role:            store.RoleEntry,
+		Role:            account.RoleEntry,
 		ExchangeOrderID: orderID,
 		ClientOrderID:   clientOrderID,
-		Side:            store.SideBuy,
-		PositionSide:    store.SideLong,
+		Side:            account.SideBuy,
+		PositionSide:    account.SideLong,
 		Type:            "MARKET",
-		Status:          store.OrderNew,
+		Status:          account.OrderNew,
 		Quantity:        decimal.NewFromFloat(quantity),
 	}
 	switch action {
 	case "open_short":
-		order.Side, order.PositionSide = store.SideSell, store.SideShort
+		order.Side, order.PositionSide = account.SideSell, account.SideShort
 	case "close_long":
-		order.Role, order.Side, order.ReduceOnly = store.RoleClose, store.SideSell, true
+		order.Role, order.Side, order.ReduceOnly = account.RoleClose, account.SideSell, true
 	case "close_short":
-		order.Role, order.PositionSide, order.ReduceOnly = store.RoleClose, store.SideShort, true
+		order.Role, order.PositionSide, order.ReduceOnly = account.RoleClose, account.SideShort, true
 	}
 	if leverage > 0 {
 		order.Leverage = &leverage
@@ -347,25 +301,20 @@ func orderIDOf(value interface{}) string {
 }
 
 func (at *AutoTrader) marginMode() string {
-	return store.MarginModeOf(at.config.IsCrossMargin)
+	return MarginModeOf(at.config.IsCrossMargin)
 }
 
 // saveOrder records an order on the instrument a symbol names on this trader's venue.
-func (at *AutoTrader) saveOrder(order *store.LedgerOrder, symbol string) error {
+func (at *AutoTrader) saveOrder(order *account.LedgerOrder, symbol string) error {
 	symbol = instrument.Normalize(symbol)
 	native := symbol
-	if at.exchange == "okx" {
+	if at.venue == "okx" {
 		native = okx.InstrumentID(symbol)
 	}
-	instrumentID, err := instrument.Ensure(at.store.GormDB(), at.exchange, instrument.KindPerpetual, symbol, native)
+	instrumentID, err := instrument.Ensure(at.stores.DB, at.venue, instrument.KindPerpetual, symbol, native)
 	if err != nil {
 		return err
 	}
 	order.InstrumentID = instrumentID
-	return at.store.Ledger().RecordOrder(order)
-}
-
-// GetOpenOrders returns open orders (pending SL/TP) from exchange
-func (at *AutoTrader) GetOpenOrders(symbol string) ([]OpenOrder, error) {
-	return at.trader.GetOpenOrders(symbol)
+	return at.stores.Ledger.RecordOrder(order)
 }

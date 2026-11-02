@@ -5,8 +5,8 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"vergex/internal/account"
 	"vergex/internal/market"
-	"vergex/internal/trading"
 )
 
 // fakeMarks is the live mark prices the monitor sees.
@@ -42,7 +42,7 @@ func (f *fakeMarks) set(symbol string, price float64) {
 // fakeHolder holds one position on an imaginary exchange. Embedding the interface
 // makes any call the monitor should not make panic.
 type fakeHolder struct {
-	trading.Trader
+	account.Trading
 	mark   float64
 	failed bool
 	reads  int
@@ -73,7 +73,7 @@ func monitorFixture(t *testing.T) (*AutoTrader, *fakeHolder, *fakeMarks) {
 	market.SetLiveSource(marks)
 	t.Cleanup(func() { market.SetLiveSource(noLiveSource{}) })
 	holder := &fakeHolder{mark: 102}
-	return &AutoTrader{exchange: "binance", trader: holder, peakPnLCache: map[string]float64{}}, holder, marks
+	return &AutoTrader{venue: "binance", trader: holder, peakPnLCache: map[string]float64{}}, holder, marks
 }
 
 // noLiveSource leaves other tests with no live data.
@@ -195,3 +195,17 @@ func TestShortPositionsTrackTheOtherWay(t *testing.T) {
 		t.Fatal("a short giving back 45% at +5.5% should call the check")
 	}
 }
+
+func (f *fakeMarks) OpenInterest(context.Context, string) (float64, error) {
+	return 0, errNoDerivatives
+}
+
+func (f *fakeMarks) FundingRate(context.Context, string) (float64, error) { return 0, errNoDerivatives }
+
+func (noLiveSource) OpenInterest(context.Context, string) (float64, error) {
+	return 0, errNoDerivatives
+}
+
+func (noLiveSource) FundingRate(context.Context, string) (float64, error) { return 0, errNoDerivatives }
+
+var errNoDerivatives = errors.New("no derivatives in this test")

@@ -1,16 +1,18 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import useSWR from 'swr'
+import { Link, useSearchParams } from 'react-router-dom'
+import {
+  keepPreviousData,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query'
 import { api } from '@/api'
 import {
   FORECAST_INTERVALS,
-  type ForecastDetail,
   type ForecastIndicators,
   type ForecastInterval,
 } from '@/api/forecast'
 import { Panel, PanelState } from '@/components/common/panel'
-import { SectionTabs } from '@/components/common/section-tabs'
 import { Segmented } from '@/components/common/segmented'
 import {
   ChartOptionsMenu,
@@ -18,13 +20,19 @@ import {
   wantsIndicators,
   type ChartOptions,
 } from '@/components/forecast/chart-options'
-import { CoinList, sortSignals } from '@/components/forecast/coin-list'
+import { CoinList, sortCoins } from '@/components/forecast/coin-list'
 import { FactorList } from '@/components/forecast/factor-list'
 import { ForecastFrame } from '@/components/forecast/forecast-frame'
+import { detailQuery } from '@/components/forecast/forecast-queries'
 import { baseAsset } from '@/components/forecast/forecast-format'
-import { ForecastReading } from '@/components/forecast/forecast-reading'
+import {
+  ForecastCall,
+  ForecastFigures,
+} from '@/components/forecast/forecast-reading'
 import { RecordList } from '@/components/forecast/record-list'
 import { useLiveCandle } from '@/components/forecast/use-live-candle'
+import { StrategySelect } from '@/components/forecast/strategy-select'
+import { useWatchlist } from '@/components/forecast/use-watchlist'
 import { LocalMarketChartView } from '@/components/market-chart/local-market-chart-view'
 import type { ChartLines } from '@/components/market-chart/local-market-chart'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -33,23 +41,41 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
-import { buildForecastPath, ROUTES } from '@/constants/route-paths'
+import { ROUTES } from '@/constants/route-paths'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
-import { cn } from '@/utils/cn'
 
 const SIGNALS_REFRESH_MS = 15000
 const WAITING_REFRESH_MS = 3000
 const DETAIL_REFRESH_MS = 15000
 const CHART_MARKERS = 40
+const COIN_PREVIEW_MS = 100
 const LAST_COIN_KEY = 'vergex.forecast.coin'
 const DEFAULT_INTERVAL: ForecastInterval = '1h'
+const LAST_INTERVAL_KEY = 'vergex.forecast.interval'
 
 const lastCoin = () => {
   try {
     return localStorage.getItem(LAST_COIN_KEY)
   } catch {
     return null
+  }
+}
+
+const lastInterval = () => {
+  try {
+    const saved = localStorage.getItem(LAST_INTERVAL_KEY) as ForecastInterval
+    return FORECAST_INTERVALS.includes(saved) ? saved : DEFAULT_INTERVAL
+  } catch {
+    return DEFAULT_INTERVAL
+  }
+}
+
+const rememberInterval = (interval: ForecastInterval) => {
+  try {
+    localStorage.setItem(LAST_INTERVAL_KEY, interval)
+  } catch {
+    /* Only a convenience: the next visit opens the default interval. */
   }
 }
 
@@ -78,69 +104,80 @@ function chartLines(
   }
 }
 
-type DetailTab = 'factors' | 'record'
-
-// One page for every coin: the chart, the call beside it and the list to move
-// between coins. /forecast opens the last coin looked at.
+// One page for every coin: the list to move between coins, the call above the chart,
+// and what the call rests on below it. The address can name a coin and an interval, and
+// without them the page opens the last ones looked at.
 export function ForecastPage() {
   const { language } = useLanguage()
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`forecast.${key}`, language, params)
-  const navigate = useNavigate()
-  const { symbol = '' } = useParams()
   const [params, setParams] = useSearchParams()
   const requested = params.get('interval') as ForecastInterval
   const interval = FORECAST_INTERVALS.includes(requested)
     ? requested
-    : DEFAULT_INTERVAL
-  const upper = symbol.toUpperCase()
+    : lastInterval()
+  const asked = params.get('symbol')?.toUpperCase() ?? ''
+  // The coin to show when the address names none. Once found it holds, so a refresh
+  // of the list cannot change the coin under the reader.
+  const [fallback, setFallback] = useState(lastCoin)
+  const upper = asked || fallback || ''
   const [options, setOptions] = useChartOptions()
-  const [tab, setTab] = useState<DetailTab>('factors')
-  const [onProjection, setOnProjection] = useState(false)
   const [listOpen, setListOpen] = useState(false)
+  const { watchlist, toggle: toggleWatch } = useWatchlist(language)
 
-  const signals = useSWR(
-    ['forecast-signals', interval],
-    () => api.getForecastSignals(interval),
-    { refreshInterval: SIGNALS_REFRESH_MS, keepPreviousData: true }
-  )
+  useEffect(() => rememberInterval(interval), [interval])
+
+  const coins = useQuery({
+    queryKey: ['forecast-coins', interval],
+    queryFn: () => api.getForecastCoins(interval),
+    refetchInterval: SIGNALS_REFRESH_MS,
+    placeholderData: keepPreviousData,
+  })
+  const coinsLoading = coins.isLoading || coins.isPlaceholderData
   const rows = useMemo(
-    () => (signals.data?.interval === interval ? signals.data.signals : []),
-    [signals.data, interval]
+    () => (coins.data?.interval === interval ? coins.data.coins : []),
+    [coins.data, interval]
   )
 
   useEffect(() => {
-    if (upper) {
-      rememberCoin(upper)
-      return
+    if (asked) setFallback(asked)
+    else if (!fallback && rows.length > 0) {
+      setFallback(sortCoins(rows)[0].symbol)
     }
-    const remembered = lastCoin()
-    if (remembered) {
-      navigate(buildForecastPath(remembered, interval), { replace: true })
-    } else if (rows.length > 0) {
-      navigate(buildForecastPath(sortSignals(rows)[0].symbol, interval), {
-        replace: true,
-      })
-    }
-  }, [upper, rows, interval, navigate])
+  }, [asked, fallback, rows])
+  useEffect(() => {
+    if (upper) rememberCoin(upper)
+  }, [upper])
 
+  const noneInUse = coins.data?.strategy_id === ''
   const withIndicators = wantsIndicators(options)
-  const detail = useSWR(
-    upper ? ['forecast-detail', upper, interval, withIndicators] : null,
-    () => api.getForecastDetail(upper, interval, withIndicators),
-    {
-      keepPreviousData: true,
-      refreshInterval: (latest: ForecastDetail | undefined) =>
-        latest && latest.last_closed === 0
-          ? WAITING_REFRESH_MS
-          : DETAIL_REFRESH_MS,
-    }
-  )
+  const detail = useQuery({
+    ...detailQuery(upper, interval, withIndicators),
+    enabled: Boolean(upper) && !noneInUse,
+    placeholderData: keepPreviousData,
+    refetchInterval: (query) =>
+      query.state.data?.last_closed === 0
+        ? WAITING_REFRESH_MS
+        : DETAIL_REFRESH_MS,
+  })
+  // A coin the pointer rests on is read ahead, so opening it shows it at once.
+  const client = useQueryClient()
+  const previewing = useRef<number>()
+  const preview = (symbol: string | null) => {
+    window.clearTimeout(previewing.current)
+    if (!symbol || noneInUse) return
+    previewing.current = window.setTimeout(() => {
+      void client.prefetchQuery(detailQuery(symbol, interval, withIndicators))
+    }, COIN_PREVIEW_MS)
+  }
+  useEffect(() => () => window.clearTimeout(previewing.current), [])
+
   // While another coin loads the chart keeps what it has, so nothing jumps.
   const shown = detail.data
   const current =
     shown?.symbol === upper && shown?.interval === interval ? shown : undefined
   const live = useLiveCandle(upper, interval)
+  const row = rows.find((coin) => coin.symbol === upper)
   const fitFor = shown ? `${shown.symbol}/${shown.interval}` : ''
 
   const levels = useMemo(
@@ -169,23 +206,23 @@ export function ForecastPage() {
   const markers = useMemo(
     () =>
       options.hits
-        ? (shown?.records ?? [])
+        ? (shown?.signals ?? [])
             .filter(
-              (record) => record.outcome === 'hit' || record.outcome === 'miss'
+              (signal) => signal.outcome === 'hit' || signal.outcome === 'miss'
             )
             .slice(0, CHART_MARKERS)
             .reverse()
-            .map((record) => ({
-              time: record.open_time / 1000,
+            .map((signal) => ({
+              time: signal.open_time / 1000,
               tone:
-                record.outcome === 'hit' ? ('up' as const) : ('down' as const),
+                signal.outcome === 'hit' ? ('up' as const) : ('down' as const),
               position:
-                record.direction === 'up'
+                signal.direction === 'up'
                   ? ('below' as const)
                   : ('above' as const),
             }))
         : [],
-    [options.hits, shown?.records]
+    [options.hits, shown?.signals]
   )
   const candles = useMemo(
     () =>
@@ -204,15 +241,18 @@ export function ForecastPage() {
   )
 
   const nothingTracked =
-    !upper && !signals.isLoading && !signals.error && rows.length === 0
+    !upper && !coinsLoading && !coins.error && rows.length === 0
 
   const coinList = (onChosen?: () => void) => (
     <CoinList
-      signals={rows}
+      coins={rows}
       interval={interval}
       selected={upper}
-      loading={signals.isLoading}
-      failed={Boolean(signals.error)}
+      loading={coinsLoading}
+      failed={Boolean(coins.error)}
+      watchlist={watchlist}
+      onToggleWatch={(next) => void toggleWatch(next)}
+      onPreview={preview}
       onChosen={onChosen}
       language={language}
       className="h-full"
@@ -222,13 +262,21 @@ export function ForecastPage() {
   return (
     <ForecastFrame
       language={language}
-      note={
-        <span className="text-xs text-vergex-text-muted max-xl:hidden">
-          {label('experimental')}
-        </span>
-      }
+      actions={<StrategySelect language={language} />}
     >
-      {nothingTracked ? (
+      {noneInUse ? (
+        <Panel>
+          <PanelState role="status">
+            {label('noStrategyInUse')}
+            <Link
+              to={ROUTES.forecastStrategies}
+              className={buttonVariants({ variant: 'secondary', size: 'sm' })}
+            >
+              {label('chooseStrategy')}
+            </Link>
+          </PanelState>
+        </Panel>
+      ) : nothingTracked ? (
         <Panel>
           <PanelState role="status">
             {label('noCoins')}
@@ -241,38 +289,60 @@ export function ForecastPage() {
           </PanelState>
         </Panel>
       ) : (
-        <>
-          <div className="grid min-w-0 gap-3 lg:h-[max(520px,calc(100dvh-161px))] lg:grid-cols-[minmax(0,1fr)_380px]">
-            <Panel className="flex min-h-0 min-w-0 flex-col overflow-hidden max-lg:order-2">
-              <div className="flex shrink-0 items-center gap-2 border-b border-[var(--line)] p-2">
+        <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+          <Panel className="hidden overflow-hidden lg:sticky lg:top-[157px] lg:block lg:h-[max(320px,calc(100dvh-181px))]">
+            {coinList()}
+          </Panel>
+
+          <div className="flex min-w-0 flex-col gap-4">
+            <Panel className="flex min-w-0 flex-col overflow-hidden lg:h-[max(480px,calc(100dvh-181px))]">
+              <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-vergex-line p-2 lg:pl-4">
                 <Popover open={listOpen} onOpenChange={setListOpen}>
                   <PopoverTrigger asChild>
                     <Button
                       type="button"
-                      variant="secondary"
-                      size="sm"
-                      className="h-9 lg:hidden max-sm:h-10"
+                      variant="select"
+                      className="lg:hidden max-sm:h-10"
                     >
                       {baseAsset(upper) || label('coin')}
-                      <ChevronDown className="size-4" />
+                      <ChevronDown
+                        className="size-4 text-vergex-muted"
+                        aria-hidden="true"
+                      />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="h-[min(420px,70dvh)] w-[min(340px,calc(100vw-32px))] overflow-hidden p-0">
+                  <PopoverContent className="h-[min(480px,70dvh)] w-[min(360px,calc(100vw-32px))] overflow-hidden p-0">
                     {coinList(() => setListOpen(false))}
                   </PopoverContent>
                 </Popover>
-                <Segmented
-                  aria-label={label('interval')}
-                  value={interval}
-                  options={FORECAST_INTERVALS.map((value) => ({
-                    value,
-                    label: value,
-                  }))}
-                  onChange={(next) =>
-                    setParams({ interval: next }, { replace: true })
-                  }
+                <ForecastCall
+                  symbol={upper}
+                  latest={current?.latest ?? row?.signal}
+                  price={live?.close ?? current?.price ?? row?.price}
+                  change={current?.change_24h_pct ?? row?.change_24h_pct}
+                  stale={current?.stale ?? row?.stale}
+                  starred={watchlist.includes(upper)}
+                  onToggleWatch={(next) => void toggleWatch(next)}
+                  language={language}
                 />
-                <div className="ml-auto">
+                <div className="ml-auto flex items-center gap-2">
+                  <Segmented
+                    aria-label={label('interval')}
+                    value={interval}
+                    options={FORECAST_INTERVALS.map((value) => ({
+                      value,
+                      label: value,
+                    }))}
+                    onChange={(next) =>
+                      setParams(
+                        (current) => {
+                          current.set('interval', next)
+                          return current
+                        },
+                        { replace: true }
+                      )
+                    }
+                  />
                   <ChartOptionsMenu
                     options={options}
                     onChange={setOptions}
@@ -288,7 +358,7 @@ export function ForecastPage() {
                   {label('detailFailed')}
                 </PanelState>
               ) : candles.length > 0 ? (
-                <div className="relative h-[420px] min-h-0 lg:h-auto lg:flex-1">
+                <div className="h-[420px] min-h-0 lg:h-auto lg:flex-1">
                   <LocalMarketChartView
                     candles={candles}
                     levels={levels}
@@ -297,23 +367,20 @@ export function ForecastPage() {
                     lines={lines}
                     live={current ? live : null}
                     fitFor={fitFor}
-                    onProjectionHover={setOnProjection}
                     label={label('chartName', { symbol: upper, interval })}
                     failure={label('chartFailed')}
+                    text={{
+                      open: label('chart.open'),
+                      high: label('chart.high'),
+                      low: label('chart.low'),
+                      close: label('chart.close'),
+                      volume: label('chart.volume'),
+                      zoomIn: label('chart.zoomIn'),
+                      zoomOut: label('chart.zoomOut'),
+                      reset: label('chart.reset'),
+                    }}
                     className="h-full"
                   />
-                  {projection.length > 0 && (
-                    <p
-                      className={cn(
-                        'pointer-events-none absolute left-3 top-2 z-10 max-w-[calc(100%-80px)] truncate text-xs',
-                        onProjection
-                          ? 'font-medium text-vergex-text'
-                          : 'text-vergex-text-muted'
-                      )}
-                    >
-                      {label('chart.projectionNote')}
-                    </p>
-                  )}
                 </div>
               ) : (
                 <PanelState
@@ -327,54 +394,33 @@ export function ForecastPage() {
               )}
             </Panel>
 
-            <div className="flex min-h-0 min-w-0 flex-col gap-3 max-lg:order-1">
-              <ForecastReading
-                symbol={upper}
-                detail={current}
-                price={live?.close ?? current?.price}
-                language={language}
-              />
-              <Panel className="min-h-0 flex-1 overflow-hidden max-lg:hidden">
-                {coinList()}
-              </Panel>
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <SectionTabs
-              tabs={[
-                { id: 'factors', label: label('factors') },
-                { id: 'record', label: label('record') },
-              ]}
-              value={tab}
-              onChange={setTab}
-              label={label('detailTabs')}
+            <ForecastFigures
+              detail={current}
+              price={live?.close ?? current?.price}
+              language={language}
             />
-            {tab === 'factors' ? (
-              current?.result && current.result.factors.length > 0 ? (
-                <FactorList
-                  factors={current.result.factors}
-                  language={language}
-                />
-              ) : (
-                <Panel>
-                  <PanelState role="status">
-                    {current
-                      ? label(`pendingState.${current.pending ?? 'waiting'}`)
-                      : label('loading')}
-                  </PanelState>
-                </Panel>
-              )
-            ) : (
+
+            <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+              <FactorList
+                result={current?.result}
+                pending={
+                  current
+                    ? label(`pendingState.${current.pending ?? 'waiting'}`)
+                    : label('loading')
+                }
+                language={language}
+                className="flex h-[440px] flex-col overflow-hidden"
+              />
               <RecordList
-                records={current?.records ?? []}
+                signals={current?.signals ?? []}
                 hits={current?.stats.hits ?? 0}
                 misses={current?.stats.misses ?? 0}
                 language={language}
+                className="flex h-[440px] flex-col overflow-hidden"
               />
-            )}
+            </div>
           </div>
-        </>
+        </div>
       )}
     </ForecastFrame>
   )

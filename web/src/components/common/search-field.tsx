@@ -17,7 +17,7 @@ export function SearchField({
   return (
     <label className={cn('relative block', className)}>
       <Search
-        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-vergex-text-muted"
+        className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-vergex-muted"
         aria-hidden="true"
       />
       <input

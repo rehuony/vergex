@@ -1,5 +1,4 @@
-import type { ActivityTotals } from '@/api/activity'
-import type { Overview } from '@/api/overview'
+import type { ActivityStream, ActivityTotals, Overview } from '@/api/dashboard'
 import { cn } from '@/utils/cn'
 import type { SceneBlock } from './flow-layout'
 import { blockViews, type Member } from './flow-members'
@@ -8,16 +7,18 @@ import { overallSummary, type FlowSelection } from './flow-text'
 type Label = (key: string, params?: Record<string, string | number>) => string
 
 const GROUPS: SceneBlock[][] = [
-  ['market'],
-  ['telegram', 'traders', 'frontier', 'forecast'],
+  ['exchange', 'market'],
+  ['telegram', 'traders', 'futures', 'forecast'],
   ['models', 'accounts', 'positions'],
 ]
 
-const MAX_DOTS = 18
+// As many as fit on one line beside the figure on a phone, so a block with
+// hundreds of members is as tall as one with none.
+const MAX_DOTS = 7
 
 const TONE: Record<Member['tone'], string> = {
-  on: 'bg-vergex-text',
-  off: 'border border-[var(--muted)]',
+  on: 'bg-vergex-ink',
+  off: 'border border-vergex-muted',
   up: 'bg-vergex-success',
   down: 'bg-vergex-danger',
   alert: 'bg-vergex-danger',
@@ -28,6 +29,7 @@ const TONE: Record<Member['tone'], string> = {
 export function FlowGroups({
   overview,
   totals,
+  stream,
   selection,
   onSelect,
   staleText,
@@ -35,18 +37,20 @@ export function FlowGroups({
 }: {
   overview: Overview
   totals: ActivityTotals
+  stream: ActivityStream | null
   selection: FlowSelection | null
   onSelect: (selection: FlowSelection | null) => void
   staleText: string
   label: Label
 }) {
-  const views = blockViews(overview, label)
+  const views = blockViews(overview, label, totals, stream)
+  const summary = overallSummary(totals, label)
   return (
     <div>
-      {GROUPS.map((group, index) => (
+      {GROUPS.map((group) => (
         <ul
           key={group[0]}
-          className={cn(index > 0 && 'border-t border-[var(--line-strong)]')}
+          className="border-t border-vergex-line-strong first:border-t-0"
         >
           {group.map((id) => {
             const view = views[id]
@@ -55,7 +59,7 @@ export function FlowGroups({
             return (
               <li
                 key={id}
-                className="border-t border-[var(--line)] first:border-0"
+                className="border-t border-vergex-line first:border-0"
               >
                 <button
                   type="button"
@@ -64,25 +68,27 @@ export function FlowGroups({
                     onSelect(active ? null : { type: 'block', id })
                   }
                   className={cn(
-                    'grid min-h-11 w-full grid-cols-[88px_minmax(0,1fr)_auto] items-center gap-2 px-4 text-left',
-                    active && 'bg-vergex-bg'
+                    'grid h-11 w-full grid-cols-[88px_minmax(0,1fr)_auto] items-center gap-2 px-4 text-left',
+                    active && 'bg-vergex-surface-muted'
                   )}
                 >
-                  <span className="text-[13px] font-medium text-vergex-text">
+                  <span className="text-[13px] font-medium text-vergex-ink">
                     {label(`flow.block.${id}`)}
                   </span>
-                  <span className="flex flex-wrap items-center gap-[3px]">
-                    {members.slice(0, MAX_DOTS).map((member, slot) => (
-                      <i
-                        key={`${member.id}-${slot}`}
-                        className={cn(
-                          'size-1.5 rounded-full',
-                          TONE[member.tone]
-                        )}
-                      />
-                    ))}
+                  <span className="flex min-w-0 items-center gap-1">
+                    <span className="flex min-w-0 items-center gap-[3px] overflow-hidden">
+                      {members.slice(0, MAX_DOTS).map((member, slot) => (
+                        <i
+                          key={`${member.id}-${slot}`}
+                          className={cn(
+                            'size-1.5 shrink-0 rounded-full',
+                            TONE[member.tone]
+                          )}
+                        />
+                      ))}
+                    </span>
                     {members.length > MAX_DOTS && (
-                      <span className="pl-1 text-xs text-vergex-text-muted">
+                      <span className="shrink-0 text-xs text-vergex-muted">
                         +{members.length - MAX_DOTS}
                       </span>
                     )}
@@ -90,9 +96,7 @@ export function FlowGroups({
                   <span
                     className={cn(
                       'whitespace-nowrap text-xs tabular-nums',
-                      view.warn
-                        ? 'text-[var(--warning)]'
-                        : 'text-vergex-text-muted'
+                      view.warn ? 'text-vergex-warning' : 'text-vergex-muted'
                     )}
                   >
                     {view.sub}
@@ -103,12 +107,15 @@ export function FlowGroups({
           })}
         </ul>
       ))}
-      <div className="flex min-h-10 items-center gap-2 border-t border-[var(--line)] px-4 py-2 text-xs text-vergex-text-muted">
-        <span className="min-w-0 flex-1 tabular-nums">
-          {overallSummary(totals, label)}
+      <div className="flex h-10 items-center gap-2 border-t border-vergex-line px-4 text-xs text-vergex-muted">
+        <span className="min-w-0 flex-1 truncate tabular-nums" title={summary}>
+          {summary}
         </span>
         {staleText && (
-          <span role="status" className="text-[var(--warning)]">
+          <span
+            role="status"
+            className="shrink-0 whitespace-nowrap text-vergex-warning"
+          >
             {staleText}
           </span>
         )}

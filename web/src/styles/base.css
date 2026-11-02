@@ -1,0 +1,220 @@
+/* Element defaults and global utilities. Defaults sit in @layer base so the
+   Tailwind classes on a component always win over them. */
+
+html {
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--ink);
+  background-color: var(--canvas);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scroll-padding-top: 90px;
+}
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--canvas);
+}
+#root {
+  width: 100%;
+  margin: 0 auto;
+}
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+button,
+a,
+input,
+select,
+textarea,
+summary {
+  -webkit-tap-highlight-color: transparent;
+}
+/* A border with no colour of its own is a hairline. */
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--line);
+  }
+}
+/* Base layer: Tailwind classes on a component override these defaults. */
+@layer base {
+  button,
+  a {
+    transition:
+      background-color var(--dur-fade) var(--ease-fade),
+      border-color var(--dur-fade) var(--ease-fade),
+      color var(--dur-fade) var(--ease-fade),
+      box-shadow var(--dur-fade) var(--ease-fade);
+  }
+  /* Hover colour responds at once; it only eases on the way back. */
+  button:hover,
+  a:hover {
+    transition-duration: 0ms;
+  }
+  button:focus-visible,
+  a:focus-visible,
+  summary:focus-visible {
+    outline: 3px solid color-mix(in srgb, var(--ink) 25%, transparent);
+    outline-offset: 0;
+  }
+}
+::selection {
+  background: color-mix(in srgb, var(--ink) 15%, transparent);
+  color: var(--ink);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--canvas);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--line-strong);
+}
+
+/* Monospace numbers — use for prices, balances, timestamps, code */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Element defaults for plain buttons. They sit in the base layer so the
+   classes on a Button (components/ui/button.tsx) always win over them. */
+@layer base {
+  button {
+    font-weight: 500;
+  }
+  /* Tailwind 4 leaves buttons with the arrow; anything clickable shows the
+     hand. */
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  summary,
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+
+/* Element defaults for plain form fields, in the base layer so the classes on
+   a field (dialogInputClass and friends) always win over them. */
+@layer base {
+  input,
+  select,
+  textarea {
+    transition:
+      border-color var(--dur-fade) var(--ease-fade),
+      box-shadow var(--dur-fade) var(--ease-fade);
+    background-color: var(--surface);
+    color: var(--ink);
+    border: 1px solid var(--line);
+  }
+
+  input:focus,
+  select:focus,
+  textarea:focus {
+    border-color: color-mix(in srgb, var(--ink) 40%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 10%, transparent);
+    outline: none;
+    background-color: var(--surface);
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--faint);
+  }
+}
+
+/* Skeleton loading: a plain block; the row around it pulses. */
+.skeleton {
+  background: var(--line);
+  border-radius: 4px;
+}
+
+/* Table defaults, in the base layer so classes on a table win over them. */
+@layer base {
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th {
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 11px;
+    padding: 10px 0;
+  }
+
+  td {
+    color: var(--ink);
+    padding: 10px 0;
+  }
+
+  tr {
+    border-bottom: 1px solid var(--line);
+  }
+
+  tr:last-child {
+    border-bottom: none;
+  }
+
+  tbody tr:hover {
+    background: color-mix(in srgb, var(--ink) 3%, transparent);
+  }
+}
+
+/* Chart frame: a flat panel like any other. */
+.chart-container {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 1.25rem;
+}
+
+/* The page scrollbar OverlayScrollbars draws over the page where native
+   scrollbars would take up width (utils/page-scroll.ts). */
+.os-theme-vergex {
+  --os-size: 10px;
+  --os-padding-perpendicular: 2px;
+  --os-padding-axis: 2px;
+  --os-track-border-radius: 9999px;
+  --os-handle-border-radius: 9999px;
+  --os-handle-min-size: 40px;
+  --os-handle-bg: color-mix(in srgb, var(--ink) 28%, transparent);
+  --os-handle-bg-hover: color-mix(in srgb, var(--ink) 42%, transparent);
+  --os-handle-bg-active: color-mix(in srgb, var(--ink) 52%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

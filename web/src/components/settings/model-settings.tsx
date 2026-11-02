@@ -37,7 +37,7 @@ const modelIcon = (model: AgentModel) =>
 const defaultModel = (model: AgentModel) =>
   AGENT_PROVIDER_CONFIG[model.provider]?.defaultModel || model.provider
 
-/** The models Frontier, traders and Telegram call, with their keys. */
+/** The models Futures, traders and Telegram call, with their keys. */
 export function ModelSettings({ language }: { language: Language }) {
   // null shows the list, '' a new connection, an id that connection.
   const [editing, setEditing] = useState<string | null>(null)
@@ -134,7 +134,7 @@ function ModelForm({
   onDone: () => void
 }) {
   const id = useId()
-  const { mutate } = useModelConfigs()
+  const { refetch } = useModelConfigs()
   const { data: traders } = useTraders()
   const [provider, setProvider] = useState(choices[0]?.id ?? '')
   const model = existing ?? choices.find((m) => m.id === provider)
@@ -164,7 +164,7 @@ function ModelForm({
     setMessage('')
     try {
       await api.updateModelConfigs({ models: { [model.id]: fields } })
-      await mutate()
+      await refetch()
       toast.success(t(done, language))
       onDone()
     } catch {

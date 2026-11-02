@@ -7,8 +7,7 @@ import (
 	"time"
 
 	"vergex/internal/agent"
-	"vergex/internal/store"
-	"vergex/internal/store/storetest"
+	"vergex/internal/database/testdb"
 	telegramagent "vergex/internal/telegram/agent"
 )
 
@@ -27,7 +26,7 @@ func (c *scriptedClient) CallWithRequestFull(req *agent.Request) (*agent.Respons
 	c.lastReq = req
 	if c.turn.Add(1) == 1 {
 		call := agent.ToolCall{ID: "call_1", Type: "function"}
-		call.Function.Name = "exchange_management"
+		call.Function.Name = "account_management"
 		call.Function.Arguments = `{"action":"query"}`
 		return &agent.Response{Content: "let me look", ReasoningContent: "check the accounts", ToolCalls: []agent.ToolCall{call}}, nil
 	}
@@ -35,10 +34,9 @@ func (c *scriptedClient) CallWithRequestFull(req *agent.Request) (*agent.Respons
 }
 
 func TestAChatIsKeptAcrossARestart(t *testing.T) {
-	st := storetest.New(t)
-	t.Cleanup(func() { _ = st.Close() })
-	user := storetest.Account(t, st)
-	history := &chatHistory{conversations: st.AgentConversation(), userID: user}
+	st := NewStores(testdb.Open(t))
+	user := testdb.AddUser(t, st.DB)
+	history := &chatHistory{conversations: st.Conversations, userID: user}
 	const chat = int64(42)
 
 	client := &scriptedClient{}
@@ -47,11 +45,11 @@ func TestAChatIsKeptAcrossARestart(t *testing.T) {
 		t.Fatalf("reply = %q", reply)
 	}
 
-	conversation, err := st.AgentConversation().Latest(user, store.FeatureTelegram, "42")
+	conversation, err := st.Conversations.Latest(user, agent.FeatureTelegram, "42")
 	if err != nil {
 		t.Fatal(err)
 	}
-	messages, err := st.AgentConversation().Messages(conversation.ID)
+	messages, err := st.Conversations.Messages(conversation.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +64,7 @@ func TestAChatIsKeptAcrossARestart(t *testing.T) {
 		t.Fatalf("user message = %q", messages[0].Content)
 	}
 	asked, result, answer := messages[2], messages[3], messages[4]
-	if asked.Thinking != "check the accounts" || asked.Content != "let me look" || !strings.Contains(asked.ToolCalls, "exchange_management") {
+	if asked.Thinking != "check the accounts" || asked.Content != "let me look" || !strings.Contains(asked.ToolCalls, "account_management") {
 		t.Fatalf("tool request = %+v", asked)
 	}
 	if result.ToolCallID != "call_1" {
@@ -88,7 +86,7 @@ func TestAChatIsKeptAcrossARestart(t *testing.T) {
 	if strings.Contains(sent, "let me look") {
 		t.Fatalf("a step on the way to an answer came back as if it were one: %q", sent)
 	}
-	if again, err := st.AgentConversation().Latest(user, store.FeatureTelegram, "42"); err != nil || again.ID != conversation.ID {
+	if again, err := st.Conversations.Latest(user, agent.FeatureTelegram, "42"); err != nil || again.ID != conversation.ID {
 		t.Fatalf("resumed %+v, err %v", again, err)
 	}
 
@@ -102,7 +100,7 @@ func TestAChatIsKeptAcrossARestart(t *testing.T) {
 	if strings.Contains(sent, "what do I have?") {
 		t.Fatalf("/start kept the old chat: %q", sent)
 	}
-	latest, err := st.AgentConversation().Latest(user, store.FeatureTelegram, "42")
+	latest, err := st.Conversations.Latest(user, agent.FeatureTelegram, "42")
 	if err != nil || latest.ID == conversation.ID {
 		t.Fatalf("latest = %+v, err %v", latest, err)
 	}

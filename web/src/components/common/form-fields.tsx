@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { dialogInputClass } from '@/components/common/dialog'
 import { notify } from '@/components/common/notify'
 import { Button } from '@/components/ui/button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/utils/cn'
 import { parseSymbols } from '@/utils/symbols'
 
@@ -47,7 +48,7 @@ export function FieldGrid({
 function Suffix({ children }: { children?: ReactNode }) {
   if (!children) return null
   return (
-    <span className="shrink-0 whitespace-nowrap text-xs text-vergex-text-muted">
+    <span className="shrink-0 whitespace-nowrap text-xs text-vergex-muted">
       {children}
     </span>
   )
@@ -163,7 +164,9 @@ export function PeriodsField({
   )
 }
 
-// Symbols as removable chips with an input to add more.
+// An input to add symbols, with what it has added below it as removable chips. With
+// scrollClassName the chips scroll inside the height it sets, where there can be far more
+// than fit.
 export function SymbolsField({
   id,
   values,
@@ -172,6 +175,7 @@ export function SymbolsField({
   addLabel,
   removeLabel,
   limitMessage,
+  scrollClassName,
   onChange,
 }: {
   id?: string
@@ -181,6 +185,7 @@ export function SymbolsField({
   addLabel: string
   removeLabel: (symbol: string) => string
   limitMessage?: string
+  scrollClassName?: string
   onChange: (values: string[]) => void
 }) {
   const [draft, setDraft] = useState('')
@@ -194,33 +199,32 @@ export function SymbolsField({
     setDraft('')
   }
 
+  const chips = values.length > 0 && (
+    <ul className="flex flex-wrap gap-1.5">
+      {values.map((symbol) => (
+        <li
+          key={symbol}
+          className="inline-flex h-7 items-center gap-1 rounded-md border border-vergex-line pl-2 pr-0.5 text-xs text-vergex-ink max-sm:h-10"
+        >
+          {symbol}
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={removeLabel(symbol)}
+            onClick={() => onChange(values.filter((value) => value !== symbol))}
+            className="size-6 rounded-full hover:text-vergex-danger max-sm:size-9"
+          >
+            <X className="size-3" />
+          </Button>
+        </li>
+      ))}
+    </ul>
+  )
+
   return (
-    <div className="flex min-w-0 flex-1 flex-col gap-2">
-      {values.length > 0 && (
-        <ul className="flex flex-wrap gap-1.5">
-          {values.map((symbol) => (
-            <li
-              key={symbol}
-              className="inline-flex h-7 items-center gap-1 rounded-md border border-[var(--line)] pl-2 pr-0.5 text-xs text-vergex-text max-sm:h-10"
-            >
-              {symbol}
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={removeLabel(symbol)}
-                onClick={() =>
-                  onChange(values.filter((value) => value !== symbol))
-                }
-                className="size-6 rounded-sm hover:text-vergex-danger max-sm:size-9"
-              >
-                <X className="size-3" />
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="flex items-center gap-2">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <input
           id={id}
           className={fieldClass}
@@ -242,6 +246,11 @@ export function SymbolsField({
           {addLabel}
         </Button>
       </div>
+      {scrollClassName && chips ? (
+        <ScrollArea className={scrollClassName}>{chips}</ScrollArea>
+      ) : (
+        chips
+      )}
     </div>
   )
 }

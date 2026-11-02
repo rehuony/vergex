@@ -1,13 +1,13 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import type { ActivityEvent, ActivityKind } from '@/api/activity'
-import type { Overview } from '@/api/overview'
+import type { ActivityEvent, ActivityKind } from '@/api/dashboard'
+import type { Overview } from '@/api/dashboard'
 import { PanelState } from '@/components/common/panel'
 import { Segmented } from '@/components/common/segmented'
 import { SettingsLink } from '@/components/settings/settings-link'
 import { buttonVariants } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { buildFrontierPath, ROUTES } from '@/constants/route-paths'
+import { buildFuturesPath, ROUTES } from '@/constants/route-paths'
 import { cn } from '@/utils/cn'
 import { lineOf, type LineKey } from './flow-layout'
 import {
@@ -24,11 +24,12 @@ import { traderPath } from './overview-links'
 
 type Label = (key: string, params?: Record<string, string | number>) => string
 
-export type FlowKind = 'all' | ActivityKind
+export type FlowKind = 'all' | ActivityKind | 'positions'
 
 const KINDS: FlowKind[] = ['all', 'agent', 'funds', 'orders', 'market']
 
-const rowClass = 'block px-4 py-2 hover:bg-vergex-bg hover:duration-0'
+const rowClass =
+  'block px-4 py-2 hover:bg-vergex-surface-muted hover:duration-0'
 
 // A row leads to the real thing behind it.
 function EventLink({
@@ -45,7 +46,7 @@ function EventLink({
   if (event.type === 'plan_order') {
     return (
       <Link
-        to={buildFrontierPath({ plan: event.ref, tab: 'positions' })}
+        to={buildFuturesPath({ plan: event.ref, tab: 'positions' })}
         className={className}
       >
         {children}
@@ -85,9 +86,9 @@ function EventLink({
       </Link>
     )
   }
-  if (event.from.block === 'frontier') {
+  if (event.from.block === 'futures') {
     return (
-      <Link to={ROUTES.planning} className={className}>
+      <Link to={ROUTES.futures} className={className}>
         {children}
       </Link>
     )
@@ -106,8 +107,9 @@ function EventLink({
   )
 }
 
-// Everything that happened, newest first. The filter also dims the scene's other
-// lines, and pointing at a row shows which line it ran along.
+// Everything that happened, newest first, and what is open now behind one more choice, so
+// neither takes room from the other. The filter also dims the scene's other lines, and
+// pointing at a row shows which line it ran along.
 export function FlowEvents({
   overview,
   events,
@@ -117,6 +119,7 @@ export function FlowEvents({
   onKind,
   selection,
   onPoint,
+  positions,
   label,
 }: {
   overview: Overview
@@ -127,6 +130,8 @@ export function FlowEvents({
   onKind: (kind: FlowKind) => void
   selection: FlowSelection | null
   onPoint: (line: LineKey | null) => void
+  /** What the last choice shows. */
+  positions?: ReactNode
   label: Label
 }) {
   const shown = events.filter((event) => eventMatches(event, kind, selection))
@@ -134,28 +139,44 @@ export function FlowEvents({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-14 shrink-0 items-center px-4">
+      <div className="flex min-h-14 shrink-0 items-center overflow-x-auto px-4">
         <Segmented
           aria-label={label('flow.filter')}
           value={kind}
-          options={KINDS.map((value) => ({
-            value,
-            label: label(`flow.kind.${value}`),
-          }))}
+          options={[
+            ...KINDS.map((value) => ({
+              value,
+              label: label(`flow.kind.${value}`),
+            })),
+            ...(positions
+              ? [
+                  {
+                    value: 'positions' as const,
+                    label: overview.positions.length
+                      ? `${label('positions')} ${overview.positions.length}`
+                      : label('positions'),
+                  },
+                ]
+              : []),
+          ]}
           onChange={onKind}
         />
       </div>
-      {!loaded ? (
+      {kind === 'positions' ? (
+        <div className="min-h-0 flex-1 border-t border-vergex-line">
+          {positions}
+        </div>
+      ) : !loaded ? (
         <PanelState
           role={stale ? 'alert' : 'status'}
-          className="flex-1 border-t border-[var(--line)]"
+          className="flex-1 border-t border-vergex-line"
         >
           {label(stale ? 'flow.loadFailed' : 'flow.loading')}
         </PanelState>
       ) : shown.length === 0 ? (
         <PanelState
           role="status"
-          className="flex-1 border-t border-[var(--line)]"
+          className="flex-1 border-t border-vergex-line"
         >
           {events.length > 0 ? (
             label('flow.noMatch')
@@ -174,7 +195,7 @@ export function FlowEvents({
                     {label('flow.createTrader')}
                   </Link>
                   <Link
-                    to={ROUTES.planning}
+                    to={ROUTES.futures}
                     className={buttonVariants({
                       variant: 'secondary',
                       size: 'sm',
@@ -188,8 +209,8 @@ export function FlowEvents({
           )}
         </PanelState>
       ) : (
-        <ScrollArea className="max-h-96 min-h-0 flex-1 border-t border-[var(--line)] xl:max-h-none">
-          <ul className="divide-y divide-[var(--line)]">
+        <ScrollArea className="min-h-0 flex-1 border-t border-vergex-line">
+          <ul className="divide-y divide-vergex-line">
             {shown.map((event) => {
               const route = eventRoute(event, label)
               const what = eventWhat(event, label)
@@ -205,7 +226,7 @@ export function FlowEvents({
                     overview={overview}
                     className={rowClass}
                   >
-                    <span className="flex items-center gap-2 text-[13px] text-vergex-text">
+                    <span className="flex items-center gap-2 text-[13px] text-vergex-ink">
                       <i
                         className="size-1.5 shrink-0 rounded-full"
                         style={{ backgroundColor: eventColor(event) }}
@@ -213,11 +234,11 @@ export function FlowEvents({
                       <span className="min-w-0 flex-1 truncate" title={route}>
                         {route}
                       </span>
-                      <span className="shrink-0 text-xs tabular-nums text-vergex-text-muted">
+                      <span className="shrink-0 text-xs tabular-nums text-vergex-muted">
                         {eventTime(event)}
                       </span>
                     </span>
-                    <span className="mt-0.5 flex items-center gap-2 pl-3.5 text-xs text-vergex-text-muted">
+                    <span className="mt-0.5 flex items-center gap-2 pl-3.5 text-xs text-vergex-muted">
                       <span
                         className="min-w-0 flex-1 truncate tabular-nums"
                         title={event.detail || what}

@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"sync"
 	"time"
+	"vergex/internal/account"
 	"vergex/internal/agent"
 	_ "vergex/internal/agent/provider"
-	"vergex/internal/exchange/binance"
-	"vergex/internal/exchange/okx"
 	"vergex/internal/logger"
-	"vergex/internal/store"
 	traderagent "vergex/internal/trader/agent"
+	"vergex/internal/trader/kind"
+	"vergex/internal/venue/binance"
+	"vergex/internal/venue/okx"
 )
 
 func (at *AutoTrader) logTag() string {
@@ -34,8 +35,8 @@ func (at *AutoTrader) logWarnf(format string, args ...interface{}) {
 }
 
 // extractInitialBalance prefers an exchange's explicit mark-to-market equity.
-// Wallet-balance fields remain as compatibility fallbacks for integrations
-// that do not expose total equity separately.
+// Wallet-balance fields are the fallback for an account that does not report
+// total equity separately.
 func extractInitialBalance(account map[string]interface{}) float64 {
 	balanceKeys := []string{
 		"totalEquity",
@@ -63,14 +64,13 @@ type AutoTraderConfig struct {
 	// Trader identification
 	ID         string // Trader unique identifier (for log directory, etc.)
 	Name       string // Trader display name
-	StrategyID string // Associated strategy ID used to refresh live strategy config
 	AgentModel string // model: "qwen" or "deepseek"
 	// AgentModelID is the model's row, which the trader's conversations point at.
 	AgentModelID string
 
 	// Trading platform selection
-	Exchange   string // Exchange type: "binance" or "okx"
-	ExchangeID string // Exchange account UUID (for multi-account support)
+	Venue     string // "binance" or "okx"
+	AccountID string // Account UUID (for multi-account support)
 
 	// Binance API configuration
 	BinanceAPIKey    string
@@ -105,9 +105,11 @@ type AutoTraderConfig struct {
 	// Position mode
 	IsCrossMargin bool // true=cross margin mode, false=isolated margin mode
 
-	// Strategy configuration (use complete strategy config)
-	StrategyConfig    *store.StrategyConfig // Strategy configuration (includes coin sources, indicators, risk control, prompts, etc.)
-	StrategyConfigRaw string                // Raw strategy config JSON from DB, used to detect live edits
+	// What its kind decides: one of these is set.
+	Agent *kind.AgentConfig // Coin sources, indicators, risk control, prompts
+	Grid  *kind.GridConfig
+	// ConfigRaw is the stored config, used to detect live edits
+	ConfigRaw string
 }
 
 // AutoTrader automatic trader
@@ -115,14 +117,14 @@ type AutoTrader struct {
 	id                       string // Trader unique identifier
 	name                     string // Trader display name
 	agentModel               string // model name
-	exchange                 string // Trading platform type (binance/okx)
-	exchangeID               string // Exchange account UUID
+	venue                    string // Trading platform type (binance/okx)
+	accountID                string // Account UUID
 	config                   AutoTraderConfig
-	trader                   Trader // Use Trader interface (supports multiple platforms)
+	trader                   account.Trading // Use the Trading interface (supports multiple platforms)
 	agentClient              agent.Client
-	store                    *store.Store                // Data storage (decision records, etc.)
-	strategyEngine           *traderagent.StrategyEngine // Strategy engine (uses strategy configuration)
-	cycleNumber              int                         // Current cycle number
+	stores                   *Stores             // Data storage (decision records, etc.)
+	engine                   *traderagent.Engine // Builds an agent trader's prompts; nil on a grid trader
+	cycleNumber              int                 // Current cycle number
 	initialBalance           float64
 	dailyPnL                 float64
 	lastResetTime            time.Time
@@ -138,7 +140,7 @@ type AutoTrader struct {
 	peakPnLCacheMutex        sync.RWMutex       // Cache read-write lock
 	lastBalanceSyncTime      time.Time          // Last balance sync time
 	userID                   string             // User ID
-	gridState                *GridState         // Grid trading state (only used when StrategyType == "grid_trading")
+	gridState                *GridState         // Grid trading state (only used by a grid trader)
 	consecutiveAgentFailures int                // Consecutive model call failures
 	runtimeHealthMu          sync.RWMutex       // Guards safe mode + trading authorization state (loop writes, API reads)
 	tradingBlocked           bool
@@ -150,15 +152,15 @@ type AutoTrader struct {
 
 // NewAutoTrader creates an automatic trader
 // st parameter is used to store decision records to database
-func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*AutoTrader, error) {
-	// Check before constructing exchange clients; legacy constructors may change
-	// account settings even before their Run loop starts.
-	if st != nil && config.ExchangeID != "" {
-		ex, err := st.Exchange().GetByID(userID, config.ExchangeID)
+func NewAutoTrader(config AutoTraderConfig, st *Stores, userID string) (*AutoTrader, error) {
+	// Check before constructing exchange clients: a constructor may change account
+	// settings even before the Run loop starts.
+	if st != nil && config.AccountID != "" {
+		ex, err := st.Accounts.GetByID(userID, config.AccountID)
 		if err != nil {
 			return nil, fmt.Errorf("cannot verify planning account ownership: %w", err)
 		}
-		if leased, err := st.Exchange().Leased(ex.ID); err != nil || leased {
+		if leased, err := st.Accounts.Leased(ex.ID); err != nil || leased {
 			return nil, fmt.Errorf("account has an unresolved planning lease or lease lookup failed")
 		}
 	}
@@ -201,7 +203,7 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 
 	// Create client via registry (covers all registered providers)
 	if agentModel == "custom" {
-		agentClient = agent.New()
+		agentClient = agent.NewClient()
 	} else if agentModel == "" {
 		agentModel = "deepseek"
 		agentClient = agent.NewClientByProvider(agentModel)
@@ -209,7 +211,7 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 		agentClient = agent.NewClientByProvider(agentModel)
 	}
 	if agentClient == nil {
-		agentClient = agent.New()
+		agentClient = agent.NewClient()
 	}
 
 	agentClient.SetAPIKey(apiKey, customURL, config.CustomModelName)
@@ -222,12 +224,12 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 	}
 
 	// Set default trading platform
-	if config.Exchange == "" {
-		config.Exchange = "binance"
+	if config.Venue == "" {
+		config.Venue = "binance"
 	}
 
 	// Create corresponding trader based on configuration
-	var trader Trader
+	var trader account.Trading
 
 	// Record position mode (general)
 	marginModeStr := "Cross Margin"
@@ -236,15 +238,15 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 	}
 	logger.Infof("📊 [%s] Position mode: %s", config.Name, marginModeStr)
 
-	switch config.Exchange {
+	switch config.Venue {
 	case "binance":
 		logger.Infof("🏦 [%s] Using Binance Futures trading", config.Name)
-		trader = binance.NewFuturesTrader(config.BinanceAPIKey, config.BinanceSecretKey)
+		trader = binance.NewAccount(config.BinanceAPIKey, config.BinanceSecretKey)
 	case "okx":
 		logger.Infof("🏦 [%s] Using OKX Futures trading", config.Name)
-		trader = okx.NewOKXTrader(config.OKXAPIKey, config.OKXSecretKey, config.OKXPassphrase)
+		trader = okx.NewAccount(config.OKXAPIKey, config.OKXSecretKey, config.OKXPassphrase)
 	default:
-		return nil, fmt.Errorf("unsupported trading platform: %s", config.Exchange)
+		return nil, fmt.Errorf("unsupported trading platform: %s", config.Venue)
 	}
 
 	// Validate initial balance configuration, auto-fetch from exchange if 0
@@ -261,7 +263,7 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 			logger.Infof("✓ [%s] Auto-fetched initial balance: %.2f USDT", config.Name, foundBalance)
 			// Save to database so it persists across restarts
 			if st != nil {
-				if err := st.Trader().UpdateInitialBalance(userID, config.ID, foundBalance); err != nil {
+				if err := st.Traders.UpdateInitialBalance(userID, config.ID, foundBalance); err != nil {
 					logger.Infof("⚠️  [%s] Failed to save initial balance to database: %v", config.Name, err)
 				} else {
 					logger.Infof("✓ [%s] Initial balance saved to database", config.Name)
@@ -275,28 +277,30 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 	// Get last cycle number (for recovery)
 	var cycleNumber int
 	if st != nil {
-		cycleNumber, _ = st.Decision().GetLastCycleNumber(config.ID)
+		cycleNumber, _ = st.Decisions.GetLastCycleNumber(config.ID)
 		logger.Infof("📊 [%s] Decision records will be stored to database", config.Name)
 	}
 
-	// Create strategy engine (must have strategy config)
-	if config.StrategyConfig == nil {
-		return nil, fmt.Errorf("[%s] strategy not configured", config.Name)
+	// An agent trader builds its prompts from its config
+	var engine *traderagent.Engine
+	switch {
+	case config.Agent != nil:
+		engine = traderagent.NewEngine(config.Agent).WithVenue(config.Venue)
+	case config.Grid == nil:
+		return nil, fmt.Errorf("[%s] config not set", config.Name)
 	}
-	strategyEngine := traderagent.NewStrategyEngine(config.StrategyConfig).WithVenue(config.Exchange)
-	logger.Infof("✓ [%s] Using strategy engine (strategy configuration loaded)", config.Name)
 
 	return &AutoTrader{
 		id:                    config.ID,
 		name:                  config.Name,
 		agentModel:            config.AgentModel,
-		exchange:              config.Exchange,
-		exchangeID:            config.ExchangeID,
+		venue:                 config.Venue,
+		accountID:             config.AccountID,
 		config:                config,
 		trader:                trader,
 		agentClient:           agentClient,
-		store:                 st,
-		strategyEngine:        strategyEngine,
+		stores:                st,
+		engine:                engine,
 		cycleNumber:           cycleNumber,
 		initialBalance:        config.InitialBalance,
 		lastResetTime:         time.Now(),
@@ -313,36 +317,37 @@ func NewAutoTrader(config AutoTraderConfig, st *store.Store, userID string) (*Au
 	}, nil
 }
 
-func (at *AutoTrader) reloadStrategyConfigIfChanged() error {
-	if at == nil || at.store == nil || at.config.StrategyID == "" {
+// reloadConfigIfChanged rereads an agent trader's own row, so an edit takes effect on
+// its next cycle. Sizing comes from the config's RiskControl, which Decode bounds
+// (ratio 0.5–10, leverage caps), and the margin auto-reduce at order time keeps the book
+// solvent.
+func (at *AutoTrader) reloadConfigIfChanged() error {
+	if at == nil || at.stores == nil || at.config.ID == "" {
 		return nil
 	}
 
-	strategy, err := at.store.Strategy().Get(at.userID, at.config.StrategyID)
+	row, err := at.stores.Traders.Get(at.userID, at.config.ID)
 	if err != nil {
-		return fmt.Errorf("failed to load strategy %s: %w", at.config.StrategyID, err)
+		return fmt.Errorf("failed to load trader %s: %w", at.config.ID, err)
 	}
 
-	if at.strategyEngine != nil && strategy.Config == at.config.StrategyConfigRaw {
+	if at.engine != nil && string(row.Config) == at.config.ConfigRaw {
 		return nil
 	}
 
-	strategyConfig, err := strategy.ParseConfig()
+	decoded, err := kind.Decode(row.Kind, row.Config)
 	if err != nil {
-		return fmt.Errorf("failed to parse strategy %s: %w", strategy.Name, err)
+		return fmt.Errorf("failed to read the config of %s: %w", row.Name, err)
 	}
-	strategyConfig.ClampLimits()
+	config, ok := decoded.(*kind.AgentConfig)
+	if !ok {
+		return fmt.Errorf("%s is not an agent trader", row.Name)
+	}
 
-	// NOTE: this used to hardcode the Autopilot book shape (6 positions ×
-	// equity×1.2 notional), silently overriding whatever the user configured in
-	// their strategy. Sizing now comes from the strategy's own RiskControl —
-	// ClampLimits above bounds it (ratio 0.5–10, leverage caps), and the
-	// margin auto-reduce at order time keeps the book solvent.
-
-	at.config.StrategyConfig = strategyConfig
-	at.config.StrategyConfigRaw = strategy.Config
-	at.strategyEngine = traderagent.NewStrategyEngine(strategyConfig).WithVenue(at.exchange)
-	at.logInfof("🔄 Strategy config refreshed from DB: %s", strategy.Name)
+	at.config.Agent = config
+	at.config.ConfigRaw = string(row.Config)
+	at.engine = traderagent.NewEngine(config).WithVenue(at.venue)
+	at.logInfof("🔄 Config refreshed from DB: %s", row.Name)
 	return nil
 }
 
@@ -350,13 +355,13 @@ func (at *AutoTrader) reloadStrategyConfigIfChanged() error {
 func (at *AutoTrader) Run() error {
 	// All launch paths (API, restoration and manager) respect a planning lease.
 	var unlock func()
-	if at.store != nil && at.exchangeID != "" {
-		ex, err := at.store.Exchange().GetByID(at.userID, at.exchangeID)
+	if at.stores != nil && at.accountID != "" {
+		ex, err := at.stores.Accounts.GetByID(at.userID, at.accountID)
 		if err != nil {
 			return fmt.Errorf("cannot verify planning account ownership: %w", err)
 		}
-		unlock = store.LockAccount(ex.ID)
-		if leased, err := at.store.Exchange().Leased(ex.ID); err != nil || leased {
+		unlock = account.Lock(ex.ID)
+		if leased, err := at.stores.Accounts.Leased(ex.ID); err != nil || leased {
 			unlock()
 			return fmt.Errorf("account has an unresolved planning lease or lease lookup failed")
 		}
@@ -383,10 +388,10 @@ func (at *AutoTrader) Run() error {
 	// Start drawdown monitoring
 	at.startDrawdownMonitor()
 
-	// Check if this is a grid trading strategy
-	isGridStrategy := at.IsGridStrategy()
-	if isGridStrategy {
-		at.logInfof("🔲 Grid trading strategy detected, initializing grid...")
+	// Check if this is a grid trader
+	isGrid := at.IsGrid()
+	if isGrid {
+		at.logInfof("🔲 Grid trader, initializing grid...")
 		if err := at.InitializeGrid(); err != nil {
 			at.logErrorf("❌ Failed to initialize grid: %v", err)
 			return fmt.Errorf("grid initialization failed: %w", err)
@@ -395,7 +400,7 @@ func (at *AutoTrader) Run() error {
 
 	// Execute immediately on first run
 	at.logInfof("▶️ Running first trading cycle immediately; next cycle starts after %v", at.config.ScanInterval)
-	if isGridStrategy {
+	if isGrid {
 		if err := at.RunGridCycle(); err != nil {
 			at.logErrorf("❌ Grid execution failed: %v", err)
 		}
@@ -419,7 +424,7 @@ func (at *AutoTrader) Run() error {
 
 		select {
 		case <-ticker.C:
-			if isGridStrategy {
+			if isGrid {
 				if err := at.RunGridCycle(); err != nil {
 					at.logErrorf("❌ Grid execution failed: %v", err)
 				}
@@ -452,21 +457,10 @@ func (at *AutoTrader) Stop() {
 	logger.Info("⏹ Automatic trading system stopped")
 }
 
-// GetID gets trader ID
-func (at *AutoTrader) GetID() string {
-	return at.id
-}
-
 // GetInitialBalance returns the account baseline used for performance metrics
 // (e.g. the drawdown equity curve).
 func (at *AutoTrader) GetInitialBalance() float64 {
 	return at.initialBalance
-}
-
-// GetUnderlyingTrader returns the underlying Trader interface implementation
-// This is used by grid trading and other components that need direct exchange access
-func (at *AutoTrader) GetUnderlyingTrader() Trader {
-	return at.trader
 }
 
 // GetName gets trader name
@@ -474,35 +468,15 @@ func (at *AutoTrader) GetName() string {
 	return at.name
 }
 
-// GetAgentModel gets model
-func (at *AutoTrader) GetAgentModel() string {
-	return at.agentModel
-}
-
-// GetExchange gets exchange
-func (at *AutoTrader) GetExchange() string {
-	return at.exchange
-}
-
-// GetCandidateCoins returns the current candidate coin set from the trader's strategy engine.
-func (at *AutoTrader) GetCandidateCoins() ([]traderagent.CandidateCoin, error) {
-	if at.strategyEngine == nil {
-		return nil, fmt.Errorf("strategy engine not configured")
+// limits are what the code enforces on this trader now, kept with each cycle's record.
+func (at *AutoTrader) limits() any {
+	switch {
+	case at.config.Agent != nil:
+		return at.config.Agent.Limits()
+	case at.config.Grid != nil:
+		return at.config.Grid.Limits()
 	}
-	return at.strategyEngine.GetCandidateCoins()
-}
-
-// GetStrategyConfig returns the current strategy config used by the trader.
-func (at *AutoTrader) GetStrategyConfig() *store.StrategyConfig {
-	if at.strategyEngine == nil {
-		return at.config.StrategyConfig
-	}
-	return at.strategyEngine.GetConfig()
-}
-
-// GetStore gets data store (for external access to decision records, etc.)
-func (at *AutoTrader) GetStore() *store.Store {
-	return at.store
+	return nil
 }
 
 // calculatePnLPercentage calculates P&L percentage (based on margin, automatically considers leverage)

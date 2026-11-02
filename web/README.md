@@ -1,6 +1,6 @@
 # vergex web
 
-The vergex frontend: React 18, TypeScript, Vite, Tailwind v4, SWR, lightweight-charts. UI conventions are in the frontend section of [AGENTS.md](../AGENTS.md).
+The vergex frontend: React 18, TypeScript, Vite, Tailwind v4, TanStack Query, lightweight-charts. UI conventions are in the frontend section of [AGENTS.md](../AGENTS.md), and how the interface looks is in [DESIGN.md](../DESIGN.md).
 
 ## Commands
 
@@ -29,6 +29,6 @@ pnpm format   # format src/ with Prettier
 | `utils/` | Shared helpers outside components |
 | `constants/` | Shared values such as route paths and model providers |
 | `i18n/` | UI copy, one folder per language under `locales/`, read through `@/i18n` |
-| `styles/` | Global styles (`index.css`) and theme variables (`brand.css`) |
+| `styles/` | `index.css` imports `tokens.css` (every design token and the Tailwind theme), `base.css` (element defaults) and `shell.css` (top bar, page frame, toasts, sign-in) |
 | `types/` | Shared types |
 | `tests/` | Vitest tests, mirroring the paths above; `setup.ts` runs before them |

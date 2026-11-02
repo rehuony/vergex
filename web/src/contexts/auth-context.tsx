@@ -1,10 +1,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react'
 import { flushSync } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { getSystemConfig, invalidateSystemConfig } from '@/api/system-config'
+import { invalidateSystemConfig } from '@/api/system'
 import { reset401Flag, httpClient } from '@/api/http-client'
 import { ROUTES } from '@/constants/route-paths'
 import { useLanguage } from './language-context'
+import { clearQueryCache } from '@/utils/query-client'
 
 interface User {
   id: string
@@ -29,8 +30,7 @@ interface AuthContextType {
   }>
   register: (
     email: string,
-    password: string,
-    betaCode?: string
+    password: string
   ) => Promise<{ success: boolean; message?: string }>
   logout: () => void
   isLoading: boolean
@@ -49,31 +49,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Reset 401 flag on page load to allow fresh 401 handling
     reset401Flag()
 
-    // Check if admin mode is active (uses cached system config)
-    getSystemConfig()
-      .then(() => {
-        // No longer simulate login in admin mode; check local storage uniformly
-        const savedToken = localStorage.getItem('auth_token')
-        const savedUser = localStorage.getItem('auth_user')
-        if (savedToken && savedUser) {
-          setToken(savedToken)
-          setUser(JSON.parse(savedUser))
-        }
-
-        setIsLoading(false)
-      })
-      .catch((err) => {
-        console.error('Failed to fetch system config:', err)
-        // On error, continue checking local storage
-        const savedToken = localStorage.getItem('auth_token')
-        const savedUser = localStorage.getItem('auth_user')
-
-        if (savedToken && savedUser) {
-          setToken(savedToken)
-          setUser(JSON.parse(savedUser))
-        }
-        setIsLoading(false)
-      })
+    const savedToken = localStorage.getItem('auth_token')
+    const savedUser = localStorage.getItem('auth_user')
+    if (savedToken && savedUser) {
+      setToken(savedToken)
+      setUser(JSON.parse(savedUser))
+    }
+    setIsLoading(false)
   }, [])
 
   // Listen for unauthorized events from httpClient (401 responses)
@@ -83,6 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Clear auth state when 401 is detected
       setUser(null)
       setToken(null)
+      clearQueryCache()
       // Note: localStorage cleanup is already done in httpClient
     }
 
@@ -104,13 +87,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(userInfo)
     })
 
+    // A 401 that led to the setup page was never read by the login page.
+    sessionStorage.removeItem('from401')
+
     const returnUrl = sessionStorage.getItem('returnUrl')
     const nextPath = returnUrl || ROUTES.dashboard
     if (returnUrl) {
       sessionStorage.removeItem('returnUrl')
     }
 
-    navigate(nextPath)
+    // Replace, so Back doesn't return to the sign-in address, which only redirects.
+    navigate(nextPath, { replace: true })
   }
 
   const login = async (email: string, password: string) => {
@@ -191,20 +178,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  const register = async (
-    email: string,
-    password: string,
-    betaCode?: string
-  ) => {
-    const requestBody: {
-      email: string
-      password: string
-      beta_code?: string
-      lang?: string
-    } = { email, password, lang: language }
-    if (betaCode) {
-      requestBody.beta_code = betaCode
-    }
+  const register = async (email: string, password: string) => {
+    const requestBody = { email, password, lang: language }
 
     try {
       const result = await httpClient.post<{
@@ -260,6 +235,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setToken(null)
     localStorage.removeItem('auth_token')
     localStorage.removeItem('auth_user')
+    localStorage.removeItem('user_id')
+    clearQueryCache()
     invalidateSystemConfig()
     navigate(ROUTES.home)
   }

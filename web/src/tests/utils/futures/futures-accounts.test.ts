@@ -1,0 +1,40 @@
+import { beforeEach, expect, it } from 'vitest'
+import type { Account } from '@/types'
+import {
+  accountLabel,
+  preferredAccount,
+  rememberAccount,
+} from '@/utils/futures/futures-accounts'
+const accounts = [
+  {
+    id: 'aaaa1111-1',
+    venue_name: 'Binance Futures',
+    name: 'Main',
+    venue: 'binance',
+  },
+  {
+    id: 'bbbb2222-2',
+    venue_name: 'Binance Futures',
+    name: 'Main',
+    venue: 'binance',
+  },
+] as Account[]
+beforeEach(() => localStorage.clear())
+it('disambiguates duplicate account names without displaying credentials', () => {
+  expect(accountLabel(accounts[0], accounts)).toBe('Main · aaaa1111')
+  expect(accountLabel(accounts[1], accounts)).toBe('Main · bbbb2222')
+})
+it('isolates saved selections by user and falls back when an account is removed', () => {
+  localStorage.setItem('user_id', 'alice')
+  rememberAccount('binance', accounts[1].id)
+  expect(preferredAccount(accounts, 'binance')).toBe(accounts[1].id)
+  localStorage.setItem('user_id', 'bob')
+  expect(preferredAccount(accounts, 'binance')).toBe(accounts[0].id)
+  localStorage.setItem('user_id', 'alice')
+  expect(preferredAccount([accounts[0]], 'binance')).toBe(accounts[0].id)
+})
+it('picks an account whenever the venue has one', () => {
+  rememberAccount('binance', '')
+  expect(preferredAccount(accounts, 'binance')).toBe(accounts[0].id)
+  expect(preferredAccount(accounts, 'okx')).toBe('')
+})

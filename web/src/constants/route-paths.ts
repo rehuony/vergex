@@ -2,46 +2,39 @@
 export type Page =
   | 'dashboard'
   | 'forecast'
-  | 'planning'
+  | 'futures'
   | 'traders'
-  | 'strategies'
   | 'help'
   | 'login'
-  | 'register'
 
 export const ROUTES = {
   home: '/',
   dashboard: '/dashboard',
-  planning: '/frontier',
+  futures: '/futures',
   traders: '/traders',
-  traderDetail: '/traders/:slug/*',
-  strategies: '/strategies',
+  tradersOverview: '/traders/overview',
   forecast: '/forecast',
   forecastStrategies: '/forecast/strategies',
   forecastBacktests: '/forecast/backtests',
   forecastSettings: '/forecast/settings',
-  forecastDetail: '/forecast/:symbol',
   help: '/help',
   login: '/login',
-  register: '/register',
   setup: '/setup',
   resetPassword: '/reset-password',
-  resetAccount: '/reset-account',
+  resetUser: '/reset-user',
 } as const
 
 // Settings open as a dialog over the current page, named by this query
-// parameter (?settings=account, models, exchanges, costs or telegram).
+// parameter (?settings=profile, accounts, models, costs or telegram).
 export const SETTINGS_PARAM = 'settings'
 
 const SECTION_PREFIXES: [string, Page][] = [
   [ROUTES.dashboard, 'dashboard'],
   [ROUTES.forecast, 'forecast'],
-  [ROUTES.planning, 'planning'],
+  [ROUTES.futures, 'futures'],
   [ROUTES.traders, 'traders'],
-  [ROUTES.strategies, 'strategies'],
   [ROUTES.help, 'help'],
   [ROUTES.login, 'login'],
-  [ROUTES.register, 'register'],
 ]
 
 export function getCurrentPageForPath(pathname: string): Page | undefined {
@@ -53,18 +46,19 @@ export function getCurrentPageForPath(pathname: string): Page | undefined {
 }
 
 export function buildForecastPath(symbol: string, interval: string): string {
-  return `${ROUTES.forecast}/${encodeURIComponent(symbol)}?interval=${interval}`
+  return `${ROUTES.forecast}?symbol=${encodeURIComponent(symbol)}&interval=${interval}`
 }
 
-export function buildStrategyPath(strategyId: string): string {
-  return `${ROUTES.strategies}?strategy=${encodeURIComponent(strategyId)}`
+// buildTraderPath opens a trader on a tab, which can carry its own parameters.
+export function buildTraderPath(traderId: string, section = ''): string {
+  const [tab, more] = section.split('?')
+  const query = new URLSearchParams({ id: traderId })
+  if (tab) query.set('tab', tab)
+  new URLSearchParams(more).forEach((value, name) => query.set(name, value))
+  return `${ROUTES.traders}?${query}`
 }
 
-export function buildTraderPath(traderSlug: string): string {
-  return `${ROUTES.traders}/${encodeURIComponent(traderSlug)}`
-}
-
-export interface FrontierLink {
+export interface FuturesLink {
   venue?: string
   symbol?: string
   account?: string
@@ -72,12 +66,12 @@ export interface FrontierLink {
   tab?: string
 }
 
-// buildFrontierPath opens Frontier on a market, account, plan or section.
-export function buildFrontierPath(link: FrontierLink): string {
+// buildFuturesPath opens Futures on a market, account, plan or section.
+export function buildFuturesPath(link: FuturesLink): string {
   const query = new URLSearchParams()
   for (const [name, value] of Object.entries(link)) {
     if (value) query.set(name, value)
   }
   const text = query.toString()
-  return text ? `${ROUTES.planning}?${text}` : ROUTES.planning
+  return text ? `${ROUTES.futures}?${text}` : ROUTES.futures
 }

@@ -31,7 +31,7 @@ export function SortHeader<K extends string>({
     >
       <button
         type="button"
-        className="inline-flex items-center gap-1 font-medium hover:text-vergex-text"
+        className="inline-flex items-center gap-1 font-medium hover:text-vergex-ink"
         onClick={() => onSort(column)}
       >
         {/* The arrow keeps its place when hidden, so choosing a column moves nothing. */}

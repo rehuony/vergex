@@ -1,12 +1,12 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { ActivityEvent } from '@/api/activity'
-import type { Overview } from '@/api/overview'
+import type { ActivityEvent } from '@/api/dashboard'
+import type { Overview } from '@/api/dashboard'
 import { AttentionList } from '@/components/dashboard/attention-list'
 import { FirstRun } from '@/components/dashboard/first-run'
 import { FlowEvents } from '@/components/dashboard/flow-events'
-import { layoutFlow, lineOf } from '@/components/dashboard/flow-layout'
+import { BLOCKS, LINES, lineOf } from '@/components/dashboard/flow-layout'
 import { blockViews } from '@/components/dashboard/flow-members'
 import { eventWhat, lineSummary } from '@/components/dashboard/flow-text'
 import { PositionsOverview } from '@/components/dashboard/positions-overview'
@@ -43,7 +43,7 @@ const event = (fields: Partial<ActivityEvent>): ActivityEvent => ({
 })
 
 const position = {
-  exchange_id: 'e',
+  account_id: 'e',
   symbol: 'BTCUSDT',
   side: 'long' as const,
   quantity: 1,
@@ -64,17 +64,23 @@ it('offers no way to act on a position from the overview', () => {
     </MemoryRouter>
   )
   expect(screen.getByText('BTC')).toBeInTheDocument()
-  expect(screen.getByText('Frontier')).toBeInTheDocument()
+  expect(screen.getByText('Futures')).toBeInTheDocument()
   expect(screen.queryByRole('button')).not.toBeInTheDocument()
 })
 
-it('takes no space when nothing needs attention, and links to the fix when it does', () => {
-  const { container, rerender } = render(
+const openAttention = (count: number) =>
+  fireEvent.click(
+    screen.getByRole('button', { name: `Needs attention ${count} open` })
+  )
+
+it('says when nothing needs attention, and links to the fix when something does', () => {
+  const { rerender } = render(
     <MemoryRouter>
       <AttentionList overview={overview()} language="en" />
     </MemoryRouter>
   )
-  expect(container).toBeEmptyDOMElement()
+  expect(screen.getByText('None')).toBeInTheDocument()
+  expect(screen.queryByRole('button')).not.toBeInTheDocument()
   rerender(
     <MemoryRouter>
       <AttentionList
@@ -85,7 +91,7 @@ it('takes no space when nothing needs attention, and links to the fix when it do
               trader_name: 'Alpha',
               is_running: true,
               agent_model_id: 'm',
-              exchange_id: 'e',
+              account_id: 'e',
             },
           ],
           attention: [
@@ -101,11 +107,16 @@ it('takes no space when nothing needs attention, and links to the fix when it do
       />
     </MemoryRouter>
   )
+  openAttention(1)
   expect(screen.getByRole('link')).toHaveAttribute(
     'href',
-    '/traders/Alpha-abcd'
+    '/traders?id=abcd1234'
   )
   expect(screen.getByText('Alpha is in safe mode')).toBeInTheDocument()
+
+  // What the row opens belongs in front of the list.
+  fireEvent.click(screen.getByRole('link'))
+  expect(screen.queryByRole('link')).not.toBeInTheDocument()
 })
 
 it('says which trade the ledger is missing and where to look', () => {
@@ -128,6 +139,7 @@ it('says which trade the ledger is missing and where to look', () => {
       />
     </MemoryRouter>
   )
+  openAttention(1)
   expect(
     screen.getByText('A trade on OLD-USDT-SWAP is not in the ledger')
   ).toBeInTheDocument()
@@ -151,6 +163,7 @@ it('names a kind of problem once, however many have it', () => {
       />
     </MemoryRouter>
   )
+  openAttention(3)
   expect(screen.getAllByRole('link')).toHaveLength(1)
   expect(screen.getByText('Main +2 is unavailable')).toBeInTheDocument()
 })
@@ -159,7 +172,7 @@ it('adds up only the accounts it could read, and shows a dash for none', () => {
   const account = {
     id: 'b',
     name: 'B',
-    exchange_type: 'okx',
+    venue: 'okx',
     status: 'unavailable',
   }
   expect(
@@ -172,7 +185,7 @@ it('adds up only the accounts it could read, and shows a dash for none', () => {
         {
           id: 'a',
           name: 'A',
-          exchange_type: 'binance',
+          venue: 'binance',
           status: 'ok',
           total_equity: 100,
         },
@@ -211,20 +224,53 @@ it('shows one dot per model host, with the models that use it', () => {
   expect(views.models.members[0].title).toBe('one.example · Fast, Deep')
 })
 
-it('keeps every route on the grid at any size', () => {
-  for (const [width, height] of [
-    [640, 352],
-    [860, 700],
-    [1500, 1100],
-  ]) {
-    const layout = layoutFlow(width, height)
-    for (const line of layout.lines) {
-      for (const dot of line.dots) {
-        expect(dot.x % layout.pitch).toBe(0)
-        expect(dot.y % layout.pitch).toBe(0)
-      }
-    }
+it('runs every line left to right, so the flow has one direction', () => {
+  for (const place of Object.values(LINES)) {
+    expect(BLOCKS[place.from].x).toBeLessThan(BLOCKS[place.to].x)
   }
+})
+
+it('keeps calls to a model apart from orders and money', () => {
+  for (const [key, place] of Object.entries(LINES)) {
+    const toModels = place.to === 'models' || place.from === 'models'
+    expect([key, place.deck]).toEqual([key, toModels ? 1 : 0])
+  }
+})
+
+it('names coins by symbol, so an event can light the ones it covers', () => {
+  const views = blockViews(
+    overview({
+      forecast: { name: 'S', coins: 1, symbols: ['BTCUSDT'] },
+      market: { coins: 2, live: true, symbols: ['BTCUSDT', 'ETHUSDT'] },
+    }),
+    label
+  )
+  expect(views.forecast.members.map((member) => member.id)).toEqual(['BTCUSDT'])
+  expect(views.market.members.map((member) => member.title)).toEqual([
+    'BTC',
+    'ETH',
+  ])
+})
+
+it('says the stream is down, and how much it delivered while up', () => {
+  const market = { coins: 1, live: true, symbols: ['BTCUSDT'] }
+  const up = blockViews(overview({ market }), label, {
+    'exchange>market': { h1: { count: 3, items: 1200 }, h24: { count: 3 } },
+  })
+  expect(up.exchange.sub).toBe('1,200 messages, 1h')
+  const down = blockViews(
+    overview({ market }),
+    label,
+    {},
+    {
+      at: 1,
+      messages: 0,
+      topics: 0,
+      connected: false,
+    }
+  )
+  expect(down.exchange.warn).toBe(true)
+  expect(down.exchange.sub).toBe('Stream down')
 })
 
 it('runs a reply back along the line its request took', () => {
@@ -274,7 +320,7 @@ const eventsProps = {
         trader_name: 'Alpha',
         is_running: true,
         agent_model_id: 'm',
-        exchange_id: 'e',
+        account_id: 'e',
       },
     ],
   }),
@@ -304,7 +350,7 @@ it('opens the real thing behind an event, and filters by kind and by line', () =
     id: 'plan',
     kind: 'orders',
     type: 'plan_order',
-    from: { block: 'frontier', id: 'run', name: 'BTCUSDT' },
+    from: { block: 'futures', id: 'run', name: 'BTCUSDT' },
     to: { block: 'accounts', id: 'e', name: 'Main' },
     ref: 'p1',
     action: 'entry',
@@ -319,12 +365,12 @@ it('opens the real thing behind an event, and filters by kind and by line', () =
   )
   expect(screen.getByText('Open long BTC 0.5').closest('a')).toHaveAttribute(
     'href',
-    '/traders/Alpha-abcd/orders'
+    '/traders?id=abcd1234&tab=orders'
   )
   expect(screen.getByText('Filled')).toBeInTheDocument()
   expect(screen.getByText('Entry BTC 1').closest('a')).toHaveAttribute(
     'href',
-    '/frontier?plan=p1&tab=positions'
+    '/futures?plan=p1&tab=positions'
   )
   expect(screen.getByText('deepseek-chat · 4,812 tokens')).toBeInTheDocument()
 
@@ -340,7 +386,7 @@ it('opens the real thing behind an event, and filters by kind and by line', () =
     <MemoryRouter>
       <FlowEvents
         {...eventsProps}
-        selection={{ type: 'line', key: 'frontier>accounts' }}
+        selection={{ type: 'line', key: 'futures>accounts' }}
         events={[order, plan, call]}
       />
     </MemoryRouter>
@@ -381,6 +427,6 @@ it('leads a new account through setup, picking out the next step', () => {
   expect(screen.queryByText('Add model')).not.toBeInTheDocument()
   expect(screen.getByText('Add account')).toHaveAttribute(
     'href',
-    '?settings=exchanges'
+    '?settings=accounts'
   )
 })

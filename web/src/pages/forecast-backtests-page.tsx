@@ -1,24 +1,30 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { Pencil, Plus, RotateCw, Square, Trash2 } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
-import useSWR from 'swr'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api'
-import { FORECAST_INTERVALS, type BacktestRun } from '@/api/forecast'
-import { SymbolsField } from '@/components/common/form-fields'
-import { notify } from '@/components/common/notify'
-import { Panel, PanelState } from '@/components/common/panel'
-import { Segmented } from '@/components/common/segmented'
+import type { BacktestRun } from '@/api/forecast'
 import {
-  BacktestReportView,
-  hitRateText,
-} from '@/components/forecast/backtest-report'
+  RailItem,
+  SplitRail,
+  SplitView,
+  type RailAction,
+} from '@/components/common/split-view'
+import { confirmToast, notify } from '@/components/common/notify'
+import { Panel, PanelState } from '@/components/common/panel'
+import { SettingBadge } from '@/components/common/setting-row'
+import { BacktestForm } from '@/components/forecast/backtest-form'
+import { BacktestReportView } from '@/components/forecast/backtest-report'
 import {
   baseAsset,
   fmtDate,
-  fmtPct,
+  fmtRate,
   fmtTime,
 } from '@/components/forecast/forecast-format'
 import { ForecastFrame } from '@/components/forecast/forecast-frame'
-import { SettingActions, SettingRow } from '@/components/common/setting-row'
+import { backtestsQuery } from '@/components/forecast/forecast-queries'
+import { EditableTitle, NameInput } from '@/components/common/name-editing'
+import { useStrategies } from '@/components/forecast/strategy-select'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AppSelect } from '@/components/ui/select'
@@ -26,360 +32,390 @@ import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
 import { cn } from '@/utils/cn'
 
-const RANGES = { '3': '3m', '6': '6m', '12': '1y', '24': '2y' } as const
-type Range = keyof typeof RANGES
+const CANCELED = 'canceled'
 
-const headClass = 'px-3 py-2 text-xs font-medium whitespace-nowrap'
-const cellClass = 'px-3 py-2.5 whitespace-nowrap'
-
-const pct = (value: number) => `${(value * 100).toFixed(1)}%`
-
+// Past runs beside the report of the one opened, or the form for another. Each run in
+// the list shows its result, so runs can be compared at a glance. The address says which
+// is open, so a reload stays on it.
 export function ForecastBacktestsPage() {
   const { language } = useLanguage()
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`forecast.${key}`, language, params)
-  const [params] = useSearchParams()
-
-  const { data: strategies } = useSWR(
-    'forecast-strategies',
-    api.getForecastStrategies,
-    { revalidateOnFocus: false }
-  )
-  const { data: settings } = useSWR(
-    'market-data-settings',
-    api.getMarketDataSettings,
-    { revalidateOnFocus: false }
-  )
-  const { data: runs, mutate } = useSWR(
-    'forecast-backtests',
-    api.getForecastBacktests,
-    {
-      refreshInterval: (latest) =>
-        latest?.backtests.some((run) => run.status === 'running') ? 2000 : 0,
-    }
-  )
-  const { data: status, mutate: refreshStatus } = useSWR(
-    'market-data-status',
-    api.getMarketDataStatus,
-    {
-      refreshInterval: (latest) => (latest?.backfill.running ? 2000 : 15000),
-    }
-  )
-
-  const [strategyId, setStrategyId] = useState(params.get('strategy') ?? '')
-  const [symbols, setSymbols] = useState<string[] | null>(null)
-  const [intervals, setIntervals] = useState<string[]>(['1h', '4h'])
-  const [range, setRange] = useState<Range>('12')
-  const [busy, setBusy] = useState(false)
-  const [openRun, setOpenRun] = useState<number | null>(null)
-
-  const chosenSymbols = symbols ?? settings?.watchlist.slice(0, 5) ?? []
-  const strategy = strategyId || strategies?.active_strategy_id || ''
-
-  const coverageKey =
-    chosenSymbols.length && intervals.length
-      ? ['forecast-coverage', chosenSymbols.join(), intervals.join()]
-      : null
-  const { data: coverage, mutate: refreshCoverage } = useSWR(coverageKey, () =>
-    api.getHistoryCoverage(chosenSymbols, intervals)
-  )
-
-  // A finished download changes what is held locally.
-  const backfilling = status?.backfill.running
-  const backfilledAt = status?.backfill.finished_at
-  useEffect(() => {
-    if (backfilledAt) void refreshCoverage()
-  }, [backfilledAt, refreshCoverage])
-
-  const months = Number(range)
-  const from = new Date()
-  from.setMonth(from.getMonth() - months)
-  const wanted = from.getTime()
-  const missing = (coverage?.coverage ?? []).filter(
-    (row) => row.candles === 0 || row.first > wanted
-  )
-
-  const toggleInterval = (interval: string) =>
-    setIntervals((current) =>
-      current.includes(interval)
-        ? current.filter((item) => item !== interval)
-        : [...current, interval]
-    )
-
-  const run = async () => {
-    setBusy(true)
-    try {
-      const started = await api.startForecastBacktest({
-        strategy_id: strategy,
-        symbols: chosenSymbols,
-        intervals,
-        from: wanted,
-        to: Date.now(),
-      })
-      setOpenRun(started.id)
-      await mutate()
-    } catch (err) {
-      notify.error(err instanceof Error ? err.message : label('runFailed'))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const download = async () => {
-    setBusy(true)
-    try {
-      await api.startBackfill({
-        symbols: chosenSymbols,
-        intervals,
-        months,
-        derivatives: false,
-      })
-      notify.success(label('downloadStarted'))
-      await refreshStatus()
-    } catch (err) {
-      notify.error(err instanceof Error ? err.message : label('runFailed'))
-    } finally {
-      setBusy(false)
-    }
-  }
+  const [params, setParams] = useSearchParams()
+  const askedStrategy = params.get('strategy')
+  const askedRun = params.get('run')
+  const [again, setAgain] = useState<BacktestRun | null>(null)
+  const [renaming, setRenaming] = useState<number | null>(null)
+  const [renamingHere, setRenamingHere] = useState(false)
+  const { data: strategies } = useStrategies(language)
+  const client = useQueryClient()
+  const { data: runs, refetch } = useQuery({
+    ...backtestsQuery,
+    refetchInterval: (query) =>
+      query.state.data?.backtests.some((run) => run.status === 'running')
+        ? 2000
+        : false,
+  })
 
   const list: BacktestRun[] = runs?.backtests ?? []
-  const strategyNames = Object.fromEntries(
-    (strategies?.strategies ?? []).map((item) => [item.id, item.name])
-  )
-  const shown =
-    list.find((item) => item.id === openRun) ??
-    list.find((item) => item.status === 'finished')
-  const running = list.some((item) => item.status === 'running')
-  const message = backfilling
-    ? label('downloading', {
-        current: status?.backfill.current ?? '',
-        done: status?.backfill.done ?? 0,
-        total: status?.backfill.total ?? 0,
-      })
-    : missing.length > 0
-      ? label('historyMissing', {
-          date: fmtDate(wanted),
-          count: missing.length,
-        })
-      : undefined
+  const strategyName = (run: BacktestRun) =>
+    strategies?.strategies.find((item) => item.id === run.strategy_id)?.name ??
+    '—'
+  const runName = (run: BacktestRun) => run.name || strategyName(run)
+  const usableStrategy = (run: BacktestRun) =>
+    strategies?.strategies.some(
+      (item) => item.id === run.strategy_id && !item.retired
+    ) ?? false
+  const running = list.some((run) => run.status === 'running')
+  const wantsNew = askedRun === 'new' || (Boolean(askedStrategy) && !askedRun)
+  const current = wantsNew
+    ? undefined
+    : (list.find((run) => String(run.id) === askedRun) ?? list[0])
+  const showForm = wantsNew || (runs && list.length === 0)
+
+  const { data: whole } = useQuery({
+    queryKey: ['forecast-backtest', current?.id],
+    queryFn: () => api.getForecastBacktest(current!.id),
+    enabled: current?.status === 'finished',
+  })
+
+  const open = (id: number) => {
+    setAgain(null)
+    setParams({ run: String(id) }, { replace: true })
+  }
+  const openForm = (run: BacktestRun | null = null) => {
+    setAgain(run)
+    setParams({ run: 'new' }, { replace: true })
+  }
+  const started = async (run: BacktestRun) => {
+    open(run.id)
+    await refetch()
+  }
+  const cancel = async (id: number) => {
+    try {
+      await api.cancelForecastBacktest(id)
+      await refetch()
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : label('runFailed'))
+    }
+  }
+  const rename = async (run: BacktestRun, name: string) => {
+    setRenaming(null)
+    setRenamingHere(false)
+    if (!runs) return
+    const renamed = {
+      ...runs,
+      backtests: runs.backtests.map((other) =>
+        other.id === run.id ? { ...other, name } : other
+      ),
+    }
+    client.setQueryData(backtestsQuery.queryKey, renamed)
+    try {
+      await api.renameForecastBacktest(run.id, name)
+    } catch {
+      client.setQueryData(backtestsQuery.queryKey, runs)
+      notify.error(label('renameFailed'))
+    }
+  }
+  const remove = async (run: BacktestRun) => {
+    const name = runName(run)
+    const ok = await confirmToast(label('deleteRunMessage', { name }), {
+      title: label('deleteRun'),
+      okText: label('deleteRun'),
+      cancelText: label('deleteCancel'),
+      tone: 'danger',
+    })
+    if (!ok) return
+    try {
+      await api.deleteForecastBacktest(run.id)
+      if (run.id === current?.id) setParams({}, { replace: true })
+      await refetch()
+      notify.success(label('runDeleted', { name }))
+    } catch (err) {
+      notify.error(
+        err instanceof Error ? err.message : label('deleteRunFailed')
+      )
+    }
+  }
+
+  const coinsText = (run: BacktestRun) =>
+    `${run.options.symbols.map(baseAsset).join(', ')} · ${run.options.intervals.join(', ')}`
+  const stateBadge = (run: BacktestRun) =>
+    run.status === 'running' ? (
+      <SettingBadge>
+        {run.done} / {run.total}
+      </SettingBadge>
+    ) : run.status === 'failed' ? (
+      <SettingBadge tone={run.error === CANCELED ? 'muted' : 'danger'}>
+        {label(run.error === CANCELED ? 'runCanceledShort' : 'runFailedShort')}
+      </SettingBadge>
+    ) : null
+  const actionsFor = (run: BacktestRun): RailAction[] => [
+    {
+      label: label('rename'),
+      icon: Pencil,
+      movesFocus: true,
+      onSelect: () => setRenaming(run.id),
+    },
+    ...(usableStrategy(run)
+      ? [
+          {
+            label: label('runAgain'),
+            icon: RotateCw,
+            onSelect: () => openForm(run),
+          },
+        ]
+      : []),
+    ...(run.status === 'running'
+      ? [
+          {
+            label: label('runCancel'),
+            icon: Square,
+            onSelect: () => void cancel(run.id),
+          },
+        ]
+      : []),
+    {
+      label: label('deleteRun'),
+      icon: Trash2,
+      danger: true,
+      disabled: run.status === 'running',
+      onSelect: () => void remove(run),
+    },
+  ]
 
   return (
     <ForecastFrame language={language}>
-      <div className="flex min-w-0 flex-col gap-4">
-        <Panel title={label('newBacktest')}>
-          <div className="border-t border-[var(--line)] px-4">
-            <SettingRow label={label('strategy')} htmlFor="bt-strategy">
-              <AppSelect
-                id="bt-strategy"
-                className="h-9 max-sm:h-10"
-                value={strategy}
-                options={(strategies?.strategies ?? []).map((item) => ({
-                  value: item.id,
-                  label: item.name,
-                }))}
-                onChange={(id) => setStrategyId(id)}
-              />
-            </SettingRow>
-            <SettingRow label={label('coins')} htmlFor="bt-symbols">
-              <SymbolsField
-                id="bt-symbols"
-                values={chosenSymbols}
-                placeholder="BTCUSDT, ETHUSDT"
-                max={50}
-                limitMessage={label('coinLimit', { count: 50 })}
-                addLabel={label('add')}
-                removeLabel={(symbol) => label('remove', { symbol })}
-                onChange={setSymbols}
-              />
-            </SettingRow>
-            <SettingRow label={label('intervals')}>
-              <div
-                role="group"
-                aria-label={label('intervals')}
-                className="flex flex-wrap gap-1.5"
-              >
-                {FORECAST_INTERVALS.map((interval) => (
-                  <Button
-                    key={interval}
-                    type="button"
-                    variant="option"
-                    size="sm"
-                    aria-pressed={intervals.includes(interval)}
-                    onClick={() => toggleInterval(interval)}
-                    className="h-8 px-2.5 text-xs max-sm:h-10"
-                  >
-                    {interval}
-                  </Button>
-                ))}
-              </div>
-            </SettingRow>
-            <SettingRow label={label('period')}>
-              <Segmented
-                aria-label={label('period')}
-                value={range}
-                options={(Object.keys(RANGES) as Range[]).map((value) => ({
-                  value,
-                  label: RANGES[value],
-                }))}
-                onChange={setRange}
-              />
-            </SettingRow>
-            <SettingActions message={message} messageTone="muted">
-              {missing.length > 0 && (
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="max-sm:h-10"
-                  disabled={busy || backfilling}
-                  onClick={() => void download()}
-                >
-                  {label('downloadHistory')}
-                </Button>
-              )}
-              <Button
-                type="button"
-                variant="primary"
-                size="sm"
-                className="max-sm:h-10"
-                disabled={
-                  busy ||
-                  running ||
-                  !strategy ||
-                  chosenSymbols.length === 0 ||
-                  intervals.length === 0
-                }
-                onClick={() => void run()}
-              >
-                {running ? label('runningBacktest') : label('runBacktest')}
-              </Button>
-            </SettingActions>
-          </div>
-        </Panel>
-
-        <Panel title={label('runs')}>
-          {list.length === 0 ? (
-            <PanelState role="status">{label('noRuns')}</PanelState>
-          ) : (
-            <ScrollArea className="max-h-72">
-              <table className="w-full text-left text-[13px] tabular-nums">
-                <thead className="text-vergex-text-muted">
-                  <tr className="border-y border-[var(--line)]">
-                    <th className={headClass}>{label('run')}</th>
-                    <th className={cn(headClass, 'max-md:hidden')}>
-                      {label('coins')}
-                    </th>
-                    <th className={cn(headClass, 'text-right')}>
-                      {label('samples')}
-                    </th>
-                    <th className={cn(headClass, 'text-right')}>
-                      {label('hitRate')}
-                    </th>
-                    <th className={cn(headClass, 'text-right max-sm:hidden')}>
-                      {label('baseRate')}
-                    </th>
-                    <th className={cn(headClass, 'text-right')}>
-                      {label('lift')}
-                    </th>
-                    <th className={cn(headClass, 'text-right max-sm:hidden')}>
-                      {label('afterFees')}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {list.map((item) => {
-                    const metrics = item.report?.overall
-                    return (
-                      <tr
-                        key={item.id}
-                        aria-selected={shown?.id === item.id}
-                        className="cursor-pointer border-b border-[var(--line)] last:border-b-0 hover:bg-vergex-bg aria-selected:bg-[var(--brand-soft)]"
-                        onClick={() => setOpenRun(item.id)}
-                      >
-                        <td className={cellClass}>
-                          <div className="font-medium text-vergex-text">
-                            {strategyNames[item.strategy_id] ?? '—'}
-                          </div>
-                          <div className="text-xs text-vergex-text-muted">
-                            {fmtTime(item.created_at)}
-                          </div>
-                        </td>
-                        <td
-                          className={cn(
-                            cellClass,
-                            'max-w-64 truncate text-vergex-text-muted max-md:hidden'
-                          )}
-                          title={item.options.symbols.join(', ')}
-                        >
-                          {item.options.symbols.map(baseAsset).join(', ')} ·{' '}
-                          {item.options.intervals.join(', ')}
-                        </td>
-                        {item.status === 'finished' && metrics ? (
-                          <>
-                            <td className={cn(cellClass, 'text-right')}>
-                              {metrics.samples}
-                            </td>
-                            <td className={cn(cellClass, 'text-right')}>
-                              {hitRateText(metrics)}
-                            </td>
-                            <td
-                              className={cn(
-                                cellClass,
-                                'text-right max-sm:hidden'
-                              )}
-                            >
-                              {pct(metrics.baseline_up)}
-                            </td>
-                            <td className={cn(cellClass, 'text-right')}>
-                              {pct(metrics.lift)}
-                            </td>
-                            <td
-                              className={cn(
-                                cellClass,
-                                'text-right max-sm:hidden'
-                              )}
-                            >
-                              {fmtPct(metrics.avg_return_after_fee_pct, true)}
-                            </td>
-                          </>
-                        ) : (
-                          <td
-                            colSpan={5}
-                            className={cn(
-                              cellClass,
-                              'text-right',
-                              item.status === 'failed'
-                                ? 'text-vergex-danger'
-                                : 'text-vergex-text-muted'
-                            )}
-                            title={item.error}
-                          >
-                            {item.status === 'failed'
-                              ? label('runFailedShort')
-                              : label('runProgress', {
-                                  done: item.done,
-                                  total: item.total,
-                                })}
-                          </td>
-                        )}
-                      </tr>
+      <SplitView
+        rail={
+          <SplitRail
+            label={label('runs')}
+            addLabel={label('newBacktest')}
+            onAdd={() => openForm()}
+          >
+            {list.length === 0 && (
+              <li className="px-3 py-2 text-[13px] text-vergex-muted">
+                {runs ? label('noRuns') : label('loading')}
+              </li>
+            )}
+            {list.map((run) => {
+              const summary = run.summary
+              return (
+                <RailItem
+                  key={run.id}
+                  current={!showForm && current?.id === run.id}
+                  title={coinsText(run)}
+                  name={runName(run)}
+                  details={
+                    <>
+                      <span className="flex min-w-0 items-center gap-2 text-xs text-vergex-muted">
+                        <span className="min-w-0 truncate">
+                          {fmtTime(run.created_at)} ·{' '}
+                          {run.options.intervals.join(', ')} ·{' '}
+                          {label('coinCount', {
+                            count: run.options.symbols.length,
+                          })}
+                        </span>
+                        {stateBadge(run)}
+                      </span>
+                      {summary && summary.samples > 0 && (
+                        <span className="truncate font-mono text-[11px] tabular-nums text-vergex-muted">
+                          {fmtRate(summary.hit_rate)} /{' '}
+                          {fmtRate(summary.chance_rate)} · {label('lift')}{' '}
+                          {(summary.lift * 100).toFixed(1)}%
+                        </span>
+                      )}
+                    </>
+                  }
+                  onOpen={() => open(run.id)}
+                  onStartRename={() => setRenaming(run.id)}
+                  rename={
+                    renaming === run.id && (
+                      <NameInput
+                        row
+                        value={run.name}
+                        label={label('strategyName')}
+                        placeholder={strategyName(run)}
+                        allowEmpty
+                        language={language}
+                        onSave={(name) => void rename(run, name)}
+                        onCancel={() => setRenaming(null)}
+                      />
                     )
-                  })}
-                </tbody>
-              </table>
-            </ScrollArea>
-          )}
-        </Panel>
+                  }
+                  actions={actionsFor(run)}
+                  actionsLabel={label('moreActions')}
+                />
+              )
+            })}
+          </SplitRail>
+        }
+      >
+        <div className="flex min-h-0 min-w-0 flex-col gap-4">
+          <div className="flex items-center gap-2 lg:hidden">
+            <AppSelect
+              aria-label={label('runs')}
+              className="min-w-0 flex-1 max-sm:h-10"
+              value={showForm ? 'new' : String(current?.id ?? 'new')}
+              options={[
+                { value: 'new', label: label('newBacktest') },
+                ...list.map((run) => ({
+                  value: String(run.id),
+                  label: `${runName(run)} · ${fmtTime(run.created_at)}`,
+                })),
+              ]}
+              onChange={(value) =>
+                value === 'new' ? openForm() : open(Number(value))
+              }
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon"
+              aria-label={label('newBacktest')}
+              className="shrink-0 max-sm:size-10"
+              onClick={() => openForm()}
+            >
+              <Plus className="size-4" aria-hidden="true" />
+            </Button>
+          </div>
 
-        {shown?.report && (
-          <BacktestReportView
-            id={shown.id}
-            report={shown.report}
-            language={language}
-          />
-        )}
-      </div>
+          {showForm ? (
+            <BacktestForm
+              key={again?.id ?? 'new'}
+              initialStrategy={again?.strategy_id ?? askedStrategy}
+              again={again}
+              running={running}
+              onStarted={(run) => void started(run)}
+              language={language}
+            />
+          ) : !current ? (
+            <Panel className="flex-1">
+              <PanelState role="status">{label('loading')}</PanelState>
+            </Panel>
+          ) : (
+            <Panel
+              title={
+                <EditableTitle
+                  name={runName(current)}
+                  editing={renamingHere}
+                  renameLabel={label('rename')}
+                  onEdit={() => setRenamingHere(true)}
+                  field={
+                    <NameInput
+                      value={current.name}
+                      label={label('strategyName')}
+                      placeholder={strategyName(current)}
+                      allowEmpty
+                      language={language}
+                      onSave={(name) => void rename(current, name)}
+                      onCancel={() => setRenamingHere(false)}
+                      className="max-w-64 md:max-w-96"
+                    />
+                  }
+                />
+              }
+              meta={
+                <span
+                  className={cn('block truncate', renamingHere && 'invisible')}
+                  title={coinsText(current)}
+                >
+                  {fmtDate(current.options.from)} –{' '}
+                  {fmtDate(current.options.to)} · {coinsText(current)}
+                </span>
+              }
+              actions={
+                <>
+                  {current.status === 'running' ? (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="max-sm:h-10"
+                      onClick={() => void cancel(current.id)}
+                    >
+                      {label('runCancel')}
+                    </Button>
+                  ) : (
+                    usableStrategy(current) && (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="max-sm:h-10"
+                        onClick={() => openForm(current)}
+                      >
+                        {label('runAgain')}
+                      </Button>
+                    )
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="hover:text-vergex-danger max-sm:size-10"
+                    aria-label={label('deleteRun')}
+                    title={label('deleteRun')}
+                    disabled={current.status === 'running'}
+                    onClick={() => void remove(current)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </>
+              }
+              className="flex min-h-0 flex-1 flex-col overflow-hidden"
+            >
+              <ScrollArea
+                key={current.id}
+                className="min-h-0 flex-1 rounded-b-2xl border-t border-vergex-line"
+              >
+                {current.status === 'running' ? (
+                  <PanelState role="status">
+                    <div
+                      role="progressbar"
+                      aria-label={label('runRunning')}
+                      aria-valuemin={0}
+                      aria-valuemax={current.total}
+                      aria-valuenow={current.done}
+                      className="h-1 w-48 overflow-hidden rounded-full bg-vergex-line"
+                    >
+                      <div
+                        className="h-full rounded-full bg-vergex-ink transition-[width]"
+                        style={{
+                          width: `${(current.done / Math.max(current.total, 1)) * 100}%`,
+                        }}
+                      />
+                    </div>
+                    {label('runProgress', {
+                      done: current.done,
+                      total: current.total,
+                    })}
+                  </PanelState>
+                ) : current.status === 'failed' ? (
+                  current.error === CANCELED ? (
+                    <PanelState role="status">
+                      {label('runCanceled')}
+                    </PanelState>
+                  ) : (
+                    <PanelState role="alert">
+                      {label('runFailedReason', {
+                        reason: current.error ?? '—',
+                      })}
+                    </PanelState>
+                  )
+                ) : whole?.id === current.id && whole.report ? (
+                  <BacktestReportView
+                    report={whole.report}
+                    language={language}
+                  />
+                ) : (
+                  <PanelState role="status">{label('loading')}</PanelState>
+                )}
+              </ScrollArea>
+            </Panel>
+          )}
+        </div>
+      </SplitView>
     </ForecastFrame>
   )
 }

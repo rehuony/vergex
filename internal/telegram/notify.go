@@ -10,8 +10,6 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
-
-	"vergex/internal/store"
 )
 
 // maxMessageRunes keeps a message under Telegram's 4096 character limit.
@@ -24,8 +22,8 @@ var ErrNotBound = errors.New("Telegram is not connected to a chat")
 
 // Notify sends plain text to the bound chat, split when it is too long. It does
 // not depend on the running bot, so it works while the bot is reloading.
-func Notify(ctx context.Context, st *store.Store, text string) error {
-	cfg, err := st.TelegramConfig().Get()
+func Notify(ctx context.Context, configs ConfigStore, text string) error {
+	cfg, err := configs.Get()
 	if err != nil || cfg.BotToken == "" || cfg.ChatID == 0 {
 		return ErrNotBound
 	}

@@ -29,7 +29,7 @@ export function useLiveCandle(symbol: string, interval: string) {
       interval,
       live: '1',
     })
-    const source = new EventSource(`/api/planning/feed?${query}`)
+    const source = new EventSource(`/api/futures/feed?${query}`)
     source.onmessage = (event) => {
       let message: FeedMessage
       try {

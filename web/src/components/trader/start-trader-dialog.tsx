@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import useSWR from 'swr'
+import { useQuery } from '@tanstack/react-query'
 import { Check, Loader2, Minus, TriangleAlert, X } from 'lucide-react'
 import { api } from '@/api'
 import { ApiError } from '@/api/http-client'
@@ -14,8 +14,8 @@ import { cn } from '@/utils/cn'
 const STATUS_ICON = {
   ok: { icon: Check, className: 'text-vergex-success' },
   failed: { icon: X, className: 'text-vergex-danger' },
-  warning: { icon: TriangleAlert, className: 'text-[var(--warning)]' },
-  skipped: { icon: Minus, className: 'text-vergex-text-muted' },
+  warning: { icon: TriangleAlert, className: 'text-vergex-warning' },
+  skipped: { icon: Minus, className: 'text-vergex-muted' },
 } satisfies Record<LaunchCheckStatus, { icon: typeof Check; className: string }>
 
 function amount(check: LaunchCheck) {
@@ -33,7 +33,7 @@ function CheckRow({
   const { icon: Icon, className } = STATUS_ICON[check.status]
   const needsSettings =
     check.status === 'failed' &&
-    (check.id === 'agent_model' || check.id.startsWith('exchange'))
+    (check.id === 'agent_model' || check.id.startsWith('account'))
   return (
     <li className="flex items-start gap-3 py-2.5">
       <Icon
@@ -42,24 +42,24 @@ function CheckRow({
       />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-          <span className="text-[13px] font-medium text-vergex-text">
+          <span className="text-[13px] font-medium text-vergex-ink">
             {t(`startTrader.check.${check.id}`, language)}
           </span>
           {amount(check) && (
-            <span className="text-xs tabular-nums text-vergex-text-muted">
+            <span className="text-xs tabular-nums text-vergex-muted">
               {amount(check)}
             </span>
           )}
         </div>
         {check.status !== 'ok' && check.message && (
-          <p className="mt-0.5 text-xs break-words text-vergex-text-muted">
+          <p className="mt-0.5 text-xs break-words text-vergex-muted">
             {check.message}
             {needsSettings && (
               <>
                 {' '}
                 <SettingsLink
-                  section={check.id === 'agent_model' ? 'models' : 'exchanges'}
-                  className="text-vergex-brand underline"
+                  section={check.id === 'agent_model' ? 'models' : 'accounts'}
+                  className="text-vergex-ink underline"
                 >
                   {t('startTrader.settings', language)}
                 </SettingsLink>
@@ -75,7 +75,7 @@ function CheckRow({
 interface StartTraderDialogProps {
   traderId: string
   traderName: string
-  strategy?: string
+  kind?: string
   model: string
   account: string
   scanMinutes?: number
@@ -89,7 +89,7 @@ interface StartTraderDialogProps {
 export function StartTraderDialog({
   traderId,
   traderName,
-  strategy,
+  kind,
   model,
   account,
   scanMinutes,
@@ -102,21 +102,18 @@ export function StartTraderDialog({
   const {
     data: preflight,
     error,
-    isValidating,
-    mutate,
-  } = useSWR(
-    ['trader-preflight', traderId],
-    () => api.getTraderPreflight(traderId),
-    {
-      revalidateOnFocus: false,
-      revalidateIfStale: true,
-      shouldRetryOnError: false,
-      dedupingInterval: 0,
-    }
-  )
+    isFetching,
+    refetch,
+  } = useQuery({
+    queryKey: ['trader-preflight', traderId],
+    queryFn: () => api.getTraderPreflight(traderId),
+    refetchOnWindowFocus: false,
+    retry: false,
+    staleTime: 0,
+  })
   const [starting, setStarting] = useState(false)
   const [failure, setFailure] = useState('')
-  const checking = isValidating && !preflight
+  const checking = isFetching && !preflight
 
   async function start() {
     setStarting(true)
@@ -133,14 +130,19 @@ export function StartTraderDialog({
           ? err.message
           : label('failed')
       )
-      void mutate()
+      void refetch()
     } finally {
       setStarting(false)
     }
   }
 
   const summary: [string, string][] = [
-    [label('strategy'), strategy || '—'],
+    [
+      label('kind'),
+      kind
+        ? t(`traderDialog.kind${kind === 'grid' ? 'Grid' : 'Agent'}`, language)
+        : '—',
+    ],
     [label('model'), model || '—'],
     [label('account'), account || '—'],
     [
@@ -170,15 +172,15 @@ export function StartTraderDialog({
           {preflight && !preflight.ready ? (
             <Button
               variant="secondary"
-              disabled={isValidating}
-              onClick={() => void mutate()}
+              disabled={isFetching}
+              onClick={() => void refetch()}
             >
               {label('retry')}
             </Button>
           ) : (
             <Button
               variant="primary"
-              disabled={!preflight || starting || isValidating}
+              disabled={!preflight || starting || isFetching}
               onClick={() => void start()}
             >
               {starting && (
@@ -190,27 +192,27 @@ export function StartTraderDialog({
         </div>
       }
     >
-      <h3 className="text-[13px] font-medium text-vergex-text-muted">
+      <h3 className="text-[13px] font-medium text-vergex-muted">
         {label('summary')}
       </h3>
-      <dl className="mt-1 divide-y divide-[var(--line)]">
+      <dl className="mt-1 divide-y divide-vergex-line">
         {summary.map(([name, value]) => (
           <div
             key={name}
             className="flex items-center gap-4 py-2.5 text-[13px]"
           >
-            <dt className="w-32 shrink-0 text-vergex-text-muted">{name}</dt>
-            <dd className="min-w-0 truncate text-vergex-text" title={value}>
+            <dt className="w-32 shrink-0 text-vergex-muted">{name}</dt>
+            <dd className="min-w-0 truncate text-vergex-ink" title={value}>
               {value}
             </dd>
           </div>
         ))}
       </dl>
-      <h3 className="mt-4 text-[13px] font-medium text-vergex-text-muted">
+      <h3 className="mt-4 text-[13px] font-medium text-vergex-muted">
         {label('checks')}
       </h3>
       {preflight ? (
-        <ul className="mt-1 divide-y divide-[var(--line)]">
+        <ul className="mt-1 divide-y divide-vergex-line">
           {preflight.checks.map((check) => (
             <CheckRow key={check.id} check={check} language={language} />
           ))}
@@ -221,8 +223,8 @@ export function StartTraderDialog({
           <Button
             variant="secondary"
             size="sm"
-            disabled={isValidating}
-            onClick={() => void mutate()}
+            disabled={isFetching}
+            onClick={() => void refetch()}
           >
             {label('retry')}
           </Button>

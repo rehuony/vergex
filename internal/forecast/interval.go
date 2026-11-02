@@ -1,10 +1,15 @@
 package forecast
 
-var millis = map[string]int64{
-	"15m": 15 * 60 * 1000,
-	"1h":  60 * 60 * 1000,
-	"4h":  4 * 60 * 60 * 1000,
-	"1d":  24 * 60 * 60 * 1000,
-}
+import (
+	"slices"
 
-func intervalMillis(interval string) int64 { return millis[interval] }
+	"vergex/internal/market/feed"
+)
+
+// intervalMillis returns a Forecast interval's length, or 0 for any other interval.
+func intervalMillis(interval string) int64 {
+	if !slices.Contains(Intervals, interval) {
+		return 0
+	}
+	return feed.IntervalMillis(interval)
+}

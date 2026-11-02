@@ -11,7 +11,7 @@ it('paints the confirm button red only for destructive confirmations', async () 
   )
 
   act(() => {
-    void confirmToast('Delete this strategy?', {
+    void confirmToast('Delete this trader?', {
       okText: 'Delete',
       tone: 'danger',
     })

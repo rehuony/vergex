@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { SWRConfig } from 'swr'
+import { QueryWrapper } from '@/tests/query-wrapper'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { DecisionLog } from '@/components/trader/decision-log'
 import type { DecisionRecord } from '@/types'
@@ -17,9 +17,9 @@ const show = async (record: Partial<DecisionRecord>) => {
   ])
   render(
     <MemoryRouter>
-      <SWRConfig value={{ provider: () => new Map() }}>
+      <QueryWrapper>
         <DecisionLog traderId="t1" language="en" />
-      </SWRConfig>
+      </QueryWrapper>
     </MemoryRouter>
   )
   await waitFor(() => expect(screen.getByText('Cycle 7')).toBeInTheDocument())

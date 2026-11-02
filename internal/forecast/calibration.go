@@ -6,9 +6,17 @@ import (
 	"sort"
 )
 
-// MinCalibrationSamples is how many non-overlapping verified forecasts a strategy
-// and interval need before their scores are shown as probabilities.
-const MinCalibrationSamples = 200
+const (
+	// MinCalibrationMoments is how many separate moments a strategy and interval need
+	// before their scores can be shown as probabilities. Coins move together, so a
+	// hundred coins over one horizon are far from a hundred independent answers.
+	MinCalibrationMoments = 200
+	// calibrationHoldOut is the newest share of the moments a trial curve is judged on.
+	calibrationHoldOut = 0.3
+	// calibrationEvidence is how many standard errors a trial curve must beat the base
+	// rate by, about one chance in twenty of passing on noise.
+	calibrationEvidence = 1.65
+)
 
 // Knot is one point of a calibration curve.
 type Knot struct {
@@ -16,10 +24,81 @@ type Knot struct {
 	Y float64 `json:"y"`
 }
 
-// CalibrationPoint is one verified forecast: what it said and what happened.
+// CalibrationPoint is one verified forecast: what it said, what happened and which
+// moment it belongs to. A moment is one horizon's stretch of time.
 type CalibrationPoint struct {
-	Prob float64
-	Up   bool
+	Prob   float64
+	Up     bool
+	Moment int64
+}
+
+// countMoments says how many separate moments the points come from.
+func countMoments(points []CalibrationPoint) int {
+	moments := map[int64]bool{}
+	for _, point := range points {
+		moments[point.Moment] = true
+	}
+	return len(moments)
+}
+
+// EarnCalibration returns a curve only if the points have earned one: they span enough
+// moments, and a curve fitted on the older ones clearly predicts the newest better than
+// simply knowing how often price rose. Each moment counts once, however many coins it
+// holds. Scores with no relation to outcomes rarely pass, and so stay scores.
+func EarnCalibration(points []CalibrationPoint) ([]Knot, bool) {
+	if countMoments(points) < MinCalibrationMoments {
+		return nil, false
+	}
+	ordered := append([]CalibrationPoint{}, points...)
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Moment < ordered[j].Moment })
+	moments := []int64{}
+	for _, point := range ordered {
+		if len(moments) == 0 || moments[len(moments)-1] != point.Moment {
+			moments = append(moments, point.Moment)
+		}
+	}
+	firstHeld := moments[int(float64(len(moments))*(1-calibrationHoldOut))]
+	split := sort.Search(len(ordered), func(i int) bool { return ordered[i].Moment >= firstHeld })
+	older, newer := ordered[:split], ordered[split:]
+
+	curve := FitCalibration(older)
+	var rose float64
+	for _, point := range older {
+		if point.Up {
+			rose++
+		}
+	}
+	base := rose / float64(len(older))
+
+	// How much closer the curve came than the base rate, moment by moment.
+	type gain struct{ sum, count float64 }
+	gains := map[int64]*gain{}
+	for _, point := range newer {
+		outcome := 0.0
+		if point.Up {
+			outcome = 1
+		}
+		said := ApplyCalibration(curve, point.Prob)
+		if gains[point.Moment] == nil {
+			gains[point.Moment] = &gain{}
+		}
+		gains[point.Moment].sum += (base-outcome)*(base-outcome) - (said-outcome)*(said-outcome)
+		gains[point.Moment].count++
+	}
+	var total, squares float64
+	for _, moment := range gains {
+		total += moment.sum / moment.count
+	}
+	n := float64(len(gains))
+	mean := total / n
+	for _, moment := range gains {
+		difference := moment.sum/moment.count - mean
+		squares += difference * difference
+	}
+	if mean <= 0 || mean < calibrationEvidence*math.Sqrt(squares/n/n) {
+		return nil, false
+	}
+	return FitCalibration(points), true
 }
 
 // FitCalibration fits a curve that only ever rises (isotonic regression), so a

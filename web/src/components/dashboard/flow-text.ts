@@ -1,7 +1,7 @@
-import type { ActivityEvent, ActivityTotals } from '@/api/activity'
+import type { ActivityEvent, ActivityTotals } from '@/api/dashboard'
 import { baseLabel, fmtTime, fmtUsd } from '@/utils/trader-format'
 import { lineOf, type LineKey } from './flow-layout'
-import { counted, routeTotal } from './flow-members'
+import { counted, routeTotal, usdSmall as smallUsd } from './flow-members'
 
 type Label = (key: string, params?: Record<string, string | number>) => string
 
@@ -24,18 +24,12 @@ function named(label: Label, group: 'action' | 'status', value: string) {
   return text.endsWith(key) ? sentence(value) : text
 }
 
-/** Fees and agent costs can be fractions of a cent, which fmtUsd would round away. */
-export function smallUsd(value: number) {
-  if (value === 0 || value >= 1) return fmtUsd(value)
-  return `$${value.toFixed(value >= 0.01 ? 2 : 4)}`
-}
-
 function endName(end: ActivityEvent['from'], label: Label) {
   if (end.block === 'positions' && end.name) {
     const [symbol, side] = end.name.split(' ')
     return `${baseLabel(symbol)} ${side}`
   }
-  if (end.block === 'frontier') return label('flow.block.frontier')
+  if (end.block === 'futures') return label('flow.block.futures')
   return end.name || label(`flow.block.${end.block}`)
 }
 
@@ -114,21 +108,19 @@ export function eventColor(event: ActivityEvent) {
     event.type === 'fee' ||
     event.type === 'agent_cost'
   ) {
-    return 'var(--color-vergex-danger)'
+    return 'var(--danger)'
   }
   if (event.type === 'realized') {
-    return (event.amount ?? 0) >= 0
-      ? 'var(--color-vergex-success)'
-      : 'var(--color-vergex-danger)'
+    return (event.amount ?? 0) >= 0 ? 'var(--success)' : 'var(--danger)'
   }
-  if (event.kind === 'agent') return 'var(--brand)'
+  if (event.kind === 'agent') return 'var(--ink)'
   if (event.kind === 'market') return 'var(--muted)'
   return 'var(--ink)'
 }
 
 const AGENT_ROUTES = [
   'traders>models',
-  'frontier>models',
+  'futures>models',
   'telegram>models',
   'other>models',
 ]
@@ -143,6 +135,9 @@ export function lineSummary(
   const name = `${label(`flow.block.${from}`)} → ${label(`flow.block.${to}`)}`
   const window = (id: 'h1' | 'h24') => {
     const total = routeTotal(totals, [key], id)
+    if (key === 'exchange>market') {
+      return label('flow.arrived', { count: compact(total.items) })
+    }
     if (key.endsWith('>models')) {
       return counted(label, 'call', total.count, {
         tokens: compact(total.tokens),
@@ -172,7 +167,7 @@ export function overallSummary(totals: ActivityTotals, label: Label) {
   const calls = routeTotal(totals, AGENT_ROUTES, 'h24').count
   const orders = routeTotal(
     totals,
-    ['traders>accounts', 'frontier>accounts'],
+    ['traders>accounts', 'futures>accounts'],
     'h24'
   ).count
   return label('flow.overall', {

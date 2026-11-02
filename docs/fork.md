@@ -11,7 +11,7 @@ vergex is a personal fork of NOFX (github.com/NoFxAiOS/nofx), maintained indepen
 | Paid data | NofxOS and upstream's paid signal sources removed; rankings are computed from free Binance and OKX public data |
 | Fees and referrals | All removed: builder fee, broker IDs and tags, referral links |
 | Exchanges | Binance and OKX USDT perpetuals only; the other eight adapters were deleted |
-| Features | Traders, Frontier, grid trading and the Telegram bot stay |
+| Features | Traders, Futures, grid trading and the Telegram bot stay |
 | Community | Landing page, competition, leaderboard, strategy market and public endpoints removed |
 | Instruments | Crypto only; HIP-3 stocks and commodities, Alpaca and TwelveData removed |
 | Telemetry | Removed entirely |

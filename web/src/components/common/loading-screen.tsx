@@ -5,14 +5,14 @@ export function LoadingScreen() {
   const { language } = useLanguage()
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-vergex-bg">
+    <div className="flex min-h-screen items-center justify-center bg-vergex-canvas">
       <div className="text-center">
         <img
           src="/icons/vergex-flow.svg"
           alt="Vergex Logo"
           className="w-16 h-16 mx-auto mb-4 animate-pulse"
         />
-        <p className="text-vergex-text">{t('loading', language)}</p>
+        <p className="text-vergex-ink">{t('loading', language)}</p>
       </div>
     </div>
   )

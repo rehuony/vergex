@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"vergex/internal/exchange/binance"
 	"vergex/internal/logger"
 	"vergex/internal/market"
+	"vergex/internal/venue/binance"
 )
 
 // Recent returns a symbol's latest candles for trading, oldest first, the last one
@@ -60,4 +60,14 @@ func ToKlines(candles []Candle, interval string) []market.Kline {
 		}
 	}
 	return market.FromBinance(rows, interval)
+}
+
+// OpenInterest returns a symbol's open interest now, under the request budget.
+func (s *Service) OpenInterest(ctx context.Context, symbol string) (float64, error) {
+	return s.client.LatestOpenInterest(ctx, symbol)
+}
+
+// FundingRate returns a symbol's latest funding rate, under the request budget.
+func (s *Service) FundingRate(ctx context.Context, symbol string) (float64, error) {
+	return s.client.LatestFundingRate(ctx, symbol)
 }

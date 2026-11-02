@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"time"
 	"vergex/internal/logger"
-	"vergex/internal/market"
 	"vergex/internal/market/instrument"
-	"vergex/internal/store"
-	"vergex/internal/trader/agent"
+	traderagent "vergex/internal/trader/agent"
 )
 
 const (
@@ -25,7 +23,7 @@ const (
 )
 
 // executeDecisionWithRecord executes agent decision and records detailed information
-func (at *AutoTrader) executeDecisionWithRecord(decision *agent.Decision, actionRecord *store.DecisionAction) error {
+func (at *AutoTrader) executeDecisionWithRecord(decision *traderagent.Decision, actionRecord *DecisionAction) error {
 	switch decision.Action {
 	case "open_long":
 		return at.executeOpenLongWithRecord(decision, actionRecord)
@@ -43,7 +41,7 @@ func (at *AutoTrader) executeDecisionWithRecord(decision *agent.Decision, action
 }
 
 // executeOpenLongWithRecord executes open long position and records detailed information
-func (at *AutoTrader) executeOpenLongWithRecord(decision *agent.Decision, actionRecord *store.DecisionAction) error {
+func (at *AutoTrader) executeOpenLongWithRecord(decision *traderagent.Decision, actionRecord *DecisionAction) error {
 	logger.Infof("  📈 Open long: %s", decision.Symbol)
 
 	// ⚠️ Get current positions for multiple checks
@@ -65,7 +63,7 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *agent.Decision, action
 	}
 
 	// Get current price and reject invalid protection before opening exposure.
-	marketData, err := market.GetWithExchange(decision.Symbol, at.exchange)
+	marketData, err := traderagent.GetWithVenue(decision.Symbol, at.venue)
 	if err != nil {
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}
@@ -154,7 +152,7 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *agent.Decision, action
 }
 
 // executeOpenShortWithRecord executes open short position and records detailed information
-func (at *AutoTrader) executeOpenShortWithRecord(decision *agent.Decision, actionRecord *store.DecisionAction) error {
+func (at *AutoTrader) executeOpenShortWithRecord(decision *traderagent.Decision, actionRecord *DecisionAction) error {
 	logger.Infof("  📉 Open short: %s", decision.Symbol)
 
 	// ⚠️ Get current positions for multiple checks
@@ -176,7 +174,7 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *agent.Decision, actio
 	}
 
 	// Get current price and reject invalid protection before opening exposure.
-	marketData, err := market.GetWithExchange(decision.Symbol, at.exchange)
+	marketData, err := traderagent.GetWithVenue(decision.Symbol, at.venue)
 	if err != nil {
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}
@@ -265,11 +263,11 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *agent.Decision, actio
 }
 
 // executeCloseLongWithRecord executes close long position and records detailed information
-func (at *AutoTrader) executeCloseLongWithRecord(decision *agent.Decision, actionRecord *store.DecisionAction) error {
+func (at *AutoTrader) executeCloseLongWithRecord(decision *traderagent.Decision, actionRecord *DecisionAction) error {
 	logger.Infof("  🔄 Close long: %s", decision.Symbol)
 
 	// Get current price
-	marketData, err := market.GetWithExchange(decision.Symbol, at.exchange)
+	marketData, err := traderagent.GetWithVenue(decision.Symbol, at.venue)
 	if err != nil {
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}
@@ -283,8 +281,8 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *agent.Decision, actio
 	var quantity float64
 
 	// First try to get from local database (more accurate for quantity)
-	if at.store != nil {
-		if openPos, err := at.store.Position().GetOpenPositionBySymbol(at.id, normalizedSymbol, "LONG"); err == nil && openPos != nil {
+	if at.stores != nil {
+		if openPos, err := at.stores.Positions.GetOpenPositionBySymbol(at.id, normalizedSymbol, "LONG"); err == nil && openPos != nil {
 			quantity = openPos.Quantity
 			entryPrice = openPos.EntryPrice
 			logger.Infof("  📊 Using local position data: qty=%.8f, entry=%.2f", quantity, entryPrice)
@@ -324,11 +322,11 @@ func (at *AutoTrader) executeCloseLongWithRecord(decision *agent.Decision, actio
 }
 
 // executeCloseShortWithRecord executes close short position and records detailed information
-func (at *AutoTrader) executeCloseShortWithRecord(decision *agent.Decision, actionRecord *store.DecisionAction) error {
+func (at *AutoTrader) executeCloseShortWithRecord(decision *traderagent.Decision, actionRecord *DecisionAction) error {
 	logger.Infof("  🔄 Close short: %s", decision.Symbol)
 
 	// Get current price
-	marketData, err := market.GetWithExchange(decision.Symbol, at.exchange)
+	marketData, err := traderagent.GetWithVenue(decision.Symbol, at.venue)
 	if err != nil {
 		return fmt.Errorf("failed to get market data for %s: %w", decision.Symbol, err)
 	}
@@ -342,8 +340,8 @@ func (at *AutoTrader) executeCloseShortWithRecord(decision *agent.Decision, acti
 	var quantity float64
 
 	// First try to get from local database (more accurate for quantity)
-	if at.store != nil {
-		if openPos, err := at.store.Position().GetOpenPositionBySymbol(at.id, normalizedSymbol, "SHORT"); err == nil && openPos != nil {
+	if at.stores != nil {
+		if openPos, err := at.stores.Positions.GetOpenPositionBySymbol(at.id, normalizedSymbol, "SHORT"); err == nil && openPos != nil {
 			quantity = openPos.Quantity
 			entryPrice = openPos.EntryPrice
 			logger.Infof("  📊 Using local position data: qty=%.8f, entry=%.2f", quantity, entryPrice)

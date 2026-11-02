@@ -4,17 +4,10 @@ import { t, type Language } from '@/i18n'
 
 // Sections of the Forecast page.
 export function forecastTabs(language: Language): PageTab[] {
-  const others: string[] = [
-    ROUTES.forecastStrategies,
-    ROUTES.forecastBacktests,
-    ROUTES.forecastSettings,
-  ]
   return [
     {
       to: ROUTES.forecast,
       label: t('forecast.tabSignals', language),
-      // Signals covers every coin's own page.
-      isActive: (pathname) => !others.includes(pathname),
     },
     {
       to: ROUTES.forecastStrategies,

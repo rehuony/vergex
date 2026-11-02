@@ -6,19 +6,17 @@ import { useSystemConfig } from '@/hooks/use-system-config'
 // Page CSS is bundled in import order, so reordering these can change the
 // cascade: AppChrome last keeps the settings styles after the page styles.
 import { LoginPage } from '@/pages/login-page'
-import { RegisterPage } from '@/pages/register-page'
 import { ResetPasswordPage } from '@/pages/reset-password-page'
-import { ResetAccountPage } from '@/pages/reset-account-page'
+import { ResetUserPage } from '@/pages/reset-user-page'
 import { SetupPage } from '@/pages/setup-page'
+import { TradersOverviewPage } from '@/pages/traders-overview-page'
 import { TradersPage } from '@/pages/traders-page'
 import { FAQPage } from '@/pages/faq-page'
 import { ForecastBacktestsPage } from '@/pages/forecast-backtests-page'
 import { ForecastPage } from '@/pages/forecast-page'
 import { ForecastSettingsPage } from '@/pages/forecast-settings-page'
 import { ForecastStrategiesPage } from '@/pages/forecast-strategies-page'
-import { StrategiesPage } from '@/pages/strategies-page'
-import { TraderDetailPage } from '@/pages/trader-detail-page'
-import { TradingPlanningPage } from '@/pages/trading-planning-page'
+import { FuturesPage } from '@/pages/futures-page'
 import { DashboardPage } from '@/pages/dashboard-page'
 import { AppChrome } from '@/components/common/app-chrome'
 import { LoadingScreen } from '@/components/common/loading-screen'
@@ -61,10 +59,18 @@ export function AppRoutes() {
             />
           }
         />
-        <Route path={ROUTES.login} element={<LoginPage />} />
-        <Route path={ROUTES.register} element={<RegisterPage />} />
+        <Route
+          path={ROUTES.login}
+          element={
+            isAuthenticated ? (
+              <Navigate to={ROUTES.dashboard} replace />
+            ) : (
+              <LoginPage />
+            )
+          }
+        />
         <Route path={ROUTES.resetPassword} element={<ResetPasswordPage />} />
-        <Route path={ROUTES.resetAccount} element={<ResetAccountPage />} />
+        <Route path={ROUTES.resetUser} element={<ResetUserPage />} />
         <Route
           path={ROUTES.setup}
           element={
@@ -82,11 +88,11 @@ export function AppRoutes() {
           element={guard(ROUTES.dashboard, <DashboardPage />)}
         />
         <Route
-          path={ROUTES.planning}
+          path={ROUTES.futures}
           element={guard(
-            ROUTES.planning,
-            <AppChrome currentPage="planning">
-              <TradingPlanningPage />
+            ROUTES.futures,
+            <AppChrome currentPage="futures">
+              <FuturesPage />
             </AppChrome>
           )}
         />
@@ -94,26 +100,17 @@ export function AppRoutes() {
           path={ROUTES.traders}
           element={guard(
             ROUTES.traders,
-            <AppChrome currentPage="traders" animateContent>
+            <AppChrome currentPage="traders">
               <TradersPage />
             </AppChrome>
           )}
         />
         <Route
-          path={ROUTES.traderDetail}
+          path={ROUTES.tradersOverview}
           element={guard(
-            pathname,
+            ROUTES.traders,
             <AppChrome currentPage="traders">
-              <TraderDetailPage />
-            </AppChrome>
-          )}
-        />
-        <Route
-          path={ROUTES.strategies}
-          element={guard(
-            ROUTES.strategies,
-            <AppChrome currentPage="strategies" animateContent>
-              <StrategiesPage />
+              <TradersOverviewPage />
             </AppChrome>
           )}
         />
@@ -121,7 +118,7 @@ export function AppRoutes() {
           path={ROUTES.forecast}
           element={guard(
             ROUTES.forecast,
-            <AppChrome currentPage="forecast" animateContent>
+            <AppChrome currentPage="forecast">
               <ForecastPage />
             </AppChrome>
           )}
@@ -130,7 +127,7 @@ export function AppRoutes() {
           path={ROUTES.forecastStrategies}
           element={guard(
             ROUTES.forecastStrategies,
-            <AppChrome currentPage="forecast" animateContent>
+            <AppChrome currentPage="forecast">
               <ForecastStrategiesPage />
             </AppChrome>
           )}
@@ -139,7 +136,7 @@ export function AppRoutes() {
           path={ROUTES.forecastBacktests}
           element={guard(
             ROUTES.forecastBacktests,
-            <AppChrome currentPage="forecast" animateContent>
+            <AppChrome currentPage="forecast">
               <ForecastBacktestsPage />
             </AppChrome>
           )}
@@ -148,17 +145,8 @@ export function AppRoutes() {
           path={ROUTES.forecastSettings}
           element={guard(
             ROUTES.forecastSettings,
-            <AppChrome currentPage="forecast" animateContent>
-              <ForecastSettingsPage />
-            </AppChrome>
-          )}
-        />
-        <Route
-          path={ROUTES.forecastDetail}
-          element={guard(
-            pathname,
             <AppChrome currentPage="forecast">
-              <ForecastPage />
+              <ForecastSettingsPage />
             </AppChrome>
           )}
         />

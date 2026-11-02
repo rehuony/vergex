@@ -5,12 +5,12 @@ import (
 	"testing"
 )
 
-func projectionResult(direction string) Result {
-	return Result{Close: 100, Direction: direction, ExpectedMovePct: 4, Horizon: 4}
+func projection(direction string, prob float64, openTime int64) Signal {
+	return Signal{Close: 100, Direction: direction, ExpectedMovePct: 4, Horizon: 4, DisplayProb: prob, OpenTime: openTime}
 }
 
 func TestProjectGoesTheWayOfTheCallBySizeOfTheScore(t *testing.T) {
-	rows := Project(projectionResult(DirectionUp), 0.75, 3_600_000, 3_600_000)
+	rows := Project(projection(DirectionUp, 0.75, 3_600_000), 3_600_000)
 	if len(rows) != 4 {
 		t.Fatalf("rows = %d, want the horizon", len(rows))
 	}
@@ -37,14 +37,14 @@ func TestProjectGoesTheWayOfTheCallBySizeOfTheScore(t *testing.T) {
 		t.Fatalf("first open = %v, want the forecast's close", rows[0].Open)
 	}
 
-	down := Project(projectionResult(DirectionDown), 0.25, 0, 3_600_000)
+	down := Project(projection(DirectionDown, 0.25, 0), 3_600_000)
 	if math.Abs(down[3].Close-98) > 1e-9 {
 		t.Fatalf("down end = %v, want 98", down[3].Close)
 	}
 }
 
 func TestProjectStaysFlatOnANeutralCall(t *testing.T) {
-	rows := Project(projectionResult(DirectionNeutral), 0.52, 0, 3_600_000)
+	rows := Project(projection(DirectionNeutral, 0.52, 0), 3_600_000)
 	for _, row := range rows {
 		if row.Open != 100 || row.Close != 100 {
 			t.Fatalf("row = %+v, a neutral call should stay flat", row)
@@ -52,9 +52,22 @@ func TestProjectStaysFlatOnANeutralCall(t *testing.T) {
 	}
 }
 
+func TestProjectStaysFlatWhenACurvePutsTheScoreAgainstTheCall(t *testing.T) {
+	for _, c := range []struct {
+		direction string
+		prob      float64
+	}{{DirectionUp, 0.42}, {DirectionUp, 0.5}, {DirectionDown, 0.6}} {
+		for _, row := range Project(projection(c.direction, c.prob, 0), 3_600_000) {
+			if row.Open != 100 || row.Close != 100 {
+				t.Fatalf("%s at %.2f: row = %+v, want it flat", c.direction, c.prob, row)
+			}
+		}
+	}
+}
+
 func TestProjectIsTheSameEveryTime(t *testing.T) {
-	first := Project(projectionResult(DirectionUp), 0.7, 0, 60_000)
-	second := Project(projectionResult(DirectionUp), 0.7, 0, 60_000)
+	first := Project(projection(DirectionUp, 0.7, 0), 60_000)
+	second := Project(projection(DirectionUp, 0.7, 0), 60_000)
 	for i := range first {
 		if first[i] != second[i] {
 			t.Fatal("the projection should not vary")
@@ -63,10 +76,10 @@ func TestProjectIsTheSameEveryTime(t *testing.T) {
 }
 
 func TestProjectNeedsAHorizonAndAPrice(t *testing.T) {
-	if rows := Project(Result{Close: 100}, 0.7, 0, 60_000); rows != nil {
+	if rows := Project(Signal{Close: 100}, 60_000); rows != nil {
 		t.Fatalf("rows = %+v without a horizon", rows)
 	}
-	if rows := Project(Result{Horizon: 4}, 0.7, 0, 60_000); rows != nil {
+	if rows := Project(Signal{Horizon: 4}, 60_000); rows != nil {
 		t.Fatalf("rows = %+v without a price", rows)
 	}
 }

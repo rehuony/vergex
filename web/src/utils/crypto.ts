@@ -187,27 +187,6 @@ export class CryptoService {
   // anti-pattern (it implied an unauthenticated decryption oracle existed).
 }
 
-// Generate an obfuscation string (used for clipboard obfuscation)
-export function generateObfuscation(): string {
-  const bytes = new Uint8Array(32)
-  crypto.getRandomValues(bytes)
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(
-    ''
-  )
-}
-
-// Validate private key format
-export function validatePrivateKeyFormat(
-  value: string,
-  expectedLength: number = 64
-): boolean {
-  const normalized = value.startsWith('0x') ? value.slice(2) : value
-  if (normalized.length !== expectedLength) {
-    return false
-  }
-  return /^[0-9a-fA-F]+$/.test(normalized)
-}
-
 export function diagnoseWebCryptoEnvironment(): WebCryptoEnvironmentInfo {
   if (typeof window === 'undefined') {
     return {

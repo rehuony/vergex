@@ -15,7 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"vergex/internal/exchange/binance"
+	"vergex/internal/service"
+	"vergex/internal/venue/binance"
 
 	"gorm.io/gorm/clause"
 )
@@ -59,7 +60,7 @@ type Backfiller struct {
 
 // NewBackfiller creates a backfiller.
 func NewBackfiller(store *Store, client *binance.DataClient) *Backfiller {
-	return &Backfiller{store: store, client: client, http: &http.Client{Timeout: 2 * time.Minute}, archiveURL: defaultArchiveURL, now: time.Now}
+	return &Backfiller{store: store, client: client, http: &http.Client{Timeout: 2 * time.Minute, Transport: service.VenueTransport}, archiveURL: defaultArchiveURL, now: time.Now}
 }
 
 // Run loads the requested history, reporting progress as it goes. A period the

@@ -7,8 +7,8 @@ import (
 	"time"
 	"vergex/internal/agent"
 	"vergex/internal/logger"
-	"vergex/internal/market"
-	"vergex/internal/store"
+	"vergex/internal/trader/grid"
+	"vergex/internal/trader/kind"
 )
 
 // ============================================================================
@@ -83,7 +83,7 @@ type GridContext struct {
 	DailyPnL      float64 `json:"daily_pnl"`
 
 	// Box indicators (Donchian Channels)
-	BoxData *market.BoxData `json:"box_data,omitempty"`
+	BoxData *grid.BoxData `json:"box_data,omitempty"`
 
 	// Grid direction (neutral, long, short, long_bias, short_bias)
 	CurrentDirection string `json:"current_direction,omitempty"`
@@ -94,66 +94,7 @@ type GridContext struct {
 // ============================================================================
 
 // BuildGridSystemPrompt builds the system prompt for grid trading agent
-func BuildGridSystemPrompt(config *store.GridStrategyConfig, lang string) string {
-	if lang == "zh" {
-		return buildGridSystemPromptZh(config)
-	}
-	return buildGridSystemPromptEn(config)
-}
-
-func buildGridSystemPromptZh(config *store.GridStrategyConfig) string {
-	return fmt.Sprintf(`# You are a Professional Grid Trading Agent
-
-## Role Definition
-You are an experienced grid trading expert responsible for managing the grid trading strategy for %s. Your tasks are:
-1. Determine the current market state (ranging/trending/high volatility)
-2. Decide whether to adjust the grid or pause trading
-3. Manage orders at each grid level
-
-## Grid Configuration
-- Trading Pair: %s
-- Grid Levels: %d
-- Total Investment: %.2f USDT
-- Leverage: %dx
-- Price Distribution: %s
-
-## Decision Rules
-
-### Market State Judgment
-- **Ranging Market** (suitable for grid): Bollinger band width < 3%%, EMA20/50 distance < 1%%, price near the Bollinger middle band
-- **Trending Market** (pause grid): Bollinger band width > 4%%, EMA20/50 distance > 2%%, price continuously breaking out of the Bollinger bands
-- **High Volatility Market** (caution): abnormally expanding ATR, sharp price swings
-
-### Available Actions
-- place_buy_limit: place a buy limit order at the specified price
-- place_sell_limit: place a sell limit order at the specified price
-- cancel_order: cancel a specified order
-- cancel_all_orders: cancel all orders
-- pause_grid: pause grid trading (in a trending market)
-- resume_grid: resume grid trading (in a ranging market)
-- adjust_grid: adjust the grid boundaries
-- hold: keep the current state, take no action
-
-## Output Format
-Output a JSON array; each decision contains:
-- symbol: trading pair
-- action: action type
-- price: price (for limit orders)
-- quantity: quantity
-- level_index: grid level index
-- order_id: order ID (for canceling orders)
-- confidence: confidence 0-100
-- reasoning: decision reasoning
-
-Example:
-[
-  {"symbol": "BTCUSDT", "action": "place_buy_limit", "price": 94000, "quantity": 0.01, "level_index": 2, "confidence": 85, "reasoning": "Level 2 price is near, place a buy order"},
-  {"symbol": "BTCUSDT", "action": "hold", "confidence": 90, "reasoning": "Market is ranging, keep the current grid"}
-]
-`, config.Symbol, config.Symbol, config.GridCount, config.TotalInvestment, config.Leverage, config.Distribution)
-}
-
-func buildGridSystemPromptEn(config *store.GridStrategyConfig) string {
+func BuildGridSystemPrompt(config *kind.GridConfig) string {
 	return fmt.Sprintf(`# You are a Professional Grid Trading Agent
 
 ## Role Definition
@@ -206,125 +147,7 @@ Example:
 }
 
 // BuildGridUserPrompt builds the user prompt with current grid context
-func BuildGridUserPrompt(ctx *GridContext, lang string) string {
-	if lang == "zh" {
-		return buildGridUserPromptZh(ctx)
-	}
-	return buildGridUserPromptEn(ctx)
-}
-
-func buildGridUserPromptZh(ctx *GridContext) string {
-	var sb strings.Builder
-
-	sb.WriteString(fmt.Sprintf("## Current Time: %s\n\n", ctx.CurrentTime))
-
-	// Market data section
-	sb.WriteString("## Market Data\n")
-	sb.WriteString(fmt.Sprintf("- Current Price: $%.2f\n", ctx.CurrentPrice))
-	sb.WriteString(fmt.Sprintf("- 1h Change: %.2f%%\n", ctx.PriceChange1h))
-	sb.WriteString(fmt.Sprintf("- 4h Change: %.2f%%\n", ctx.PriceChange4h))
-	sb.WriteString(fmt.Sprintf("- ATR14: $%.2f (%.2f%%)\n", ctx.ATR14, ctx.ATR14/ctx.CurrentPrice*100))
-	sb.WriteString(fmt.Sprintf("- Bollinger Bands: Upper $%.2f, Middle $%.2f, Lower $%.2f\n", ctx.BollingerUpper, ctx.BollingerMiddle, ctx.BollingerLower))
-	sb.WriteString(fmt.Sprintf("- Bollinger Width: %.2f%%\n", ctx.BollingerWidth))
-	sb.WriteString(fmt.Sprintf("- EMA20: $%.2f, EMA50: $%.2f, Distance: %.2f%%\n", ctx.EMA20, ctx.EMA50, ctx.EMADistance))
-	sb.WriteString(fmt.Sprintf("- RSI14: %.1f\n", ctx.RSI14))
-	sb.WriteString(fmt.Sprintf("- MACD: %.4f, Signal: %.4f, Histogram: %.4f\n", ctx.MACD, ctx.MACDSignal, ctx.MACDHistogram))
-	sb.WriteString(fmt.Sprintf("- Funding Rate: %.4f%%\n", ctx.FundingRate*100))
-	sb.WriteString("\n")
-
-	// Box Indicator Section
-	if ctx.BoxData != nil {
-		sb.WriteString("## Box Indicator (Donchian Channel)\n\n")
-		sb.WriteString("| Box Level | Upper | Lower | Width |\n")
-		sb.WriteString("|----------|------|------|------|\n")
-
-		shortWidth := 0.0
-		midWidth := 0.0
-		longWidth := 0.0
-
-		if ctx.BoxData.CurrentPrice > 0 {
-			shortWidth = (ctx.BoxData.ShortUpper - ctx.BoxData.ShortLower) / ctx.BoxData.CurrentPrice * 100
-			midWidth = (ctx.BoxData.MidUpper - ctx.BoxData.MidLower) / ctx.BoxData.CurrentPrice * 100
-			longWidth = (ctx.BoxData.LongUpper - ctx.BoxData.LongLower) / ctx.BoxData.CurrentPrice * 100
-		}
-
-		sb.WriteString(fmt.Sprintf("| Short (3d) | %.2f | %.2f | %.2f%% |\n",
-			ctx.BoxData.ShortUpper, ctx.BoxData.ShortLower, shortWidth))
-		sb.WriteString(fmt.Sprintf("| Mid (10d) | %.2f | %.2f | %.2f%% |\n",
-			ctx.BoxData.MidUpper, ctx.BoxData.MidLower, midWidth))
-		sb.WriteString(fmt.Sprintf("| Long (21d) | %.2f | %.2f | %.2f%% |\n",
-			ctx.BoxData.LongUpper, ctx.BoxData.LongLower, longWidth))
-
-		sb.WriteString(fmt.Sprintf("\nCurrent Price: %.2f\n", ctx.BoxData.CurrentPrice))
-
-		// Check position relative to boxes
-		price := ctx.BoxData.CurrentPrice
-		if price > ctx.BoxData.LongUpper || price < ctx.BoxData.LongLower {
-			sb.WriteString("⚠️ Breakout: price broke out of the long-term box!\n")
-		} else if price > ctx.BoxData.MidUpper || price < ctx.BoxData.MidLower {
-			sb.WriteString("⚠️ Warning: price is approaching the long-term box boundary\n")
-		}
-		sb.WriteString("\n")
-	}
-
-	// Account section
-	sb.WriteString("## Account Status\n")
-	sb.WriteString(fmt.Sprintf("- Total Equity: $%.2f\n", ctx.TotalEquity))
-	sb.WriteString(fmt.Sprintf("- Available Balance: $%.2f\n", ctx.AvailableBalance))
-	sb.WriteString(fmt.Sprintf("- Current Position: %.4f (net position)\n", ctx.CurrentPosition))
-	sb.WriteString(fmt.Sprintf("- Unrealized PnL: $%.2f\n", ctx.UnrealizedPnL))
-	sb.WriteString("\n")
-
-	// Grid state section
-	sb.WriteString("## Grid State\n")
-	sb.WriteString(fmt.Sprintf("- Grid Range: $%.2f - $%.2f\n", ctx.LowerPrice, ctx.UpperPrice))
-	sb.WriteString(fmt.Sprintf("- Grid Spacing: $%.2f\n", ctx.GridSpacing))
-	sb.WriteString(fmt.Sprintf("- Active Orders: %d\n", ctx.ActiveOrderCount))
-	sb.WriteString(fmt.Sprintf("- Filled Levels: %d\n", ctx.FilledLevelCount))
-	sb.WriteString(fmt.Sprintf("- Grid Paused: %v\n", ctx.IsPaused))
-	if ctx.CurrentDirection != "" {
-		directionDescZh := map[string]string{
-			"neutral":    "Neutral (50% buy + 50% sell)",
-			"long":       "Long (100% buy)",
-			"short":      "Short (100% sell)",
-			"long_bias":  "Long bias (70% buy + 30% sell)",
-			"short_bias": "Short bias (30% buy + 70% sell)",
-		}
-		desc := directionDescZh[ctx.CurrentDirection]
-		if desc == "" {
-			desc = ctx.CurrentDirection
-		}
-		sb.WriteString(fmt.Sprintf("- Grid Direction: %s\n", desc))
-	}
-	sb.WriteString("\n")
-
-	// Grid levels detail
-	sb.WriteString("## Grid Level Details\n")
-	sb.WriteString("| Level | Price | State | Side | Order Qty | Position Qty | Unrealized PnL |\n")
-	sb.WriteString("|------|------|------|------|----------|----------|------------|\n")
-	for _, level := range ctx.Levels {
-		sb.WriteString(fmt.Sprintf("| %d | $%.2f | %s | %s | %.4f | %.4f | $%.2f |\n",
-			level.Index, level.Price, level.State, level.Side,
-			level.OrderQuantity, level.PositionSize, level.UnrealizedPnL))
-	}
-	sb.WriteString("\n")
-
-	// Performance section
-	sb.WriteString("## Performance Statistics\n")
-	sb.WriteString(fmt.Sprintf("- Total Profit: $%.2f\n", ctx.TotalProfit))
-	sb.WriteString(fmt.Sprintf("- Total Trades: %d\n", ctx.TotalTrades))
-	sb.WriteString(fmt.Sprintf("- Win Rate: %.1f%%\n", float64(ctx.WinningTrades)/float64(max(ctx.TotalTrades, 1))*100))
-	sb.WriteString(fmt.Sprintf("- Max Drawdown: %.2f%%\n", ctx.MaxDrawdown))
-	sb.WriteString(fmt.Sprintf("- Today's PnL: $%.2f\n", ctx.DailyPnL))
-	sb.WriteString("\n")
-
-	sb.WriteString("## Analyze the data above and make grid trading decisions\n")
-	sb.WriteString("Output the decision list as a JSON array.\n")
-
-	return sb.String()
-}
-
-func buildGridUserPromptEn(ctx *GridContext) string {
+func BuildGridUserPrompt(ctx *GridContext) string {
 	var sb strings.Builder
 
 	sb.WriteString(fmt.Sprintf("## Current Time: %s\n\n", ctx.CurrentTime))
@@ -441,12 +264,12 @@ func buildGridUserPromptEn(ctx *GridContext) string {
 
 // GetGridDecisions gets agent decisions for grid trading. Once the model has been called
 // the decision is returned even with an error, so what was sent stays on record.
-func GetGridDecisions(ctx *GridContext, agentClient agent.Client, config *store.GridStrategyConfig, lang string, open OpenConversation) (*FullDecision, error) {
+func GetGridDecisions(ctx *GridContext, agentClient agent.Client, config *kind.GridConfig, open OpenConversation) (*FullDecision, error) {
 	startTime := time.Now()
 
 	// Build prompts
-	systemPrompt := BuildGridSystemPrompt(config, lang)
-	userPrompt := BuildGridUserPrompt(ctx, lang)
+	systemPrompt := BuildGridSystemPrompt(config)
+	userPrompt := BuildGridUserPrompt(ctx)
 
 	logger.Infof("🤖 [Grid] Calling the model for grid decisions...")
 
@@ -553,7 +376,7 @@ func isValidGridAction(action string) bool {
 		"resume_grid":       true,
 		"adjust_grid":       true,
 		"hold":              true,
-		// Also support standard actions for compatibility
+		// The standard actions are valid here too
 		"open_long":   true,
 		"open_short":  true,
 		"close_long":  true,
@@ -567,7 +390,7 @@ func isValidGridAction(action string) bool {
 // ============================================================================
 
 // BuildGridContextFromMarketData builds grid context from market data
-func BuildGridContextFromMarketData(mktData *market.Data, config *store.GridStrategyConfig) *GridContext {
+func BuildGridContextFromMarketData(mktData *Data, config *kind.GridConfig) *GridContext {
 	ctx := &GridContext{
 		Symbol:       config.Symbol,
 		CurrentTime:  time.Now().Format("2006-01-02 15:04:05"),

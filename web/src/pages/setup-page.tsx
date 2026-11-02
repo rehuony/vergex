@@ -1,17 +1,23 @@
-import React, { useState, useEffect } from 'react'
-import { Eye, EyeOff } from 'lucide-react'
+import React, { useEffect, useId, useState } from 'react'
 import { useAuth } from '@/contexts/auth-context'
-import { invalidateSystemConfig } from '@/api/system-config'
+import { invalidateSystemConfig } from '@/api/system'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
+import {
+  AuthField,
+  AuthMessage,
+  AuthPassword,
+  AuthSurface,
+  authInputClass,
+} from '@/components/auth/auth-surface'
 import { Button } from '@/components/ui/button'
 
 export function SetupPage() {
   const { language } = useLanguage()
   const { register } = useAuth()
+  const id = useId()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
@@ -40,152 +46,50 @@ export function SetupPage() {
   }
 
   return (
-    <div className="relative min-h-screen w-full overflow-hidden bg-vergex-bg">
-      {/* Decorative background - simulates the main app behind a modal */}
-
-      {/* Grid */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div
-          className="absolute inset-x-0 bottom-0 h-[60vh] bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-size-[40px_40px] mask-[radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-40"
-          style={{
-            transform:
-              'perspective(500px) rotateX(60deg) translateY(80px) scale(2)',
-          }}
-        />
-      </div>
-
-      {/* Glow spots */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[10%] left-[15%] w-[500px] h-[500px] bg-vergex-brand/8 rounded-full blur-[150px]" />
-        <div className="absolute bottom-[5%] right-[10%] w-[400px] h-[400px] bg-vergex-brand/6 rounded-full blur-[140px]" />
-        <div className="absolute top-[40%] right-[30%] w-[300px] h-[300px] bg-vergex-success/4 rounded-full blur-[120px]" />
-      </div>
-
-      {/* Faux UI elements in background to simulate the app */}
-      <div className="absolute inset-0 pointer-events-none opacity-[0.06]">
-        {/* Fake header bar */}
-        <div className="h-14 border-b border-vergex-text/20 flex items-center px-6 gap-4">
-          <div className="w-8 h-8 rounded-lg bg-vergex-text/40" />
-          <div className="h-3 w-20 rounded-sm bg-vergex-text/30" />
-          <div className="h-3 w-16 rounded-sm bg-vergex-text/20 ml-4" />
-          <div className="h-3 w-16 rounded-sm bg-vergex-text/20" />
-          <div className="h-3 w-16 rounded-sm bg-vergex-text/20" />
-        </div>
-        {/* Fake content cards */}
-        <div className="p-6 grid grid-cols-4 gap-4 mt-2">
-          {[...Array(4)].map((_, i) => (
-            <div
-              key={i}
-              className="h-24 rounded-xl border border-vergex-text/15 bg-vergex-text/5"
+    <AuthSurface
+      title={t('setup.welcome', language)}
+      intro={t('setup.subtitle', language)}
+    >
+      <form onSubmit={handleSubmit}>
+        <div className="space-y-4">
+          <AuthField label={t('email', language)} htmlFor={`${id}-email`}>
+            <input
+              id={`${id}-email`}
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={authInputClass}
+              placeholder={t('setup.emailPlaceholder', language)}
+              required
+              autoFocus
             />
-          ))}
+          </AuthField>
+
+          <AuthField label={t('password', language)} htmlFor={`${id}-password`}>
+            <AuthPassword
+              id={`${id}-password`}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder={t('setup.passwordPlaceholder', language)}
+              required
+            />
+          </AuthField>
         </div>
-        <div className="px-6 mt-2">
-          <div className="h-64 rounded-xl border border-vergex-text/15 bg-vergex-text/5" />
-        </div>
-      </div>
 
-      {/* Blur overlay */}
-      <div className="absolute inset-0 backdrop-blur-md bg-vergex-bg/60" />
+        <AuthMessage error>{error}</AuthMessage>
 
-      {/* Modal card */}
-      <div className="relative z-10 flex min-h-screen items-center justify-center px-4 py-16">
-        <div className="w-full max-w-sm animate-page-in">
-          {/* Logo + Title */}
-          <div className="text-center mb-8">
-            <div className="flex justify-center mb-4">
-              <div className="relative">
-                <div className="absolute -inset-4 bg-vergex-brand/20 rounded-full blur-2xl" />
-                <img
-                  src="/icons/vergex-flow.svg"
-                  alt="Vergex"
-                  className="w-14 h-14 relative z-10"
-                />
-              </div>
-            </div>
-            <h1 className="text-2xl font-bold text-vergex-text mb-1.5">
-              {t('setup.welcome', language)}
-            </h1>
-            <p className="text-vergex-text-muted text-sm">
-              {t('setup.subtitle', language)}
-            </p>
-          </div>
-
-          {/* Card */}
-          <div className="bg-vergex-bg-lighter backdrop-blur-2xl border border-[var(--line)] rounded-2xl p-8 shadow-lg">
-            <form onSubmit={handleSubmit} className="space-y-5">
-              {/* Email */}
-              <div>
-                <label className="block text-xs font-medium text-vergex-text-muted mb-2">
-                  {t('email', language)}
-                </label>
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full bg-vergex-bg-deeper border border-[var(--line)] rounded-xl px-4 py-3 text-sm text-vergex-text placeholder-vergex-text-muted focus:outline-hidden focus:border-vergex-brand/60 focus:ring-1 focus:ring-vergex-brand/30 transition-all"
-                  placeholder={t('setup.emailPlaceholder', language)}
-                  required
-                  autoFocus
-                />
-              </div>
-
-              {/* Password */}
-              <div>
-                <label className="block text-xs font-medium text-vergex-text-muted mb-2">
-                  {t('password', language)}
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-vergex-bg-deeper border border-[var(--line)] rounded-xl px-4 py-3 pr-11 text-sm text-vergex-text placeholder-vergex-text-muted focus:outline-hidden focus:border-vergex-brand/60 focus:ring-1 focus:ring-vergex-brand/30 transition-all"
-                    placeholder={t('setup.passwordPlaceholder', language)}
-                    required
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-1.5 top-1/2 size-8 -translate-y-1/2"
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                  >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </Button>
-                </div>
-              </div>
-
-              {/* Error */}
-              {error && (
-                <p className="text-xs text-vergex-danger bg-vergex-danger/10 border border-vergex-danger/20 rounded-lg px-3 py-2">
-                  {error}
-                </p>
-              )}
-
-              {/* Submit */}
-              <Button
-                variant="primary"
-                size="lg"
-                className="mt-2 w-full"
-                type="submit"
-                disabled={loading}
-              >
-                {loading
-                  ? t('setup.submitting', language)
-                  : t('setup.submit', language)}
-              </Button>
-            </form>
-          </div>
-        </div>
-      </div>
-
-      <style>{`
-        @keyframes fadeInUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
-    </div>
+        <Button
+          variant="primary"
+          size="lg"
+          className="mt-2 w-full"
+          type="submit"
+          disabled={loading}
+        >
+          {loading
+            ? t('setup.submitting', language)
+            : t('setup.submit', language)}
+        </Button>
+      </form>
+    </AuthSurface>
   )
 }

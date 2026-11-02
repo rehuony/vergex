@@ -3,8 +3,8 @@ package instrument_test
 import (
 	"testing"
 
+	"vergex/internal/database/testdb"
 	"vergex/internal/market/instrument"
-	"vergex/internal/store/database/testdb"
 )
 
 func TestEnsureCreatesOnceAndKeepsKindsApart(t *testing.T) {

@@ -2,12 +2,12 @@
 
 | Topic | Page |
 | :---- | :--- |
-| Install, first session, backups, account recovery | [getting-started.md](getting-started.md) |
+| Install, first session, backups, user recovery | [getting-started.md](getting-started.md) |
 | Model providers, custom endpoints, costs | [models.md](models.md) |
-| Binance and OKX API keys | [exchanges.md](exchanges.md) |
+| Accounts: Binance and OKX API keys | [accounts.md](accounts.md) |
 | Dashboard: the read-only overview | [dashboard.md](dashboard.md) |
-| Frontier: agent-assisted trade planning and execution | [frontier.md](frontier.md) |
-| Traders and strategies: prompts, risk limits, grid | [traders.md](traders.md) |
+| Futures: agent-assisted trade planning and execution | [futures.md](futures.md) |
+| Auto trading: settings, prompts, risk limits, grid | [traders.md](traders.md) |
 | Telegram assistant | [telegram.md](telegram.md) |
 | Market data: local candles, rate limits and history | [market-data.md](market-data.md) |
 | Forecast: experimental signals, strategies, backtests | [forecast.md](forecast.md) |

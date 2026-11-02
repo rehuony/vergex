@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"vergex/internal/exchange/binance"
 	"vergex/internal/logger"
-	"vergex/internal/market/wsfeed"
+	"vergex/internal/market/ws"
+	"vergex/internal/venue/binance"
 )
 
 // subscriptionCheck is how often expired interest is noticed.
@@ -21,18 +21,18 @@ const subscriptionCheck = 30 * time.Second
 // at three intervals costs about 10 GB a day.
 type subscriptions struct {
 	store   *Store
-	binance *wsfeed.Feed
+	binance *ws.Feed
 	now     func() time.Time
 	wake    chan struct{}
 
 	mu      sync.Mutex
 	leases  map[leaseKey]*lease
-	feeds   []*wsfeed.Feed
+	feeds   []*ws.Feed
 	settled Settings
 }
 
 type leaseKey struct {
-	feed  *wsfeed.Feed
+	feed  *ws.Feed
 	topic string
 }
 
@@ -44,15 +44,15 @@ type lease struct {
 
 // newSubscriptions manages the Binance stream and any others, which carry only what
 // has been asked for.
-func newSubscriptions(store *Store, stream *wsfeed.Feed, others ...*wsfeed.Feed) *subscriptions {
+func newSubscriptions(store *Store, stream *ws.Feed, others ...*ws.Feed) *subscriptions {
 	return &subscriptions{
 		store: store, binance: stream, now: time.Now, wake: make(chan struct{}, 1),
-		leases: map[leaseKey]*lease{}, feeds: append([]*wsfeed.Feed{stream}, others...),
+		leases: map[leaseKey]*lease{}, feeds: append([]*ws.Feed{stream}, others...),
 	}
 }
 
 // keep holds a topic for at least this long.
-func (s *subscriptions) keep(feed *wsfeed.Feed, topic string, keep time.Duration) {
+func (s *subscriptions) keep(feed *ws.Feed, topic string, keep time.Duration) {
 	s.mu.Lock()
 	key := leaseKey{feed, topic}
 	held, known := s.leases[key]
@@ -68,7 +68,7 @@ func (s *subscriptions) keep(feed *wsfeed.Feed, topic string, keep time.Duration
 }
 
 // retain holds a topic until the returned function is called.
-func (s *subscriptions) retain(feed *wsfeed.Feed, topic string) (release func()) {
+func (s *subscriptions) retain(feed *ws.Feed, topic string) (release func()) {
 	s.mu.Lock()
 	key := leaseKey{feed, topic}
 	held, known := s.leases[key]
@@ -123,7 +123,7 @@ func (s *subscriptions) apply() {
 	s.settled = settings
 
 	now := s.now()
-	topics := map[*wsfeed.Feed][]string{}
+	topics := map[*ws.Feed][]string{}
 	s.mu.Lock()
 	for key, held := range s.leases {
 		if held.followers > 0 || now.Before(held.until) {

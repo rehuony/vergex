@@ -5,7 +5,7 @@ export const FORECAST_INTERVALS: ForecastInterval[] = ['15m', '1h', '4h', '1d']
 
 export type ForecastDirection = 'up' | 'down' | 'neutral'
 
-export interface ForecastRecord {
+export interface ForecastSignal {
   id: number
   strategy_id: string
   series_id: number
@@ -31,12 +31,15 @@ export interface ForecastRecord {
   actual_move_pct?: number
 }
 
-export interface ForecastSignal {
+// One row of the coin list: a tracked coin and its latest forecast.
+export interface ForecastCoin {
   symbol: string
   interval: ForecastInterval
   tier: number
   price: number | null
-  record: ForecastRecord | null
+  // Known only while the live stream is up.
+  change_24h_pct: number | null
+  signal: ForecastSignal | null
   stale: boolean
   pending?: string
 }
@@ -61,25 +64,63 @@ export interface ForecastResult {
   adx: number
   horizon: number
   has_derivatives: boolean
+  derivatives: {
+    funding: number | null
+    oi_change_pct: number | null
+    long_short_z: number | null
+  }
   factors: ForecastFactor[]
+  // Factors turned on that had no reading.
+  missing: string[]
+}
+
+// How calls have turned out. Apart from judged, it counts only forecasts whose windows
+// do not overlap, as a backtest does.
+export interface ForecastStats {
+  judged: number
+  samples: number
+  hits: number
+  misses: number
+  hit_rate: number | null
+  // What the same mix of up and down calls would hit with no skill.
+  chance_rate: number | null
+  avg_return_after_fee_pct: number | null
+}
+
+export interface ForecastCalibrationStatus {
+  interval: string
+  moments: number
+  needed: number
+  active: boolean
+  built_at?: number
+}
+
+// How a strategy has done live, overall and by what might explain it.
+export interface ForecastPerformance {
+  overall: ForecastStats
+  by_interval: Record<string, ForecastStats>
+  by_regime: Record<string, ForecastStats>
+  by_direction: Record<string, ForecastStats>
+  by_confidence: Record<string, ForecastStats>
+  calibration: ForecastCalibrationStatus[]
 }
 
 export interface ForecastDetail {
   symbol: string
   interval: ForecastInterval
   price: number | null
+  // Known only while the live stream is up.
+  change_24h_pct: number | null
   ready: boolean
   pending?: string
+  // The newest candle is further behind than a series keeping up can be.
+  stale: boolean
+  // The call to show: the forecast of the newest closed candle.
+  latest: ForecastSignal | null
+  // What a signal does not keep, such as its factors.
   result: ForecastResult | null
-  latest: ForecastRecord | null
-  records: ForecastRecord[]
-  stats: {
-    hits: number
-    misses: number
-    // Judged records where price moved, and how many of them rose.
-    moved: number
-    rose: number
-  }
+  signals: ForecastSignal[]
+  stats: ForecastStats
   candles: ForecastCandle[]
   last_closed: number
   // The candle still open, while the live stream is delivering it.
@@ -143,9 +184,10 @@ export interface ForecastConfig {
 export interface ForecastStrategy {
   id: string
   name: string
-  engine_version: number
   config: ForecastConfig
   created_at: number
+  // Saved under older forecast code: it keeps its records but cannot be used.
+  retired: boolean
 }
 
 export interface ForecastStrategies {
@@ -160,8 +202,11 @@ export interface BacktestMetrics {
   hits: number
   misses: number
   hit_rate: number | null
+  chance_rate: number | null
   baseline_up: number
   brier: number
+  // The same samples on candle factors alone.
+  brier_candles: number
   baseline_brier: number
   lift: number
   avg_return_pct: number
@@ -170,12 +215,25 @@ export interface BacktestMetrics {
   derivative_coverage: number
 }
 
+export interface FactorEdge {
+  samples: number
+  agree_rate: number | null
+  correlation: number | null
+}
+
+export interface FactorReport {
+  name: string
+  trending: FactorEdge
+  ranging: FactorEdge
+}
+
 export interface BacktestReport {
   fee_pct: number
   overall: BacktestMetrics
   by_interval: Record<string, BacktestMetrics>
   by_regime: Record<string, BacktestMetrics>
   by_symbol: Record<string, BacktestMetrics>
+  factors?: FactorReport[] | null
   reliability:
     | {
         from: number
@@ -193,6 +251,8 @@ export interface BacktestReport {
 export interface BacktestRun {
   id: number
   strategy_id: string
+  // What the user calls the run. Empty shows its strategy's name.
+  name: string
   options: {
     symbols: string[]
     intervals: string[]
@@ -202,6 +262,9 @@ export interface BacktestRun {
   status: 'running' | 'finished' | 'failed'
   done: number
   total: number
+  // The report's overall line, in a list of runs.
+  summary?: BacktestMetrics
+  // The whole report, when one run is asked for.
   report?: BacktestReport
   error?: string
   created_at: number
@@ -225,11 +288,11 @@ async function read<T>(path: string, failure: string): Promise<T> {
 }
 
 export const forecastApi = {
-  getForecastSignals(interval: ForecastInterval) {
+  getForecastCoins(interval: ForecastInterval) {
     return read<{
       strategy_id: string
       interval: ForecastInterval
-      signals: ForecastSignal[]
+      coins: ForecastCoin[]
     }>(
       `/forecast/signals?interval=${interval}`,
       'Failed to load forecast signals'
@@ -262,6 +325,13 @@ export const forecastApi = {
     )
   },
 
+  getForecastPerformance(id: string) {
+    return read<ForecastPerformance>(
+      `/forecast/strategies/${id}/performance`,
+      'Failed to load the strategy performance'
+    )
+  },
+
   async createForecastStrategy(
     config: ForecastConfig,
     name: string
@@ -275,9 +345,35 @@ export const forecastApi = {
     return result.data!
   },
 
+  // A refused name is said by the page, in its own words.
+  async renameForecastStrategy(id: string, name: string): Promise<void> {
+    const result = await httpClient.request(
+      `${API_BASE}/forecast/strategies/${id}`,
+      { method: 'PUT', data: { name }, silent: true }
+    )
+    if (!result.success)
+      throw new Error(result.message || 'Failed to rename the strategy')
+  },
+
   async activateForecastStrategy(id: string): Promise<void> {
     const result = await httpClient.post(
       `${API_BASE}/forecast/strategies/${id}/activate`
+    )
+    if (!result.success)
+      throw new Error(result.message || 'Failed to use the strategy')
+  },
+
+  async deactivateForecastStrategy(id: string): Promise<void> {
+    const result = await httpClient.post(
+      `${API_BASE}/forecast/strategies/${id}/deactivate`
+    )
+    if (!result.success)
+      throw new Error(result.message || 'Failed to stop the strategy')
+  },
+
+  async reviveForecastStrategy(id: string): Promise<void> {
+    const result = await httpClient.post(
+      `${API_BASE}/forecast/strategies/${id}/revive`
     )
     if (!result.success)
       throw new Error(result.message || 'Failed to use the strategy')
@@ -292,7 +388,7 @@ export const forecastApi = {
   },
 
   getForecastSettings() {
-    return read<{ active_strategy_id: string; alert_threshold: number }>(
+    return read<{ alert_threshold: number }>(
       '/forecast/settings',
       'Failed to load forecast settings'
     )
@@ -324,8 +420,41 @@ export const forecastApi = {
     )
   },
 
+  getForecastBacktest(id: number) {
+    return read<BacktestRun>(
+      `/forecast/backtests/${id}`,
+      'Failed to load the backtest'
+    )
+  },
+
+  async renameForecastBacktest(id: number, name: string): Promise<void> {
+    const result = await httpClient.request(
+      `${API_BASE}/forecast/backtests/${id}`,
+      { method: 'PUT', data: { name }, silent: true }
+    )
+    if (!result.success)
+      throw new Error(result.message || 'Failed to rename the backtest')
+  },
+
+  async deleteForecastBacktest(id: number): Promise<void> {
+    const result = await httpClient.delete(
+      `${API_BASE}/forecast/backtests/${id}`
+    )
+    if (!result.success)
+      throw new Error(result.message || 'Failed to delete the backtest')
+  },
+
+  async cancelForecastBacktest(id: number): Promise<void> {
+    const result = await httpClient.post(
+      `${API_BASE}/forecast/backtests/${id}/cancel`
+    )
+    if (!result.success)
+      throw new Error(result.message || 'Failed to stop the backtest')
+  },
+
   async startForecastBacktest(request: {
     strategy_id: string
+    name: string
     symbols: string[]
     intervals: string[]
     from: number

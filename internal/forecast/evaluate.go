@@ -12,11 +12,16 @@ import (
 // pass the same window, so a candle always gets the same answer.
 const WindowBars = 200
 
-// MinBars is the least history a forecast accepts.
+// MinBars is the least Evaluate can read. Forecasts always pass WindowBars, so a coin
+// needs that much history to get one.
 const MinBars = 120
 
 // ErrNotEnoughHistory says a coin is too new to forecast.
 var ErrNotEnoughHistory = errors.New("not enough history")
+
+// ErrNothingToRead says the candles hold nothing to score, such as a coin that has not
+// traded at all.
+var ErrNothingToRead = errors.New("nothing to read in these candles")
 
 // Directions.
 const (
@@ -34,9 +39,9 @@ const (
 // Derivatives is what derivatives data says at the moment of a forecast. A nil
 // field means no reading recent enough, and that factor is left out.
 type Derivatives struct {
-	Funding     *float64 // Latest settled funding rate.
-	OIChangePct *float64 // Open interest change over the lookback, in percent.
-	LongShortZ  *float64 // Long/short ratio against its own recent range.
+	Funding     *float64 `json:"funding"`       // Latest settled funding rate.
+	OIChangePct *float64 `json:"oi_change_pct"` // Open interest change over the lookback, in percent.
+	LongShortZ  *float64 `json:"long_short_z"`  // Long/short ratio against its own recent range.
 }
 
 // FactorValue is one factor's reading and what it added to the score.
@@ -56,14 +61,18 @@ type Result struct {
 	Direction   string  `json:"direction"`
 	Confidence  int     `json:"confidence"`
 	// ExpectedMovePct is the size of a typical move over the horizon.
-	ExpectedMovePct float64       `json:"expected_move_pct"`
-	Support         float64       `json:"support"`
-	Resistance      float64       `json:"resistance"`
-	Regime          string        `json:"regime"`
-	ADX             float64       `json:"adx"`
-	Horizon         int           `json:"horizon"`
-	HasDerivatives  bool          `json:"has_derivatives"`
-	Factors         []FactorValue `json:"factors"`
+	ExpectedMovePct float64 `json:"expected_move_pct"`
+	Support         float64 `json:"support"`
+	Resistance      float64 `json:"resistance"`
+	Regime          string  `json:"regime"`
+	ADX             float64 `json:"adx"`
+	Horizon         int     `json:"horizon"`
+	HasDerivatives  bool    `json:"has_derivatives"`
+	// Derivatives is what the derivatives factors read.
+	Derivatives Derivatives   `json:"derivatives"`
+	Factors     []FactorValue `json:"factors"`
+	// Missing names the factors turned on that had no reading.
+	Missing []string `json:"missing"`
 }
 
 // Evaluate forecasts from the candles up to and including the last one. It reads
@@ -75,7 +84,7 @@ func Evaluate(config Config, interval string, klines []market.Kline, derivatives
 	last := klines[len(klines)-1]
 	atr := market.ATR(klines, 14)
 	if atr <= 0 || last.Close <= 0 {
-		return Result{}, errors.New("candles have no range")
+		return Result{}, ErrNothingToRead
 	}
 
 	adx := averageDirectionalIndex(klines, 14)
@@ -87,17 +96,7 @@ func Evaluate(config Config, interval string, klines []market.Kline, derivatives
 	values := candleFactorValues(klines, atr)
 	derivativeValues(values, klines, atr, derivatives)
 
-	result := Result{
-		Close:      last.Close,
-		Regime:     regime,
-		ADX:        adx,
-		Horizon:    config.Horizons[interval],
-		Support:    0,
-		Resistance: 0,
-	}
-	if result.Horizon <= 0 {
-		result.Horizon = 4
-	}
+	result := Result{Close: last.Close, Regime: regime, ADX: adx, Horizon: config.Horizons[interval], Derivatives: derivatives, Missing: []string{}}
 
 	var fullSum, fullWeight, candleSum, candleWeight, availableWeight, enabledWeight float64
 	for _, name := range sortedFactors(config) {
@@ -112,6 +111,7 @@ func Evaluate(config Config, interval string, klines []market.Kline, derivatives
 		enabledWeight += math.Abs(weight)
 		value, ok := values[name]
 		if !ok {
+			result.Missing = append(result.Missing, name)
 			continue
 		}
 		availableWeight += math.Abs(weight)
@@ -126,7 +126,7 @@ func Evaluate(config Config, interval string, klines []market.Kline, derivatives
 		result.Factors = append(result.Factors, FactorValue{Name: name, Value: value, Weight: weight, Contribution: weight * value})
 	}
 	if fullWeight == 0 {
-		return Result{}, errors.New("no factor could be read")
+		return Result{}, ErrNothingToRead
 	}
 	result.ProbFull = logistic(config.Slope, fullSum/fullWeight)
 	result.ProbCandles = result.ProbFull
@@ -229,9 +229,8 @@ func derivativeValues(values map[string]float64, klines []market.Kline, atr floa
 	}
 	// Open interest: new money behind the move confirms it; money leaving fades it.
 	if d.OIChangePct != nil {
-		span := 12
-		move := klines[len(klines)-1].Close - klines[len(klines)-1-span].Close
-		values[FactorOpenInterest] = math.Tanh(*d.OIChangePct/5) * math.Tanh(move/(atr*math.Sqrt(float64(span))))
+		move := klines[len(klines)-1].Close - klines[len(klines)-1-oiLookbackBars].Close
+		values[FactorOpenInterest] = math.Tanh(*d.OIChangePct/5) * math.Tanh(move/(atr*math.Sqrt(oiLookbackBars)))
 	}
 	// Long/short ratio: a side unusually crowded for this coin tends to unwind.
 	if d.LongShortZ != nil {

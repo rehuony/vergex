@@ -6,8 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"vergex/internal/exchange/binance"
-	"vergex/internal/market/wsfeed"
+	"vergex/internal/market/ws"
+	"vergex/internal/venue/binance"
 )
 
 const (
@@ -21,14 +21,20 @@ const (
 
 // LiveCandle is the newest update of a candle and when it arrived here.
 type LiveCandle struct {
-	wsfeed.Candle
+	ws.Candle
 	ReceivedAt time.Time
 }
 
 // LiveTick is a price and when it arrived here.
 type LiveTick struct {
-	wsfeed.Tick
+	ws.Tick
 	ReceivedAt time.Time
+}
+
+// Quote is a coin's latest price and, while the stream gives it, its change over 24 hours.
+type Quote struct {
+	Price        float64
+	Change24hPct *float64
 }
 
 type candleKey struct{ venue, symbol, interval string }
@@ -46,7 +52,7 @@ type Hub struct {
 	marks   map[tickKey]LiveTick
 	subs    map[candleKey]map[*CandleSubscription]struct{}
 
-	closed        chan wsfeed.Candle
+	closed        chan ws.Candle
 	droppedClosed atomic.Uint64
 }
 
@@ -58,12 +64,12 @@ func NewHub() *Hub {
 		prices:  map[tickKey]LiveTick{},
 		marks:   map[tickKey]LiveTick{},
 		subs:    map[candleKey]map[*CandleSubscription]struct{}{},
-		closed:  make(chan wsfeed.Candle, closedQueueSize),
+		closed:  make(chan ws.Candle, closedQueueSize),
 	}
 }
 
 // Run applies events until ctx ends.
-func (h *Hub) Run(ctx context.Context, events <-chan wsfeed.Event) {
+func (h *Hub) Run(ctx context.Context, events <-chan ws.Event) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -74,7 +80,7 @@ func (h *Hub) Run(ctx context.Context, events <-chan wsfeed.Event) {
 	}
 }
 
-func (h *Hub) apply(event wsfeed.Event) {
+func (h *Hub) apply(event ws.Event) {
 	now := h.now()
 	switch {
 	case event.Candle != nil:
@@ -86,7 +92,7 @@ func (h *Hub) apply(event wsfeed.Event) {
 	}
 }
 
-func (h *Hub) applyCandle(venue string, candle wsfeed.Candle, now time.Time) {
+func (h *Hub) applyCandle(venue string, candle ws.Candle, now time.Time) {
 	key := candleKey{venue, candle.Symbol, candle.Interval}
 	live := LiveCandle{Candle: candle, ReceivedAt: now}
 
@@ -109,7 +115,7 @@ func (h *Hub) applyCandle(venue string, candle wsfeed.Candle, now time.Time) {
 	}
 }
 
-func (h *Hub) applyTicks(into map[tickKey]LiveTick, venue string, ticks []wsfeed.Tick, now time.Time) {
+func (h *Hub) applyTicks(into map[tickKey]LiveTick, venue string, ticks []ws.Tick, now time.Time) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for _, tick := range ticks {
@@ -134,14 +140,20 @@ func (h *Hub) Mark(venue, symbol string) (LiveTick, bool) {
 }
 
 // Prices returns the last trade price of every symbol a venue has reported.
-func (h *Hub) Prices(venue string) map[string]float64 {
+func (h *Hub) Prices(venue string) map[string]Quote {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	prices := make(map[string]float64, len(h.prices))
+	prices := make(map[string]Quote, len(h.prices))
 	for key, tick := range h.prices {
-		if key.venue == venue {
-			prices[key.symbol] = tick.Price
+		if key.venue != venue {
+			continue
 		}
+		quote := Quote{Price: tick.Price}
+		if tick.Open24h > 0 {
+			change := (tick.Price/tick.Open24h - 1) * 100
+			quote.Change24hPct = &change
+		}
+		prices[key.symbol] = quote
 	}
 	return prices
 }

@@ -80,12 +80,20 @@ export async function prepareAvatarSource(file: File): Promise<string> {
   }
 }
 
-/** Turns an image a quarter turn counter-clockwise; returns a new object URL. */
-export async function rotateLeft(src: string): Promise<string> {
+/** Turns an image a quarter turn either way; returns a new object URL. */
+export async function rotateQuarter(
+  src: string,
+  direction: 'left' | 'right'
+): Promise<string> {
   const image = await loadImage(src)
   const { canvas, context } = newCanvas(image.naturalHeight, image.naturalWidth)
-  context.translate(0, canvas.height)
-  context.rotate(-Math.PI / 2)
+  if (direction === 'left') {
+    context.translate(0, canvas.height)
+    context.rotate(-Math.PI / 2)
+  } else {
+    context.translate(canvas.width, 0)
+    context.rotate(Math.PI / 2)
+  }
   context.drawImage(image, 0, 0)
   return URL.createObjectURL(await toBlob(canvas))
 }

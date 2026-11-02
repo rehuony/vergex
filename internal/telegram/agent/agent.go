@@ -54,7 +54,7 @@ func status(on bool, yes, no string) string {
 	return no
 }
 
-// buildAccountContext summarizes models, exchanges, strategies and traders
+// buildAccountContext summarizes models, accounts and traders
 // (plus balance and statistics of running traders) for the first turn of a
 // conversation, so the model can refer to existing resources by name.
 func (a *Agent) buildAccountContext() string {
@@ -71,21 +71,12 @@ func (a *Agent) buildAccountContext() string {
 		}
 	}
 
-	sb.WriteString("\n## Exchanges\n")
-	if exchanges, err := a.exchanges(); err != nil {
+	sb.WriteString("\n## Accounts\n")
+	if accounts, err := a.accounts(); err != nil {
 		sb.WriteString("  unavailable: " + err.Error() + "\n")
 	} else {
-		for _, e := range exchanges {
-			sb.WriteString(fmt.Sprintf("  • %s  id=%s  type=%s\n", e.label(), e.ID, e.ExchangeType))
-		}
-	}
-
-	sb.WriteString("\n## Strategies\n")
-	if strategies, err := a.strategies(); err != nil {
-		sb.WriteString("  unavailable: " + err.Error() + "\n")
-	} else {
-		for _, s := range strategies {
-			sb.WriteString(fmt.Sprintf("  • %s  id=%s%s\n", s.Name, s.ID, status(s.IsActive, "  [active]", "")))
+		for _, e := range accounts {
+			sb.WriteString(fmt.Sprintf("  • %s  id=%s  type=%s\n", e.label(), e.ID, e.Venue))
 		}
 	}
 
@@ -95,15 +86,15 @@ func (a *Agent) buildAccountContext() string {
 		sb.WriteString("  unavailable: " + err.Error() + "\n")
 	}
 	for _, t := range traders {
-		sb.WriteString(fmt.Sprintf("  • %s  id=%s  strategy=%s  [%s]\n", t.Name, t.TraderID, orDash(t.StrategyName), status(t.IsRunning, "RUNNING", "stopped")))
+		sb.WriteString(fmt.Sprintf("  • %s  id=%s  kind=%s  [%s]\n", t.Name, t.TraderID, orDash(t.Kind), status(t.IsRunning, "RUNNING", "stopped")))
 	}
 	for _, t := range traders {
 		if !t.IsRunning {
 			continue
 		}
-		q := "?trader_id=" + url.QueryEscape(t.TraderID)
-		for _, part := range []struct{ label, path string }{{"Account", "/api/account"}, {"Statistics", "/api/statistics"}} {
-			raw, err := a.api.raw("GET", part.path+q, nil)
+		base := "/api/traders/" + url.PathEscape(t.TraderID)
+		for _, part := range []struct{ label, path string }{{"Account", "/account"}, {"Statistics", "/statistics"}} {
+			raw, err := a.api.raw("GET", base+part.path, nil)
 			if err != nil {
 				continue
 			}

@@ -1,108 +1,134 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Trash2 } from 'lucide-react'
-import { Link } from 'react-router-dom'
-import useSWR from 'swr'
+import { CopyPlus, Pencil, Plus, Power, Trash2 } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '@/api'
+import type { ForecastConfig, ForecastStrategy } from '@/api/forecast'
 import {
-  FORECAST_INTERVALS,
-  type FactorConfig,
-  type ForecastConfig,
-  type ForecastStrategy,
-} from '@/api/forecast'
-import {
-  FieldGrid,
-  NumberField,
-  fieldClass,
-} from '@/components/common/form-fields'
+  RailItem,
+  SplitRail,
+  SplitView,
+  type RailAction,
+} from '@/components/common/split-view'
+import { fieldClass } from '@/components/common/form-fields'
 import { confirmToast, notify } from '@/components/common/notify'
 import { Panel, PanelState } from '@/components/common/panel'
-import { fmtDate } from '@/components/forecast/forecast-format'
-import { ForecastFrame } from '@/components/forecast/forecast-frame'
+import { SectionTabs } from '@/components/common/section-tabs'
 import {
   SettingActions,
   SettingBadge,
   SettingRow,
 } from '@/components/common/setting-row'
+import { fmtDate } from '@/components/forecast/forecast-format'
+import { ForecastFrame } from '@/components/forecast/forecast-frame'
+import { strategiesQuery } from '@/components/forecast/forecast-queries'
+import { EditableTitle, NameInput } from '@/components/common/name-editing'
+import { StrategyPerformance } from '@/components/forecast/strategy-performance'
+import {
+  StrategyRules,
+  StrategyRulesView,
+} from '@/components/forecast/strategy-rules'
+import { useStrategies } from '@/components/forecast/strategy-select'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AppSelect } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { ROUTES } from '@/constants/route-paths'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
+import { cn } from '@/utils/cn'
 
-const FACTOR_ORDER = [
-  'trend',
-  'momentum',
-  'rsi',
-  'bollinger',
-  'returns',
-  'volume',
-  'candle',
-  'structure',
-  'stochastic',
-  'vwap',
-  'divergence',
-  'funding',
-  'open_interest',
-  'long_short',
-]
+type DetailTab = 'performance' | 'rules'
 
-const sameConfig = (a: ForecastConfig, b: ForecastConfig) =>
-  JSON.stringify(sortKeys(a)) === JSON.stringify(sortKeys(b))
+// What a new strategy starts from: a saved one's rules or the defaults.
+const FROM_DEFAULTS = 'defaults'
+const DRAFT_KEY = 'vergex.forecast.draft'
 
-function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys)
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, item]) => [key, sortKeys(item)])
-    )
-  }
-  return value
+interface Draft {
+  from: string
+  name: string
+  config: ForecastConfig
+  // What it started as, to tell whether leaving it would lose anything.
+  pristine: string
+  // A try at saving shows what is missing.
+  tried: boolean
 }
 
-// Forecast strategies: a saved one cannot change, so editing one and saving always
-// makes a new one to backtest and then put to use.
+// A draft outlives leaving the page, so a look at another tab loses nothing.
+const savedDraft = (): Draft | null => {
+  try {
+    const saved = sessionStorage.getItem(DRAFT_KEY)
+    return saved ? JSON.parse(saved) : null
+  } catch {
+    return null
+  }
+}
+
+// A strategy's rules with every factor the code knows, so one saved before a factor
+// existed can still turn it on.
+const withEveryFactor = (config: ForecastConfig, defaults: ForecastConfig) => {
+  const factors = { ...config.factors }
+  for (const [name, factor] of Object.entries(defaults.factors)) {
+    factors[name] ??= { ...factor, enabled: false }
+  }
+  return structuredClone({ ...config, factors })
+}
+
+// Forecast strategies: the list beside one strategy's record and rules. A saved one's
+// rules cannot change, so a different idea starts as a new strategy from any of them.
 export function ForecastStrategiesPage() {
   const { language } = useLanguage()
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`forecast.${key}`, language, params)
-  const { data, error, mutate } = useSWR(
-    'forecast-strategies',
-    api.getForecastStrategies,
-    { revalidateOnFocus: false }
-  )
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [draft, setDraft] = useState<ForecastConfig | null>(null)
-  const [name, setName] = useState('')
+  const client = useQueryClient()
+  const { data, error, reload, toggle } = useStrategies(language)
+  const [params, setParams] = useSearchParams()
+  const selectedId = params.get('id')
+  const tab: DetailTab = params.get('tab') === 'rules' ? 'rules' : 'performance'
+  const [draft, setDraft] = useState<Draft | null>(savedDraft)
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [renamingHere, setRenamingHere] = useState(false)
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    try {
+      if (draft) sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
+      else sessionStorage.removeItem(DRAFT_KEY)
+    } catch {
+      /* Only a convenience: the draft just won't outlive the page. */
+    }
+  }, [draft])
+
+  const select = (id: string | null, nextTab: DetailTab = tab) => {
+    const next = new URLSearchParams()
+    if (id) next.set('id', id)
+    if (nextTab === 'rules') next.set('tab', nextTab)
+    setParams(next, { replace: true })
+  }
 
   const selected: ForecastStrategy | undefined = useMemo(
     () =>
       data?.strategies.find((strategy) => strategy.id === selectedId) ??
       data?.strategies.find(
         (strategy) => strategy.id === data.active_strategy_id
-      ),
+      ) ??
+      data?.strategies[0],
     [data, selectedId]
   )
 
-  useEffect(() => {
-    if (selected) {
-      setDraft(structuredClone(selected.config))
-      setName('')
-    }
-  }, [selected])
+  const rulesFrom = (from: string): ForecastConfig | null => {
+    if (!data) return null
+    const source = data.strategies.find((strategy) => strategy.id === from)
+    return withEveryFactor(
+      source?.config ?? data.default_config,
+      data.default_config
+    )
+  }
 
-  const changed = Boolean(
-    draft && selected && !sameConfig(draft, selected.config)
-  )
-
-  const choose = async (id: string) => {
-    if (id === selected?.id) return
+  // Leaving a draft with changes asks first. It reports whether the draft is gone.
+  const leaveDraft = async () => {
     if (
-      changed &&
+      draft &&
+      (JSON.stringify(draft.config) !== draft.pristine || draft.name.trim()) &&
       !(await confirmToast(label('discardMessage'), {
         title: label('discardTitle'),
         okText: label('discard'),
@@ -110,18 +136,61 @@ export function ForecastStrategiesPage() {
         tone: 'danger',
       }))
     ) {
-      return
+      return false
     }
-    setSelectedId(id)
+    setDraft(null)
+    return true
   }
+
+  const startDraft = async (from = selected?.id ?? FROM_DEFAULTS) => {
+    if (!(await leaveDraft())) return
+    const config = rulesFrom(from)
+    if (!config) return
+    setDraft({
+      from,
+      name: '',
+      config,
+      pristine: JSON.stringify(config),
+      tried: false,
+    })
+  }
+
+  const chooseFrom = (from: string) => {
+    const config = rulesFrom(from)
+    if (!draft || !config) return
+    setDraft({ ...draft, from, config, pristine: JSON.stringify(config) })
+  }
+
+  const choose = async (id: string) => {
+    if (await leaveDraft()) select(id)
+  }
+
+  const noneOn =
+    draft &&
+    !Object.values(draft.config.factors).some((factor) => factor.enabled)
+  const draftMessage = !draft?.tried
+    ? undefined
+    : noneOn
+      ? label('needFactor')
+      : !draft.name.trim()
+        ? label('needName')
+        : undefined
 
   const save = async () => {
     if (!draft) return
+    if (noneOn || !draft.name.trim()) {
+      setDraft({ ...draft, tried: true })
+      return
+    }
     setBusy(true)
     try {
-      const strategy = await api.createForecastStrategy(draft, name.trim())
-      await mutate()
-      setSelectedId(strategy.id)
+      const strategy = await api.createForecastStrategy(
+        draft.config,
+        draft.name.trim()
+      )
+      await reload()
+      setDraft(null)
+      select(strategy.id, 'rules')
       notify.success(label('strategySaved', { name: strategy.name }))
     } catch (err) {
       notify.error(err instanceof Error ? err.message : label('saveFailed'))
@@ -130,10 +199,28 @@ export function ForecastStrategiesPage() {
     }
   }
 
-  const remove = async () => {
-    if (!selected) return
+  const rename = async (strategy: ForecastStrategy, name: string) => {
+    setRenaming(null)
+    setRenamingHere(false)
+    if (!data) return
+    const renamed = {
+      ...data,
+      strategies: data.strategies.map((other) =>
+        other.id === strategy.id ? { ...other, name } : other
+      ),
+    }
+    client.setQueryData(strategiesQuery.queryKey, renamed)
+    try {
+      await api.renameForecastStrategy(strategy.id, name)
+    } catch {
+      client.setQueryData(strategiesQuery.queryKey, data)
+      notify.error(label('renameFailed'))
+    }
+  }
+
+  const remove = async (strategy: ForecastStrategy) => {
     const ok = await confirmToast(
-      label('deleteMessage', { name: selected.name }),
+      label('deleteMessage', { name: strategy.name }),
       {
         title: label('deleteStrategy'),
         okText: label('deleteStrategy'),
@@ -144,10 +231,10 @@ export function ForecastStrategiesPage() {
     if (!ok) return
     setBusy(true)
     try {
-      await api.deleteForecastStrategy(selected.id)
-      setSelectedId(null)
-      await mutate()
-      notify.success(label('strategyDeleted', { name: selected.name }))
+      await api.deleteForecastStrategy(strategy.id)
+      if (strategy.id === selected?.id) select(null)
+      await reload()
+      notify.success(label('strategyDeleted', { name: strategy.name }))
     } catch (err) {
       notify.error(err instanceof Error ? err.message : label('deleteFailed'))
     } finally {
@@ -155,284 +242,335 @@ export function ForecastStrategiesPage() {
     }
   }
 
-  const patch = (next: Partial<ForecastConfig>) =>
-    setDraft((current) => (current ? { ...current, ...next } : current))
-  const patchFactor = (name: string, next: Partial<FactorConfig>) =>
-    setDraft((current) =>
-      current
-        ? {
-            ...current,
-            factors: {
-              ...current.factors,
-              [name]: { ...current.factors[name], ...next },
-            },
-          }
-        : current
-    )
+  const nameTaken = (strategy: ForecastStrategy) => (name: string) =>
+    data?.strategies.some(
+      (other) => other.id !== strategy.id && other.name === name
+    ) ?? false
 
   const isActive = selected?.id === data?.active_strategy_id
-  const noneOn =
-    draft && !Object.values(draft.factors).some((factor) => factor.enabled)
+  const badges = (strategy: ForecastStrategy) => (
+    <>
+      {strategy.id === data?.active_strategy_id && (
+        <SettingBadge tone="success">{label('inUse')}</SettingBadge>
+      )}
+      {strategy.retired && (
+        <span title={label('retiredTitle')} className="inline-flex">
+          <SettingBadge>{label('retired')}</SettingBadge>
+        </span>
+      )}
+    </>
+  )
+  const actionsFor = (strategy: ForecastStrategy): RailAction[] => [
+    {
+      label:
+        strategy.id === data?.active_strategy_id
+          ? label('stopStrategy')
+          : label('useStrategy'),
+      icon: Power,
+      onSelect: () => void toggle(strategy),
+    },
+    {
+      label: label('rename'),
+      icon: Pencil,
+      movesFocus: true,
+      onSelect: () => setRenaming(strategy.id),
+    },
+    {
+      label: label('newFromThis'),
+      icon: CopyPlus,
+      movesFocus: true,
+      onSelect: () => void startDraft(strategy.id),
+    },
+    {
+      label: label('deleteStrategy'),
+      icon: Trash2,
+      danger: true,
+      disabled: strategy.id === data?.active_strategy_id,
+      onSelect: () => void remove(strategy),
+    },
+  ]
+
   return (
     <ForecastFrame language={language}>
-      {error ? (
+      {error && !data ? (
         <Panel>
           <PanelState role="alert">{label('loadFailed')}</PanelState>
         </Panel>
-      ) : !data || !draft || !selected ? (
+      ) : !data || !selected ? (
         <Panel>
           <PanelState role="status">{label('loading')}</PanelState>
         </Panel>
       ) : (
-        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-[260px_minmax(0,1fr)]">
-          <Panel className="hidden md:block">
-            <ScrollArea className="max-h-[70vh] rounded-xl">
-              <ul className="p-1.5">
-                {data.strategies.map((strategy) => (
-                  <li key={strategy.id}>
+        <SplitView
+          rail={
+            <SplitRail
+              label={label('tabStrategies')}
+              addLabel={label('newStrategy')}
+              onAdd={() => {
+                if (!draft) void startDraft()
+              }}
+            >
+              {draft && (
+                <RailItem
+                  current
+                  name={draft.name.trim() || label('newStrategy')}
+                  details={
+                    <span className="text-xs text-vergex-muted">
+                      {label('notSaved')}
+                    </span>
+                  }
+                  onOpen={() => undefined}
+                />
+              )}
+              {data.strategies.map((strategy) => (
+                <RailItem
+                  key={strategy.id}
+                  current={!draft && selected.id === strategy.id}
+                  title={strategy.name}
+                  name={strategy.name}
+                  details={
+                    <span className="flex min-w-0 items-center gap-2 text-xs text-vergex-muted">
+                      <span className="truncate">
+                        {fmtDate(strategy.created_at)}
+                      </span>
+                      {badges(strategy)}
+                    </span>
+                  }
+                  onOpen={() => void choose(strategy.id)}
+                  onStartRename={() => setRenaming(strategy.id)}
+                  rename={
+                    renaming === strategy.id && (
+                      <NameInput
+                        row
+                        value={strategy.name}
+                        label={label('strategyName')}
+                        isTaken={nameTaken(strategy)}
+                        takenLabel={label('nameTaken')}
+                        language={language}
+                        onSave={(name) => void rename(strategy, name)}
+                        onCancel={() => setRenaming(null)}
+                      />
+                    )
+                  }
+                  actions={actionsFor(strategy)}
+                  actionsLabel={label('moreActions')}
+                />
+              ))}
+            </SplitRail>
+          }
+        >
+          <div className="flex min-h-0 min-w-0 flex-col gap-4">
+            <div className="flex items-center gap-2 lg:hidden">
+              <AppSelect
+                aria-label={label('strategy')}
+                className="min-w-0 flex-1 max-sm:h-10"
+                value={selected.id}
+                options={data.strategies.map((strategy) => ({
+                  value: strategy.id,
+                  label:
+                    strategy.name +
+                    (strategy.id === data.active_strategy_id
+                      ? ` · ${label('inUse')}`
+                      : ''),
+                }))}
+                onChange={(id) => void choose(id)}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                aria-label={label('newStrategy')}
+                className="shrink-0 max-sm:size-10"
+                onClick={() => {
+                  if (!draft) void startDraft()
+                }}
+              >
+                <Plus className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+
+            {draft ? (
+              <Panel
+                title={label('newStrategy')}
+                className="flex min-h-0 flex-1 flex-col overflow-hidden"
+              >
+                <ScrollArea className="min-h-0 flex-1 border-t border-vergex-line">
+                  <div className="px-4">
+                    <SettingRow label={label('strategyName')} htmlFor="fc-name">
+                      <input
+                        id="fc-name"
+                        autoFocus
+                        className={fieldClass}
+                        value={draft.name}
+                        maxLength={80}
+                        onChange={(event) =>
+                          setDraft({ ...draft, name: event.target.value })
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') void save()
+                        }}
+                      />
+                    </SettingRow>
+                    <SettingRow label={label('startFrom')}>
+                      <AppSelect
+                        aria-label={label('startFrom')}
+                        className="min-w-0 flex-1 max-sm:h-10"
+                        value={draft.from}
+                        options={[
+                          {
+                            value: FROM_DEFAULTS,
+                            label: label('defaultRules'),
+                          },
+                          ...data.strategies.map((strategy) => ({
+                            value: strategy.id,
+                            label: strategy.name,
+                          })),
+                        ]}
+                        onChange={chooseFrom}
+                      />
+                    </SettingRow>
+                  </div>
+                  <div className="border-t border-vergex-line">
+                    <StrategyRules
+                      config={draft.config}
+                      onChange={(config) => setDraft({ ...draft, config })}
+                      language={language}
+                    />
+                  </div>
+                </ScrollArea>
+                <div className="shrink-0 bg-vergex-surface px-4">
+                  <SettingActions message={draftMessage}>
                     <Button
                       type="button"
                       variant="ghost"
-                      aria-current={
-                        selected.id === strategy.id ? 'true' : undefined
-                      }
-                      title={strategy.name}
-                      onClick={() => void choose(strategy.id)}
-                      className="h-auto w-full flex-col items-stretch gap-0.5 whitespace-normal px-2.5 py-2 text-left hover:text-vergex-text-muted aria-[current=true]:bg-[var(--brand-soft)]"
+                      size="sm"
+                      className="max-sm:h-10"
+                      onClick={() => void leaveDraft()}
                     >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-vergex-text">
-                          {strategy.name}
-                        </span>
-                        {strategy.id === data.active_strategy_id && (
-                          <SettingBadge tone="success">
-                            {label('inUse')}
-                          </SettingBadge>
-                        )}
-                      </span>
-                      <span className="text-xs font-normal">
-                        {fmtDate(strategy.created_at)}
-                      </span>
+                      {label('cancelDraft')}
                     </Button>
-                  </li>
-                ))}
-              </ul>
-            </ScrollArea>
-          </Panel>
-
-          <div className="flex min-w-0 flex-col gap-4">
-            <AppSelect
-              aria-label={label('strategy')}
-              className="md:hidden"
-              value={selected.id}
-              options={data.strategies.map((strategy) => ({
-                value: strategy.id,
-                label:
-                  strategy.name +
-                  (strategy.id === data.active_strategy_id
-                    ? ` · ${label('inUse')}`
-                    : ''),
-              }))}
-              onChange={(id) => void choose(id)}
-            />
-            <Panel
-              title={
-                <span className="block truncate" title={selected.name}>
-                  {selected.name}
-                </span>
-              }
-              meta={fmtDate(selected.created_at)}
-              actions={
-                <>
-                  <Link
-                    to={`${ROUTES.forecastBacktests}?strategy=${selected.id}`}
-                    className={buttonVariants({
-                      variant: 'secondary',
-                      size: 'sm',
-                      className: 'max-sm:h-10',
-                    })}
-                  >
-                    {label('backtestThis')}
-                  </Link>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="hover:text-vergex-danger max-sm:size-10"
-                    aria-label={label('deleteStrategy')}
-                    title={
-                      isActive
-                        ? label('inUseNoDelete')
-                        : label('deleteStrategy')
-                    }
-                    disabled={isActive || busy}
-                    onClick={() => void remove()}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </>
-              }
-            >
-              <div className="border-t border-[var(--line)] px-4">
-                <FieldGrid>
-                  <SettingRow label={label('adxThreshold')} htmlFor="fc-adx">
-                    <NumberField
-                      id="fc-adx"
-                      value={draft.adx_threshold}
-                      min={5}
-                      max={60}
-                      onChange={(adx_threshold) => patch({ adx_threshold })}
-                    />
-                  </SettingRow>
-                  <SettingRow label={label('slope')} htmlFor="fc-slope">
-                    <NumberField
-                      id="fc-slope"
-                      value={draft.slope}
-                      min={0.1}
-                      max={20}
-                      step={0.1}
-                      onChange={(slope) => patch({ slope })}
-                    />
-                  </SettingRow>
-                  <SettingRow
-                    label={label('directionThreshold')}
-                    htmlFor="fc-direction"
-                  >
-                    <NumberField
-                      id="fc-direction"
-                      value={Math.round(draft.direction_threshold * 100)}
-                      min={0}
-                      max={49}
-                      suffix={label('pointsFrom50')}
-                      onChange={(points) =>
-                        patch({ direction_threshold: points / 100 })
-                      }
-                    />
-                  </SettingRow>
-                  {FORECAST_INTERVALS.map((interval) => (
-                    <SettingRow
-                      key={interval}
-                      label={label('horizonFor', { interval })}
-                      htmlFor={`fc-horizon-${interval}`}
+                    <Button
+                      type="button"
+                      variant="primary"
+                      size="sm"
+                      className="max-sm:h-10"
+                      disabled={busy}
+                      onClick={() => void save()}
                     >
-                      <NumberField
-                        id={`fc-horizon-${interval}`}
-                        value={draft.horizons[interval] ?? 4}
-                        min={1}
-                        max={96}
-                        suffix={label('bars')}
-                        onChange={(bars) =>
-                          patch({
-                            horizons: { ...draft.horizons, [interval]: bars },
-                          })
-                        }
-                      />
-                    </SettingRow>
-                  ))}
-                </FieldGrid>
-              </div>
-
-              <div className="border-t border-[var(--line)] px-4 py-2">
-                <div className="grid grid-cols-[minmax(0,1fr)_40px_72px_72px] items-center gap-x-3 py-2 text-xs font-medium text-vergex-text-muted sm:grid-cols-[minmax(0,1fr)_40px_112px_112px]">
-                  <span>{label('factors')}</span>
-                  <span>{label('on')}</span>
-                  <span>{label('weightTrending')}</span>
-                  <span>{label('weightRanging')}</span>
+                      {label('saveStrategy')}
+                    </Button>
+                  </SettingActions>
                 </div>
-                {FACTOR_ORDER.filter((name) => draft.factors[name]).map(
-                  (name) => {
-                    const factor = draft.factors[name]
-                    const title = label(`factor.${name}`)
-                    return (
-                      <div
-                        key={name}
-                        className="grid grid-cols-[minmax(0,1fr)_40px_72px_72px] items-center gap-x-3 border-t border-[var(--line)] py-2 sm:grid-cols-[minmax(0,1fr)_40px_112px_112px]"
-                      >
-                        <span className="min-w-0 text-sm leading-tight text-vergex-text">
-                          {title}
-                        </span>
-                        <Switch
-                          aria-label={title}
-                          checked={factor.enabled}
-                          onChange={(enabled) => patchFactor(name, { enabled })}
-                        />
-                        <div className="flex">
-                          <NumberField
-                            value={factor.trending}
-                            min={-5}
-                            max={5}
-                            step={0.1}
-                            disabled={!factor.enabled}
-                            ariaLabel={label('weightOf', {
-                              name: title,
-                              regime: label('weightTrending'),
-                            })}
-                            onChange={(trending) =>
-                              patchFactor(name, { trending })
-                            }
-                          />
-                        </div>
-                        <div className="flex">
-                          <NumberField
-                            value={factor.ranging}
-                            min={-5}
-                            max={5}
-                            step={0.1}
-                            disabled={!factor.enabled}
-                            ariaLabel={label('weightOf', {
-                              name: title,
-                              regime: label('weightRanging'),
-                            })}
-                            onChange={(ranging) =>
-                              patchFactor(name, { ranging })
-                            }
-                          />
-                        </div>
-                      </div>
-                    )
-                  }
-                )}
-              </div>
-
-              <div className="border-t border-[var(--line)] px-4">
-                <SettingRow label={label('strategyName')} htmlFor="fc-name">
-                  <input
-                    id="fc-name"
-                    className={fieldClass}
-                    value={name}
-                    maxLength={80}
-                    onChange={(event) => setName(event.target.value)}
-                  />
-                </SettingRow>
-              </div>
-
-              <div className="sticky bottom-0 z-10 rounded-b-xl bg-[var(--surface)] px-4">
-                <SettingActions
-                  message={
-                    noneOn
-                      ? label('needFactor')
-                      : changed && !name.trim()
-                        ? label('needName')
-                        : undefined
-                  }
-                >
-                  <Button
-                    type="button"
-                    variant="primary"
-                    size="sm"
-                    className="max-sm:h-10"
-                    disabled={
-                      busy || !changed || !name.trim() || Boolean(noneOn)
+              </Panel>
+            ) : (
+              <Panel
+                title={
+                  <EditableTitle
+                    name={selected.name}
+                    editing={renamingHere}
+                    renameLabel={label('rename')}
+                    onEdit={() => setRenamingHere(true)}
+                    field={
+                      <NameInput
+                        value={selected.name}
+                        label={label('strategyName')}
+                        isTaken={nameTaken(selected)}
+                        takenLabel={label('nameTaken')}
+                        language={language}
+                        onSave={(name) => void rename(selected, name)}
+                        onCancel={() => setRenamingHere(false)}
+                        className="max-w-64 md:max-w-96"
+                      />
                     }
-                    onClick={() => void save()}
                   >
-                    {label('saveStrategy')}
-                  </Button>
-                </SettingActions>
-              </div>
-            </Panel>
+                    {badges(selected)}
+                  </EditableTitle>
+                }
+                meta={
+                  <span
+                    className={cn(
+                      'block truncate',
+                      renamingHere && 'invisible'
+                    )}
+                  >
+                    {fmtDate(selected.created_at)}
+                  </span>
+                }
+                actions={
+                  <>
+                    <Button
+                      type="button"
+                      variant={isActive ? 'secondary' : 'primary'}
+                      size="sm"
+                      className="max-sm:h-10"
+                      onClick={() => void toggle(selected)}
+                    >
+                      {isActive ? label('stopStrategy') : label('useStrategy')}
+                    </Button>
+                    {!selected.retired && (
+                      <Link
+                        to={`${ROUTES.forecastBacktests}?strategy=${selected.id}`}
+                        className={buttonVariants({
+                          variant: 'secondary',
+                          size: 'sm',
+                          className: 'max-sm:h-10',
+                        })}
+                      >
+                        {label('backtestThis')}
+                      </Link>
+                    )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="hover:text-vergex-danger max-sm:size-10"
+                      aria-label={label('deleteStrategy')}
+                      title={
+                        isActive
+                          ? label('inUseNoDelete')
+                          : label('deleteStrategy')
+                      }
+                      disabled={isActive || busy}
+                      onClick={() => void remove(selected)}
+                    >
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </>
+                }
+                className="flex min-h-0 flex-1 flex-col overflow-hidden"
+              >
+                <SectionTabs
+                  tabs={[
+                    { id: 'performance', label: label('performance') },
+                    { id: 'rules', label: label('rules') },
+                  ]}
+                  value={tab}
+                  onChange={(next) => select(selected.id, next)}
+                  label={label('strategyTabs')}
+                  className="mb-0! shrink-0 px-2"
+                />
+                {/* A new strategy opens at the top of its own content. */}
+                <ScrollArea
+                  key={selected.id}
+                  className="min-h-0 flex-1 rounded-b-2xl"
+                >
+                  {tab === 'performance' ? (
+                    <StrategyPerformance
+                      strategyId={selected.id}
+                      retired={selected.retired}
+                      language={language}
+                    />
+                  ) : (
+                    <StrategyRulesView
+                      config={selected.config}
+                      language={language}
+                    />
+                  )}
+                </ScrollArea>
+              </Panel>
+            )}
           </div>
-        </div>
+        </SplitView>
       )}
     </ForecastFrame>
   )

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -220,103 +219,4 @@ func (m *MockHTTPClient) SetNetworkError(err error) {
 	defer m.mu.Unlock()
 
 	m.Error = err
-}
-
-// ============================================================
-// Mock BaseClient Hooks (for testing hook mechanism)
-// ============================================================
-
-// MockClientHooks Mock client hooks
-type MockClientHooks struct {
-	BuildRequestBodyCalled int
-	BuildUrlCalled         int
-	SetAuthHeaderCalled    int
-	MarshalRequestCalled   int
-	ParseResponseCalled    int
-	IsRetryableErrorCalled int
-
-	// Custom return values
-	BuildUrlFunc           func() string
-	ParseResponseFunc      func([]byte) (string, error)
-	IsRetryableErrorFunc   func(error) bool
-	BuildRequestBodyFunc   func(string, string) map[string]any
-	MarshalRequestBodyFunc func(map[string]any) ([]byte, error)
-}
-
-func NewMockClientHooks() *MockClientHooks {
-	return &MockClientHooks{}
-}
-
-func (m *MockClientHooks) BuildRequestBody(systemPrompt, userPrompt string) map[string]any {
-	m.BuildRequestBodyCalled++
-	if m.BuildRequestBodyFunc != nil {
-		return m.BuildRequestBodyFunc(systemPrompt, userPrompt)
-	}
-	return map[string]any{
-		"model": "test-model",
-		"messages": []map[string]string{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
-		},
-	}
-}
-
-func (m *MockClientHooks) BuildUrl() string {
-	m.BuildUrlCalled++
-	if m.BuildUrlFunc != nil {
-		return m.BuildUrlFunc()
-	}
-	return "https://api.test.com/chat/completions"
-}
-
-func (m *MockClientHooks) SetAuthHeader(headers http.Header) {
-	m.SetAuthHeaderCalled++
-	headers.Set("Authorization", "Bearer test-key")
-}
-
-func (m *MockClientHooks) MarshalRequestBody(body map[string]any) ([]byte, error) {
-	m.MarshalRequestCalled++
-	if m.MarshalRequestBodyFunc != nil {
-		return m.MarshalRequestBodyFunc(body)
-	}
-	return json.Marshal(body)
-}
-
-func (m *MockClientHooks) ParseResponse(body []byte) (string, error) {
-	m.ParseResponseCalled++
-	if m.ParseResponseFunc != nil {
-		return m.ParseResponseFunc(body)
-	}
-	return "mocked response", nil
-}
-
-func (m *MockClientHooks) ParseResponseFull(body []byte) (*Response, error) {
-	r, err := m.ParseResponse(body)
-	if err != nil {
-		return nil, err
-	}
-	return &Response{Content: r}, nil
-}
-
-func (m *MockClientHooks) IsRetryableError(err error) bool {
-	m.IsRetryableErrorCalled++
-	if m.IsRetryableErrorFunc != nil {
-		return m.IsRetryableErrorFunc(err)
-	}
-	return false
-}
-
-func (m *MockClientHooks) BuildRequest(url string, jsonData []byte) (*http.Request, error) {
-	req, _ := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-	m.SetAuthHeader(req.Header)
-	return req, nil
-}
-
-func (m *MockClientHooks) Call(systemPrompt, userPrompt string) (string, error) {
-	return "mocked call result", nil
-}
-
-func (m *MockClientHooks) BuildRequestBodyFromRequest(req *Request) map[string]any {
-	return map[string]any{"model": "test-model"}
 }

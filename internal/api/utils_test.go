@@ -84,8 +84,8 @@ func TestSanitizeModelConfigForLog(t *testing.T) {
 	}
 }
 
-func TestSanitizeExchangeConfigForLog(t *testing.T) {
-	exchanges := map[string]ExchangeConfigUpdate{
+func TestSanitizeAccountConfigForLog(t *testing.T) {
+	accounts := map[string]AccountConfigUpdate{
 		"binance": {
 			APIKey:    "binance_api_key_1234567890abcdef",
 			SecretKey: "binance_secret_key_1234567890abcdef",
@@ -97,7 +97,7 @@ func TestSanitizeExchangeConfigForLog(t *testing.T) {
 		},
 	}
 
-	result := SanitizeExchangeConfigForLog(exchanges)
+	result := SanitizeAccountConfigForLog(accounts)
 
 	// Check Binance configuration
 	binanceConfig, ok := result["binance"].(map[string]interface{})
@@ -137,17 +137,17 @@ func TestSanitizeExchangeConfigForLog(t *testing.T) {
 	}
 }
 
-// TestSanitizeExchangeConfigForLog_NoPlaintextSecrets renders the sanitized log
+// TestSanitizeAccountConfigForLog_NoPlaintextSecrets renders the sanitized log
 // output exactly as the handler does (`%+v`) and asserts that no plaintext
 // secret — including the passphrase — survives into the log line.
-func TestSanitizeExchangeConfigForLog_NoPlaintextSecrets(t *testing.T) {
+func TestSanitizeAccountConfigForLog_NoPlaintextSecrets(t *testing.T) {
 	secrets := map[string]string{
 		"api_key":    "binance_api_key_1234567890abcdef",
 		"secret_key": "binance_secret_key_1234567890abcdef",
 		"passphrase": "okx_passphrase_supersecret_value",
 	}
 
-	exchanges := map[string]ExchangeConfigUpdate{
+	accounts := map[string]AccountConfigUpdate{
 		"okx": {
 			APIKey:     secrets["api_key"],
 			SecretKey:  secrets["secret_key"],
@@ -155,49 +155,11 @@ func TestSanitizeExchangeConfigForLog_NoPlaintextSecrets(t *testing.T) {
 		},
 	}
 
-	rendered := fmt.Sprintf("%+v", SanitizeExchangeConfigForLog(exchanges))
+	rendered := fmt.Sprintf("%+v", SanitizeAccountConfigForLog(accounts))
 
 	for field, secret := range secrets {
 		if strings.Contains(rendered, secret) {
 			t.Errorf("sanitized log leaked plaintext %s: %q present in %q", field, secret, rendered)
 		}
-	}
-}
-
-func TestMaskEmail(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected string
-	}{
-		{
-			name:     "Empty email",
-			input:    "",
-			expected: "",
-		},
-		{
-			name:     "Invalid format",
-			input:    "notanemail",
-			expected: "****",
-		},
-		{
-			name:     "Normal email",
-			input:    "user@example.com",
-			expected: "us****@example.com",
-		},
-		{
-			name:     "Short username",
-			input:    "a@example.com",
-			expected: "**@example.com",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := MaskEmail(tt.input)
-			if result != tt.expected {
-				t.Errorf("MaskEmail(%q) = %q, want %q", tt.input, result, tt.expected)
-			}
-		})
 	}
 }

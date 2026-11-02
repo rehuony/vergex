@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react'
-import useSWR from 'swr'
+import { useQuery } from '@tanstack/react-query'
 import {
   Activity,
   AlertTriangle,
@@ -23,21 +23,21 @@ type Tone = 'good' | 'info' | 'bad' | 'muted'
 
 const toneText: Record<Tone, string> = {
   good: 'text-vergex-success',
-  info: 'text-vergex-brand',
+  info: 'text-vergex-ink',
   bad: 'text-vergex-danger',
-  muted: 'text-vergex-text-muted',
+  muted: 'text-vergex-muted',
 }
 const toneFill: Record<Tone, string> = {
   good: 'bg-vergex-success',
-  info: 'bg-vergex-brand',
+  info: 'bg-vergex-ink',
   bad: 'bg-vergex-danger',
-  muted: 'bg-vergex-text-muted',
+  muted: 'bg-vergex-muted',
 }
 const toneTint: Record<Tone, string> = {
   good: 'bg-vergex-success/10',
-  info: 'bg-vergex-brand/10',
+  info: 'bg-vergex-ink-tint',
   bad: 'bg-vergex-danger/10',
-  muted: 'bg-vergex-bg',
+  muted: 'bg-vergex-surface-muted',
 }
 
 const regimeTone = (regime: string): Tone =>
@@ -88,8 +88,8 @@ function Block({
   children: ReactNode
 }) {
   return (
-    <div className={cn('rounded-lg bg-[var(--canvas)] p-3', className)}>
-      <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-vergex-text-muted">
+    <div className={cn('rounded-md bg-vergex-canvas p-3', className)}>
+      <p className="mb-2 flex items-center gap-1.5 text-xs font-medium text-vergex-muted">
         {icon}
         {title}
       </p>
@@ -109,10 +109,8 @@ function Stat({
 }) {
   return (
     <div>
-      <p className="text-vergex-text-muted">{label}</p>
-      <p
-        className={cn('font-mono', tone ? toneText[tone] : 'text-vergex-text')}
-      >
+      <p className="text-vergex-muted">{label}</p>
+      <p className={cn('font-mono', tone ? toneText[tone] : 'text-vergex-ink')}>
         {value}
       </p>
     </div>
@@ -130,8 +128,10 @@ export function GridRiskPanel({
     data: risk,
     error,
     isLoading,
-  } = useSWR(['grid-risk', traderId], () => api.getGridRiskInfo(traderId), {
-    refreshInterval,
+  } = useQuery({
+    queryKey: ['grid-risk', traderId],
+    queryFn: () => api.getGridRiskInfo(traderId),
+    refetchInterval: refreshInterval,
   })
   const text = (key: string) => t(`gridRisk.${key}`, language)
   // Server values such as "volatile" or "up" double as translation keys.
@@ -140,21 +140,21 @@ export function GridRiskPanel({
     return known === `gridRisk.${value}` ? text(fallback) : known
   }
 
-  const frame = 'rounded-xl border border-[var(--line)] bg-[var(--surface)]'
+  const frame = 'border-b border-vergex-line'
   if (isLoading || error || !risk)
     return (
       <section
         className={cn(
           frame,
-          'p-3 text-center text-xs',
-          error ? 'text-vergex-danger' : 'text-vergex-text-muted'
+          'px-4 py-3 text-xs',
+          error ? 'text-vergex-danger' : 'text-vergex-muted'
         )}
       >
         {isLoading
           ? text('loading')
           : error
             ? `${text('error')}: ${error instanceof Error ? error.message : String(error)}`
-            : text('noData')}
+            : text('notRunning')}
       </section>
     )
 
@@ -166,18 +166,18 @@ export function GridRiskPanel({
       <Button
         type="button"
         variant="ghost"
-        className="h-auto w-full justify-between rounded-xl px-4 py-3 text-vergex-text hover:bg-[var(--canvas)]"
+        className="h-auto w-full justify-between rounded-none px-4 py-3 text-vergex-ink"
         aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
       >
-        <span className="flex items-center gap-2 font-semibold">
-          <Shield className="size-4 text-vergex-brand" aria-hidden="true" />
+        <span className="flex items-center gap-2 text-[13px] font-medium">
+          <Shield className="size-4 text-vergex-muted" aria-hidden="true" />
           {text('gridRisk')}
         </span>
         <span className="flex items-center gap-3 text-xs">
           <span
             className={cn(
-              'rounded px-2 py-0.5',
+              'rounded-md px-2 py-0.5',
               toneText[regime],
               toneTint[regime]
             )}
@@ -192,7 +192,7 @@ export function GridRiskPanel({
           </span>
           <ChevronDown
             className={cn(
-              'size-4 text-vergex-text-muted transition-transform',
+              'size-4 text-vergex-muted transition-transform',
               expanded && 'rotate-180'
             )}
             aria-hidden="true"
@@ -203,7 +203,7 @@ export function GridRiskPanel({
       {expanded && (
         <div className="grid gap-3 px-4 pb-4 text-xs sm:grid-cols-2">
           <Block
-            icon={<TrendingUp className={cn(icon, 'text-vergex-brand')} />}
+            icon={<TrendingUp className={cn(icon, 'text-vergex-ink')} />}
             title={text('leverageInfo')}
           >
             <div className="grid grid-cols-3 gap-2">
@@ -229,7 +229,7 @@ export function GridRiskPanel({
           </Block>
 
           <Block
-            icon={<Activity className={cn(icon, 'text-vergex-brand')} />}
+            icon={<Activity className={cn(icon, 'text-vergex-ink')} />}
             title={text('positionInfo')}
           >
             <div className="grid grid-cols-3 gap-2">
@@ -247,7 +247,7 @@ export function GridRiskPanel({
                 tone={usage}
               />
             </div>
-            <div className="mt-2 h-1 overflow-hidden rounded-full bg-[var(--line)]">
+            <div className="mt-2 h-1 overflow-hidden rounded-full bg-vergex-line">
               <div
                 className={cn('h-full rounded-full', toneFill[usage])}
                 style={{ width: `${Math.min(risk.position_percent, 100)}%` }}
@@ -256,7 +256,7 @@ export function GridRiskPanel({
           </Block>
 
           <Block
-            icon={<Shield className={cn(icon, 'text-vergex-brand')} />}
+            icon={<Shield className={cn(icon, 'text-vergex-ink')} />}
             title={text('marketState')}
           >
             <div className="grid grid-cols-2 gap-2">
@@ -319,7 +319,7 @@ export function GridRiskPanel({
           </Block>
 
           <Block
-            icon={<Box className={cn(icon, 'text-vergex-brand')} />}
+            icon={<Box className={cn(icon, 'text-vergex-ink')} />}
             title={text('boxState')}
             className="sm:col-span-2"
           >
@@ -332,8 +332,8 @@ export function GridRiskPanel({
                 ] as const
               ).map(([key, lower, upper]) => (
                 <div key={key} className="flex justify-between gap-2">
-                  <span className="text-vergex-text-muted">{text(key)}</span>
-                  <span className="font-mono text-vergex-text">
+                  <span className="text-vergex-muted">{text(key)}</span>
+                  <span className="font-mono text-vergex-ink">
                     {formatPrice(lower)} - {formatPrice(upper)}
                   </span>
                 </div>

@@ -7,23 +7,24 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"vergex/internal/activity"
+	"vergex/internal/account"
+	"vergex/internal/account/syncer"
 	"vergex/internal/agent"
 	"vergex/internal/agent/pricing"
 	_ "vergex/internal/agent/provider"
 	"vergex/internal/api"
 	"vergex/internal/config"
+	"vergex/internal/dashboard"
+	"vergex/internal/database"
 	"vergex/internal/forecast"
 	"vergex/internal/logger"
 	"vergex/internal/market"
 	"vergex/internal/market/feed"
-	"vergex/internal/safe"
 	"vergex/internal/security/auth"
 	"vergex/internal/security/crypto"
-	"vergex/internal/store"
+	"vergex/internal/service"
 	"vergex/internal/telegram"
-	"vergex/internal/trader/manager"
-	"vergex/internal/trading/accountsync"
+	"vergex/internal/trader"
 
 	"github.com/joho/godotenv"
 )
@@ -64,19 +65,20 @@ func main() {
 
 	// Initialize database from configuration
 	logger.Info("📋 Initializing database...")
-	st, err := store.New(databaseConfig(cfg))
+	db, err := database.OpenMigrated(databaseConfig(cfg))
 	if err != nil {
 		logger.Fatalf("❌ Failed to initialize database: %v", err)
 	}
-	defer st.Close()
+	defer database.Close(db)
+	logger.Infof("✅ Database initialized (GORM, PostgreSQL)")
 
 	// Agent cost tracking: record every call to a model in agent.calls, priced from
-	// the models.dev catalog cached in the data directory.
+	// the models.dev catalog cached in the database.
 	pricingCtx, stopPricing := context.WithCancel(context.Background())
 	defer stopPricing()
-	prices := pricing.NewService("data")
+	prices := pricing.NewService(db)
 	prices.Start(pricingCtx)
-	agent.CallCallback = recordAgentCalls(st, prices)
+	agent.CallCallback = recordAgentCalls(agent.NewCallStore(db), prices)
 
 	// Set JWT secret
 	auth.SetJWTSecret(cfg.JWTSecret)
@@ -97,23 +99,26 @@ func main() {
 		market.SetLiveSource(marketData)
 	}
 
-	// Create TraderManager
-	traderManager := manager.NewTraderManager()
+	// Create Manager
+	traderStores := trader.NewStores(db)
+	traderManager := trader.NewManager(traderStores)
 
 	// Load all traders from database to memory (may auto-start traders with IsRunning=true)
-	if err := traderManager.LoadTradersFromStore(st); err != nil {
+	if err := traderManager.LoadTradersFromStore(); err != nil {
 		logger.Fatalf("❌ Failed to load traders: %v", err)
 	}
 
 	// Start API server
-	server := api.NewServer(traderManager, st, cryptoService, cfg.APIServerPort)
+	server := api.NewServer(traderManager, api.NewStores(db), cryptoService, cfg.APIServerPort)
 
 	// Keep the trading ledger up to date with every account in use.
 	accountSyncCtx, stopAccountSync := context.WithCancel(context.Background())
 	defer stopAccountSync()
-	accountSync := accountsync.New(st)
+	accountSync := syncer.New(db, traderSyncFeatures(traderStores.Traders))
 	accountSync.Start(accountSyncCtx)
 	server.SetAccountSync(accountSync)
+
+	telegramStores := telegram.NewStores(db)
 
 	var forecastStore *forecast.Store
 	if marketData != nil {
@@ -121,33 +126,40 @@ func main() {
 
 		forecastStore = forecast.NewStore(marketStore.DB())
 		engine := forecast.NewEngine(forecastStore, marketData, func(ctx context.Context, text string) error {
-			cfg, err := st.TelegramConfig().Get()
+			cfg, err := telegramStores.Telegram.Get()
 			if err != nil || cfg.AlertMuted(telegram.AlertForecast) {
 				return nil
 			}
-			return telegram.Notify(ctx, st, text)
+			return telegram.Notify(ctx, telegramStores.Telegram, text)
 		})
 		engine.Start(marketCtx)
 		server.SetForecast(engine)
 	}
 
-	// The Dashboard's event feed only reads the database.
+	// The Dashboard's event feed only reads the database and the market streams' counters.
 	activityCtx, stopActivity := context.WithCancel(context.Background())
 	defer stopActivity()
-	activityFeed := activity.New(activity.Sources{Store: st, Forecasts: forecastStore, RefusedOrders: server.RefusedPlanOrders})
+	activitySources := dashboard.Sources{Stores: dashboard.NewStores(db), Forecasts: forecastStore, RefusedOrders: server.RefusedPlanOrders}
+	if marketData != nil {
+		activitySources.Stream = func() dashboard.StreamCount {
+			messages, topics, connected := marketData.StreamCounts()
+			return dashboard.StreamCount{Messages: messages, Topics: topics, Connected: connected}
+		}
+	}
+	activityFeed := dashboard.New(activitySources)
 	activityFeed.Start(activityCtx)
 	server.SetActivity(activityFeed)
 
 	// Telegram bot: saving its token, model or binding in Settings restarts it.
 	telegramReload := make(chan struct{}, 1)
 	server.SetTelegramReloadCh(telegramReload)
-	safe.GoNamed("telegram-bot", func() { telegram.Start(cfg, st, telegramReload) })
+	service.Go("telegram-bot", func() { telegram.Start(cfg, telegramStores, telegramReload) })
 
 	// Telegram alerts only read state; they never touch the trading loop.
 	alertsCtx, stopAlerts := context.WithCancel(context.Background())
 	defer stopAlerts()
-	safe.GoNamed("telegram-alerts", func() {
-		telegram.StartAlerts(alertsCtx, st, telegram.AlertSources{
+	service.Go("telegram-alerts", func() {
+		telegram.StartAlerts(alertsCtx, telegramStores, telegram.AlertSources{
 			TraderStatus: func(traderID string) map[string]any {
 				trader, err := traderManager.GetTrader(traderID)
 				if err != nil {
@@ -185,4 +197,19 @@ func main() {
 	// Stop all traders
 	traderManager.StopAll()
 	logger.Info("✅ System shut down safely")
+}
+
+// traderSyncFeatures tells the account sync what only traders know: the ledger names
+// its features by source and imports none of them.
+func traderSyncFeatures(traders *trader.Store) syncer.Features {
+	return syncer.Features{
+		ActiveAccounts: traders.RunningAccounts,
+		Owner: func(accountID string) (account.Owner, error) {
+			id, err := traders.RunningOn(accountID)
+			if err != nil || id == "" {
+				return account.Owner{}, err
+			}
+			return account.Owner{Source: account.SourceTrader, SourceID: id}, nil
+		},
+	}
 }

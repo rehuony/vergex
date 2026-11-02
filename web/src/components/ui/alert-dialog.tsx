@@ -15,7 +15,7 @@ const AlertDialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Overlay
     className={cn(
-      'fixed inset-0 z-50 animate-overlay-in bg-black/40 backdrop-blur-xs',
+      'fixed inset-0 z-50 animate-overlay-in bg-vergex-scrim',
       className
     )}
     {...props}
@@ -33,7 +33,7 @@ const AlertDialogContent = React.forwardRef<
     <AlertDialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-(--panel-border) bg-(--panel-bg) p-6 animate-dialog-in rounded-[18px] shadow-lg',
+        'fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-vergex-line bg-vergex-surface p-6 animate-dialog-in rounded-2xl shadow-(--shadow-overlay)',
         className
       )}
       {...props}
@@ -76,7 +76,7 @@ const AlertDialogTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Title
     ref={ref}
-    className={cn('text-lg font-semibold text-(--text-primary)', className)}
+    className={cn('text-base font-semibold text-vergex-ink', className)}
     {...props}
   />
 ))
@@ -88,7 +88,7 @@ const AlertDialogDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <AlertDialogPrimitive.Description
     ref={ref}
-    className={cn('text-sm text-(--text-secondary)', className)}
+    className={cn('text-sm text-vergex-muted', className)}
     {...props}
   />
 ))

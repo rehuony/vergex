@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { AvatarCropDialog } from '@/components/settings/avatar-crop-dialog'
 
 const menuItemClass =
-  'flex h-9 cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 text-sm text-vergex-text outline-none data-[highlighted]:bg-vergex-bg'
+  'flex h-9 cursor-pointer select-none items-center gap-2 rounded-md px-2.5 text-sm text-vergex-ink outline-none data-[highlighted]:bg-vergex-surface-muted'
 
 /**
  * The avatar with an edit badge on hover. Picking an image opens the photo
@@ -21,7 +21,7 @@ const menuItemClass =
  */
 export function AvatarEditor({ language }: { language: Language }) {
   const { user } = useAuth()
-  const { data: profile, mutate } = useProfile()
+  const { data: profile, setProfile } = useProfile()
   const fileRef = useRef<HTMLInputElement>(null)
   const [src, setSrc] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -53,7 +53,7 @@ export function AvatarEditor({ language }: { language: Language }) {
   const save = async (image: Blob) => {
     try {
       const avatar = await api.updateAvatar(image)
-      await mutate(profile && { ...profile, avatar }, { revalidate: false })
+      setProfile(profile && { ...profile, avatar })
       toast.success(t('avatarUpdated', language))
       setSrc(null)
     } catch (err) {
@@ -65,9 +65,7 @@ export function AvatarEditor({ language }: { language: Language }) {
     setBusy(true)
     try {
       await api.removeAvatar()
-      await mutate(profile && { ...profile, avatar: '' }, {
-        revalidate: false,
-      })
+      setProfile(profile && { ...profile, avatar: '' })
       toast.success(t('avatarRemoved', language))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err))
@@ -117,7 +115,7 @@ export function AvatarEditor({ language }: { language: Language }) {
             <DropdownMenu.Content
               align="start"
               sideOffset={6}
-              className="z-[60] min-w-44 rounded-xl border border-[var(--line)] bg-[var(--surface)] p-1.5 shadow-[var(--shadow-lg)]"
+              className="z-[60] min-w-44 rounded-2xl border border-vergex-line bg-vergex-surface p-1.5 shadow-(--shadow-float)"
             >
               <DropdownMenu.Item className={menuItemClass} onSelect={choose}>
                 <ImageUp className="size-4" aria-hidden="true" />

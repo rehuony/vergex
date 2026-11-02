@@ -3,7 +3,7 @@ import {
   getSystemConfig,
   invalidateSystemConfig,
   type SystemConfig,
-} from '@/api/system-config'
+} from '@/api/system'
 
 export function useSystemConfig() {
   const [config, setConfig] = useState<SystemConfig | null>(null)

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { Check } from 'lucide-react'
-import type { Overview } from '@/api/overview'
+import type { Overview } from '@/api/dashboard'
 import { Panel } from '@/components/common/panel'
 import { SettingsLink } from '@/components/settings/settings-link'
 import { buttonVariants } from '@/components/ui/button'
@@ -37,7 +37,7 @@ export function FirstRun({
       done: hasAccount,
       action: (
         <SettingsLink
-          section="exchanges"
+          section="accounts"
           className={action(hasModel && !hasAccount)}
         >
           {label('setup.addAccount')}
@@ -52,7 +52,7 @@ export function FirstRun({
           <Link to={ROUTES.traders} className={action(false)}>
             {label('flow.createTrader')}
           </Link>
-          <Link to={ROUTES.planning} className={action(false)}>
+          <Link to={ROUTES.futures} className={action(false)}>
             {label('flow.planTrade')}
           </Link>
         </span>
@@ -61,7 +61,7 @@ export function FirstRun({
   ]
   return (
     <Panel title={label('setup.title')}>
-      <ol className="divide-y divide-[var(--line)] border-t border-[var(--line)]">
+      <ol className="divide-y divide-vergex-line border-t border-vergex-line">
         {steps.map((step, index) => (
           <li
             key={step.name}
@@ -72,7 +72,7 @@ export function FirstRun({
                 'flex size-6 shrink-0 items-center justify-center rounded-full text-xs tabular-nums',
                 step.done
                   ? 'bg-vergex-success/15 text-vergex-success'
-                  : 'bg-vergex-bg text-vergex-text-muted'
+                  : 'bg-vergex-surface-muted text-vergex-muted'
               )}
             >
               {step.done ? (
@@ -81,7 +81,7 @@ export function FirstRun({
                 index + 1
               )}
             </span>
-            <span className="min-w-0 flex-1 text-sm text-vergex-text max-sm:basis-[calc(100%-36px)]">
+            <span className="min-w-0 flex-1 text-sm text-vergex-ink max-sm:basis-[calc(100%-36px)]">
               {step.name}
             </span>
             {!step.done && <span className="max-sm:pl-9">{step.action}</span>}

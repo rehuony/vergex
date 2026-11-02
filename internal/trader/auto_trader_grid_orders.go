@@ -5,9 +5,9 @@ import (
 	"math"
 	"strings"
 	"time"
+	"vergex/internal/account"
 	"vergex/internal/logger"
-	"vergex/internal/store"
-	"vergex/internal/trader/agent"
+	traderagent "vergex/internal/trader/agent"
 
 	"github.com/shopspring/decimal"
 )
@@ -19,7 +19,7 @@ import (
 // checkTotalPositionLimit checks if adding a new position would exceed total limits
 // Returns: (allowed bool, currentPositionValue float64, maxAllowed float64)
 func (at *AutoTrader) checkTotalPositionLimit(symbol string, additionalValue float64) (bool, float64, float64) {
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 
 	// Calculate max allowed total position value
 	// Total position should not exceed: TotalInvestment * Leverage
@@ -59,15 +59,15 @@ func (at *AutoTrader) checkTotalPositionLimit(symbol string, additionalValue flo
 }
 
 // placeGridLimitOrder places a limit order for grid trading
-func (at *AutoTrader) placeGridLimitOrder(d *agent.Decision, side string) error {
+func (at *AutoTrader) placeGridLimitOrder(d *traderagent.Decision, side string) error {
 	// Check if trader supports GridTrader interface
-	gridTrader, ok := at.trader.(GridTrader)
+	gridTrader, ok := at.trader.(account.GridTrading)
 	if !ok {
 		// Fallback to adapter
-		gridTrader = NewGridTraderAdapter(at.trader)
+		gridTrader = account.NewGridTradingAdapter(at.trader)
 	}
 
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 
 	// CRITICAL: Validate and cap quantity to prevent excessive position sizes
 	// This protects against agent miscalculations or leverage misconfigurations
@@ -122,7 +122,7 @@ func (at *AutoTrader) placeGridLimitOrder(d *agent.Decision, side string) error 
 		return fmt.Errorf("total position value $%.2f would exceed limit $%.2f", currentValue+orderValue, maxValue)
 	}
 
-	req := &LimitOrderRequest{
+	req := &account.LimitOrderRequest{
 		Symbol:     d.Symbol,
 		Side:       side,
 		Price:      d.Price,
@@ -157,10 +157,10 @@ func (at *AutoTrader) placeGridLimitOrder(d *agent.Decision, side string) error 
 }
 
 // cancelGridOrder cancels a specific grid order
-func (at *AutoTrader) cancelGridOrder(d *agent.Decision) error {
-	gridTrader, ok := at.trader.(GridTrader)
+func (at *AutoTrader) cancelGridOrder(d *traderagent.Decision) error {
+	gridTrader, ok := at.trader.(account.GridTrading)
 	if !ok {
-		gridTrader = NewGridTraderAdapter(at.trader)
+		gridTrader = account.NewGridTradingAdapter(at.trader)
 	}
 
 	if err := gridTrader.CancelOrder(d.Symbol, d.OrderID); err != nil {
@@ -185,7 +185,7 @@ func (at *AutoTrader) cancelGridOrder(d *agent.Decision) error {
 
 // cancelAllGridOrders cancels all grid orders
 func (at *AutoTrader) cancelAllGridOrders() error {
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 
 	if err := at.trader.CancelAllOrders(gridConfig.Symbol); err != nil {
 		return fmt.Errorf("failed to cancel all orders: %w", err)
@@ -230,11 +230,11 @@ func (at *AutoTrader) resumeGrid() error {
 }
 
 // adjustGrid adjusts grid parameters
-func (at *AutoTrader) adjustGrid(d *agent.Decision) error {
+func (at *AutoTrader) adjustGrid(d *traderagent.Decision) error {
 	// Cancel existing orders first
 	at.cancelAllGridOrders()
 
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 
 	// Get current price
 	price, err := at.trader.GetMarketPrice(gridConfig.Symbol)
@@ -251,7 +251,7 @@ func (at *AutoTrader) adjustGrid(d *agent.Decision) error {
 
 // syncGridState syncs grid state with exchange
 func (at *AutoTrader) syncGridState() {
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 
 	// Get open orders from exchange
 	openOrders, err := at.trader.GetOpenOrders(gridConfig.Symbol)
@@ -328,7 +328,7 @@ func (at *AutoTrader) syncGridState() {
 
 // closeAllPositions closes all open positions for the grid symbol
 func (at *AutoTrader) closeAllPositions() error {
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 	if gridConfig == nil {
 		return nil
 	}
@@ -364,7 +364,7 @@ func (at *AutoTrader) closeAllPositions() error {
 
 // checkAndExecuteStopLoss checks if any filled level has exceeded stop loss and closes it
 func (at *AutoTrader) checkAndExecuteStopLoss() {
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 	if gridConfig.StopLossPct <= 0 {
 		return // Stop loss not configured
 	}
@@ -426,26 +426,26 @@ func (at *AutoTrader) checkAndExecuteStopLoss() {
 
 // recordGridOrder puts a placed limit order in the ledger. A failure is only logged: the
 // order is already on the exchange.
-func (at *AutoTrader) recordGridOrder(req *LimitOrderRequest, result *LimitOrderResult) {
-	if at.store == nil {
+func (at *AutoTrader) recordGridOrder(req *account.LimitOrderRequest, result *account.LimitOrderResult) {
+	if at.stores == nil {
 		return
 	}
 	leverage := req.Leverage
 	positionSide := strings.ToLower(result.PositionSide)
-	if positionSide != store.SideLong && positionSide != store.SideShort {
+	if positionSide != account.SideLong && positionSide != account.SideShort {
 		positionSide = ""
 	}
-	order := store.LedgerOrder{
-		AccountID:       at.exchangeID,
-		Source:          store.SourceTrader,
+	order := account.LedgerOrder{
+		AccountID:       at.accountID,
+		Source:          account.SourceTrader,
 		SourceID:        at.id,
-		Role:            store.RoleGrid,
+		Role:            account.RoleGrid,
 		ExchangeOrderID: result.OrderID,
 		ClientOrderID:   result.ClientID,
 		Side:            strings.ToLower(req.Side),
 		PositionSide:    positionSide,
 		Type:            "LIMIT",
-		Status:          store.OrderNew,
+		Status:          account.OrderNew,
 		Quantity:        decimal.NewFromFloat(req.Quantity),
 		Price:           decimal.NewNullDecimal(decimal.NewFromFloat(req.Price)),
 		PostOnly:        req.PostOnly,

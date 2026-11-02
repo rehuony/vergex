@@ -4,20 +4,20 @@ import (
 	"strings"
 	"testing"
 
-	"vergex/internal/store"
+	"vergex/internal/trader/kind"
 )
 
-func TestBuildSystemPromptFallsBackToEnglishWhenConfiguredLanguageIsChinese(t *testing.T) {
-	cfg := store.GetDefaultStrategyConfig("zh")
+func TestBuildSystemPromptFallsBackToEnglishWhenSectionsAreChinese(t *testing.T) {
+	cfg := kind.DefaultAgent()
 	cfg.CoinSource.SourceType = "static"
 	cfg.CoinSource.StaticCoins = []string{"BTCUSDT", "ETHUSDT"}
-	cfg.PromptSections.RoleDefinition = "# You are a Chinese system prompt"
-	cfg.PromptSections.TradingFrequency = "# High-frequency trading\nTrade every minute."
-	cfg.PromptSections.EntryStandards = "# Entry\nOpen positions freely."
-	cfg.PromptSections.DecisionProcess = "# Decision\nOutput directly."
-	cfg.CustomPrompt = "Chinese preference should not enter the system prompt."
+	cfg.PromptSections.RoleDefinition = "# 你是一个中文系统提示"
+	cfg.PromptSections.TradingFrequency = "# 高频交易\n每分钟交易一次。"
+	cfg.PromptSections.EntryStandards = "# 开仓\n随意开仓。"
+	cfg.PromptSections.DecisionProcess = "# 决策\n直接输出。"
+	cfg.CustomPrompt = "中文偏好不应进入系统提示。"
 
-	engine := NewStrategyEngine(&cfg)
+	engine := NewEngine(cfg)
 	prompt := engine.BuildSystemPrompt(30, "balanced")
 
 	required := []string{

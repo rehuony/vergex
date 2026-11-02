@@ -21,8 +21,8 @@ type finding struct {
 	Hint   string `json:"hint,omitempty"`
 }
 
-var exchangeHints = map[string]string{
-	"disabled":            "The account is disabled. Enable it in the web UI (Settings → Exchanges).",
+var accountHints = map[string]string{
+	"disabled":            "The account is disabled. Enable it in the web UI (Settings → Accounts).",
 	"missing_credentials": "API key or secret (and passphrase for OKX) is missing. Fill them in the web UI.",
 	"invalid_credentials": "The exchange rejected the key: it may be wrong, revoked, or the server IP is not in the key's IP whitelist. Compare the key in the web UI and whitelist the server IP.",
 	"permission_denied":   "The API key lacks permission. Enable futures trading (and reading) for the key; withdrawals are not needed.",
@@ -39,8 +39,8 @@ func (a *Agent) diagnose(arguments string) map[string]any {
 		return a.diagnoseTraderStart(args.TargetRef)
 	case "model":
 		return a.diagnoseModel(args.TargetRef)
-	case "exchange":
-		return a.diagnoseExchange(args.TargetRef)
+	case "account":
+		return a.diagnoseAccount(args.TargetRef)
 	case "order_execution":
 		return a.diagnoseOrders(args.TargetRef)
 	}
@@ -67,8 +67,8 @@ func (a *Agent) diagnoseTraderStart(ref *targetRef) map[string]any {
 	findings := []finding{}
 	for _, c := range preflight.Checks {
 		f := finding{Check: c.ID, OK: c.Status == "ok" || c.Status == "skipped", Detail: c.Message}
-		if !f.OK && c.ID == "exchange_account" {
-			f.Hint = exchangeHints[c.Code]
+		if !f.OK && c.ID == "account_state" {
+			f.Hint = accountHints[c.Code]
 		}
 		findings = append(findings, f)
 	}
@@ -122,28 +122,28 @@ func (a *Agent) diagnoseModel(ref *targetRef) map[string]any {
 		"note": "Failures at call time (401, 429, quota) show up in the trader's latest decisions; use diagnose order_execution or account_query decisions."}
 }
 
-func (a *Agent) diagnoseExchange(ref *targetRef) map[string]any {
-	exchanges, err := a.exchanges()
+func (a *Agent) diagnoseAccount(ref *targetRef) map[string]any {
+	accounts, err := a.accounts()
 	if err != nil {
 		return errResult(err)
 	}
 	if !ref.empty() {
-		e, rerr := resolve("exchange", exchangeNames(exchanges), ref)
+		e, rerr := resolve("account", accountNames(accounts), ref)
 		if rerr != nil {
 			return toMap(rerr)
 		}
-		for _, it := range exchanges {
+		for _, it := range accounts {
 			if it.ID == e.ID {
-				exchanges = []exchangeInfo{it}
+				accounts = []accountInfo{it}
 				break
 			}
 		}
 	}
-	states := a.exchangeStates()
+	states := a.accountStates()
 	findings := []finding{}
-	for _, e := range exchanges {
+	for _, e := range accounts {
 		st, ok := states[e.ID]
-		f := finding{Check: e.label() + " (" + e.ExchangeType + ")"}
+		f := finding{Check: e.label() + " (" + e.Venue + ")"}
 		switch {
 		case !ok:
 			f.Detail = "no state returned"
@@ -155,16 +155,16 @@ func (a *Agent) diagnoseExchange(ref *targetRef) map[string]any {
 			if st.ErrorMessage != "" {
 				f.Detail += ": " + st.ErrorMessage
 			}
-			f.Hint = exchangeHints[st.Status]
+			f.Hint = accountHints[st.Status]
 		}
-		if e.ExchangeType == "okx" && !e.HasPass {
+		if e.Venue == "okx" && !e.HasPass {
 			f.OK = false
-			f.Hint = exchangeHints["missing_credentials"]
+			f.Hint = accountHints["missing_credentials"]
 		}
 		findings = append(findings, f)
 	}
-	out := map[string]any{"topic": "exchange", "findings": findings}
-	if raw, err := a.api.raw("GET", "/api/server-ip", nil); err == nil {
+	out := map[string]any{"topic": "account", "findings": findings}
+	if raw, err := a.api.raw("GET", "/api/system/ip", nil); err == nil {
 		out["server_ip"] = rawResult(raw)
 	}
 	return out
@@ -175,15 +175,15 @@ func (a *Agent) diagnoseOrders(ref *targetRef) map[string]any {
 	if bad != nil {
 		return bad
 	}
-	q := "?trader_id=" + url.QueryEscape(t.TraderID)
+	base := "/api/traders/" + url.PathEscape(t.TraderID)
 	out := map[string]any{"topic": "order_execution", "trader": t.Name, "running": t.IsRunning}
 	if !t.IsRunning {
 		out["hint"] = "The trader is stopped, so no orders are placed. Start it first (trader_management start)."
 	}
 	for key, path := range map[string]string{
-		"status":           "/api/status" + q,
-		"latest_decisions": "/api/decisions/latest" + q + "&limit=5",
-		"open_orders":      "/api/open-orders" + q,
+		"status":           base + "/status",
+		"latest_decisions": base + "/decisions/latest?limit=5",
+		"open_orders":      base + "/open-orders",
 	} {
 		raw, err := a.api.raw("GET", path, nil)
 		if err != nil {

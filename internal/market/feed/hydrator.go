@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"vergex/internal/exchange/binance"
 	"vergex/internal/logger"
-	"vergex/internal/servicestate"
+	"vergex/internal/service"
+	"vergex/internal/venue/binance"
 )
 
 const (
@@ -90,7 +90,7 @@ func (h *Hydrator) Run(ctx context.Context) {
 			lastPurge = h.now()
 		}
 		if !active {
-			servicestate.Set(servicestate.MarketData, servicestate.Off, "")
+			service.Report(service.MarketData, service.Off, "")
 			h.sleep(ctx, planInterval)
 			lastPlan = time.Time{} // What woke it may be a series just opened.
 			continue
@@ -139,13 +139,13 @@ func (h *Hydrator) reportState() {
 	status := h.client.Limiter().Status()
 	switch {
 	case status.Banned:
-		servicestate.Set(servicestate.MarketData, servicestate.Failed, status.Reason)
+		service.Report(service.MarketData, service.Failed, status.Reason)
 	case !status.PausedUntil.IsZero():
-		servicestate.Set(servicestate.MarketData, servicestate.Degraded, status.Reason)
+		service.Report(service.MarketData, service.Degraded, status.Reason)
 	case h.streamDown():
-		servicestate.Set(servicestate.MarketData, servicestate.Degraded, "live stream disconnected, using REST")
+		service.Report(service.MarketData, service.Degraded, "live stream disconnected, using REST")
 	default:
-		servicestate.Set(servicestate.MarketData, servicestate.Running, "")
+		service.Report(service.MarketData, service.Running, "")
 	}
 }
 

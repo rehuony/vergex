@@ -2,20 +2,14 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"sync"
 	"time"
-	"vergex/internal/exchange/binance"
-	"vergex/internal/exchange/okx"
 	"vergex/internal/logger"
-	"vergex/internal/market"
 	"vergex/internal/market/instrument"
-	"vergex/internal/security"
-	"vergex/internal/store"
+	"vergex/internal/trader/kind"
+	"vergex/internal/venue/binance"
+	"vergex/internal/venue/okx"
 )
 
 // ============================================================================
@@ -93,21 +87,21 @@ type RecentOrder struct {
 
 // Context trading context (complete information passed to agent)
 type Context struct {
-	CurrentTime     string                             `json:"current_time"`
-	RuntimeMinutes  int                                `json:"runtime_minutes"`
-	CallCount       int                                `json:"call_count"`
-	Account         AccountInfo                        `json:"account"`
-	Positions       []PositionInfo                     `json:"positions"`
-	CandidateCoins  []CandidateCoin                    `json:"candidate_coins"`
-	PromptVariant   string                             `json:"prompt_variant,omitempty"`
-	TradingStats    *TradingStats                      `json:"trading_stats,omitempty"`
-	RecentOrders    []RecentOrder                      `json:"recent_orders,omitempty"`
-	MarketDataMap   map[string]*market.Data            `json:"-"`
-	MultiTFMarket   map[string]map[string]*market.Data `json:"-"`
-	OITopDataMap    map[string]*OITopData              `json:"-"`
-	BTCETHLeverage  int                                `json:"-"`
-	AltcoinLeverage int                                `json:"-"`
-	Timeframes      []string                           `json:"-"`
+	CurrentTime     string                      `json:"current_time"`
+	RuntimeMinutes  int                         `json:"runtime_minutes"`
+	CallCount       int                         `json:"call_count"`
+	Account         AccountInfo                 `json:"account"`
+	Positions       []PositionInfo              `json:"positions"`
+	CandidateCoins  []CandidateCoin             `json:"candidate_coins"`
+	PromptVariant   string                      `json:"prompt_variant,omitempty"`
+	TradingStats    *TradingStats               `json:"trading_stats,omitempty"`
+	RecentOrders    []RecentOrder               `json:"recent_orders,omitempty"`
+	MarketDataMap   map[string]*Data            `json:"-"`
+	MultiTFMarket   map[string]map[string]*Data `json:"-"`
+	OITopDataMap    map[string]*OITopData       `json:"-"`
+	BTCETHLeverage  int                         `json:"-"`
+	AltcoinLeverage int                         `json:"-"`
+	Timeframes      []string                    `json:"-"`
 }
 
 // Decision agent trading decision
@@ -149,12 +143,12 @@ type FullDecision struct {
 }
 
 // ============================================================================
-// StrategyEngine - Core Strategy Execution Engine
+// Engine - Core Execution Engine
 // ============================================================================
 
-// StrategyEngine strategy execution engine
-type StrategyEngine struct {
-	config      *store.StrategyConfig
+// Engine builds an agent trader's prompts from its config
+type Engine struct {
+	config      *kind.AgentConfig
 	ranking     RankingSource
 	venue       string
 	listing     ListingSource // symbols tradable on venue; nil means no filter
@@ -172,15 +166,15 @@ type RankingSource interface {
 // ListingSource returns the symbols tradable on a venue (generic form, e.g. BTCUSDT).
 type ListingSource func(ctx context.Context) (map[string]bool, error)
 
-// NewStrategyEngine creates strategy execution engine
-func NewStrategyEngine(config *store.StrategyConfig) *StrategyEngine {
-	return &StrategyEngine{config: config, ranking: binance.Default()}
+// NewEngine creates an engine on a config
+func NewEngine(config *kind.AgentConfig) *Engine {
+	return &Engine{config: config, ranking: binance.Default()}
 }
 
 // WithVenue restricts ranked coin sources to symbols tradable on the trader's
 // exchange. Rankings are built from Binance data, so an OKX trader would
 // otherwise receive coins that OKX does not list.
-func (e *StrategyEngine) WithVenue(venue string) *StrategyEngine {
+func (e *Engine) WithVenue(venue string) *Engine {
 	e.venue = venue
 	switch venue {
 	case "okx":
@@ -192,25 +186,17 @@ func (e *StrategyEngine) WithVenue(venue string) *StrategyEngine {
 }
 
 // GetRiskControlConfig gets risk control configuration
-func (e *StrategyEngine) GetRiskControlConfig() store.RiskControlConfig {
+func (e *Engine) GetRiskControlConfig() kind.RiskControl {
 	return e.config.RiskControl
 }
 
-// GetLanguage returns the language from config or falls back to auto-detection
-func (e *StrategyEngine) GetLanguage() Language {
-	switch e.config.Language {
-	case "zh":
-		return LangChinese
-	case "en":
-		return LangEnglish
-	default:
-		// Fall back to auto-detection from prompt content for backward compatibility
-		return detectLanguage(e.config.PromptSections.RoleDefinition)
-	}
+// GetLanguage returns the language of the prompt sections
+func (e *Engine) GetLanguage() Language {
+	return detectLanguage(e.config.PromptSections.RoleDefinition)
 }
 
-// GetConfig gets complete strategy configuration
-func (e *StrategyEngine) GetConfig() *store.StrategyConfig {
+// GetConfig gets the config
+func (e *Engine) GetConfig() *kind.AgentConfig {
 	return e.config
 }
 
@@ -221,8 +207,8 @@ func (e *StrategyEngine) GetConfig() *store.StrategyConfig {
 // rankedSources are the coin sources computed from free Binance rankings.
 var rankedSources = []string{"oi_top", "oi_low", "volume_top", "gainers", "losers"}
 
-// GetCandidateCoins gets candidate coins based on strategy configuration
-func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
+// GetCandidateCoins gets candidate coins based on the config
+func (e *Engine) GetCandidateCoins() ([]CandidateCoin, error) {
 	coinSource := e.config.CoinSource
 	ranking := make(map[string]*OITopData)
 	defer func() {
@@ -270,16 +256,13 @@ func (e *StrategyEngine) GetCandidateCoins() ([]CandidateCoin, error) {
 		return e.filterExcludedCoins(candidates), nil
 
 	default:
-		// Removed source types are migrated to "static" at startup; keep
-		// trading the static list if an unmigrated config slips through.
-		logger.Warnf("⚠️  Unsupported coin source type %q, falling back to static coins", coinSource.SourceType)
-		return e.filterExcludedCoins(e.staticCandidates()), nil
+		return nil, fmt.Errorf("unsupported coin source type %q", coinSource.SourceType)
 	}
 }
 
 // RankingContext returns the ranking data (OI change, 24h volume and price
 // change) of candidates selected by the last GetCandidateCoins call.
-func (e *StrategyEngine) RankingContext() map[string]*OITopData {
+func (e *Engine) RankingContext() map[string]*OITopData {
 	if e == nil {
 		return nil
 	}
@@ -288,7 +271,7 @@ func (e *StrategyEngine) RankingContext() map[string]*OITopData {
 	return e.rankingData
 }
 
-func (e *StrategyEngine) staticCandidates() []CandidateCoin {
+func (e *Engine) staticCandidates() []CandidateCoin {
 	candidates := make([]CandidateCoin, 0, len(e.config.CoinSource.StaticCoins))
 	for _, symbol := range e.config.CoinSource.StaticCoins {
 		candidates = append(candidates, CandidateCoin{Symbol: instrument.Normalize(symbol), Sources: []string{"static"}})
@@ -296,7 +279,7 @@ func (e *StrategyEngine) staticCandidates() []CandidateCoin {
 	return candidates
 }
 
-func (e *StrategyEngine) sourceEnabled(source string) bool {
+func (e *Engine) sourceEnabled(source string) bool {
 	src := e.config.CoinSource
 	switch source {
 	case "oi_top":
@@ -313,7 +296,7 @@ func (e *StrategyEngine) sourceEnabled(source string) bool {
 	return false
 }
 
-func (e *StrategyEngine) sourceLimit(source string) int {
+func (e *Engine) sourceLimit(source string) int {
 	src := e.config.CoinSource
 	limit := 0
 	switch source {
@@ -331,13 +314,13 @@ func (e *StrategyEngine) sourceLimit(source string) int {
 	if limit <= 0 {
 		limit = 3
 	}
-	if limit > store.MaxCandidateCoins {
-		limit = store.MaxCandidateCoins
+	if limit > kind.MaxCandidateCoins {
+		limit = kind.MaxCandidateCoins
 	}
 	return limit
 }
 
-func (e *StrategyEngine) excludedSet() map[string]bool {
+func (e *Engine) excludedSet() map[string]bool {
 	excluded := make(map[string]bool, len(e.config.CoinSource.ExcludedCoins))
 	for _, coin := range e.config.CoinSource.ExcludedCoins {
 		excluded[instrument.Normalize(coin)] = true
@@ -347,7 +330,7 @@ func (e *StrategyEngine) excludedSet() map[string]bool {
 
 // rankedCoins selects up to limit coins from a free Binance ranking. Excluded
 // coins are skipped before counting so they never consume a slot.
-func (e *StrategyEngine) rankedCoins(source string, limit int, ranking map[string]*OITopData) ([]CandidateCoin, error) {
+func (e *Engine) rankedCoins(source string, limit int, ranking map[string]*OITopData) ([]CandidateCoin, error) {
 	if e.ranking == nil {
 		return nil, fmt.Errorf("no ranking source configured")
 	}
@@ -447,7 +430,7 @@ func (e *StrategyEngine) rankedCoins(source string, limit int, ranking map[strin
 }
 
 // filterExcludedCoins removes excluded coins from the candidates list
-func (e *StrategyEngine) filterExcludedCoins(candidates []CandidateCoin) []CandidateCoin {
+func (e *Engine) filterExcludedCoins(candidates []CandidateCoin) []CandidateCoin {
 	if len(e.config.CoinSource.ExcludedCoins) == 0 {
 		return candidates
 	}
@@ -466,88 +449,6 @@ func (e *StrategyEngine) filterExcludedCoins(candidates []CandidateCoin) []Candi
 // ============================================================================
 // External Data
 // ============================================================================
-
-// FetchMarketData fetches market data based on strategy configuration
-func (e *StrategyEngine) FetchMarketData(symbol string) (*market.Data, error) {
-	return market.Get(symbol)
-}
-
-// FetchExternalData fetches external data sources
-func (e *StrategyEngine) FetchExternalData() (map[string]interface{}, error) {
-	externalData := make(map[string]interface{})
-
-	for _, source := range e.config.Indicators.ExternalDataSources {
-		data, err := e.fetchSingleExternalSource(source)
-		if err != nil {
-			logger.Infof("⚠️  Failed to fetch external data source [%s]: %v", source.Name, err)
-			continue
-		}
-		externalData[source.Name] = data
-	}
-
-	return externalData, nil
-}
-
-func (e *StrategyEngine) fetchSingleExternalSource(source store.ExternalDataSource) (interface{}, error) {
-	// SSRF Protection: Validate URL before making request
-	if err := security.ValidateURL(source.URL); err != nil {
-		return nil, fmt.Errorf("external source URL validation failed: %w", err)
-	}
-
-	timeout := time.Duration(source.RefreshSecs) * time.Second
-	if timeout == 0 {
-		timeout = 30 * time.Second
-	}
-
-	// Use SSRF-safe HTTP client
-	client := security.SafeHTTPClient(timeout)
-
-	req, err := http.NewRequest(source.Method, source.URL, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	for k, v := range source.Headers {
-		req.Header.Set(k, v)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var result interface{}
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, err
-	}
-
-	if source.DataPath != "" {
-		result = extractJSONPath(result, source.DataPath)
-	}
-
-	return result, nil
-}
-
-func extractJSONPath(data interface{}, path string) interface{} {
-	parts := strings.Split(path, ".")
-	current := data
-
-	for _, part := range parts {
-		if m, ok := current.(map[string]interface{}); ok {
-			current = m[part]
-		} else {
-			return nil
-		}
-	}
-
-	return current
-}
 
 // ============================================================================
 // Helper Functions

@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 	"vergex/internal/logger"
-	"vergex/internal/market"
-	"vergex/internal/store"
-	"vergex/internal/trader/agent"
+	traderagent "vergex/internal/trader/agent"
+	"vergex/internal/trader/grid"
+	"vergex/internal/trader/kind"
 )
 
 // ============================================================================
@@ -20,10 +20,10 @@ type GridState struct {
 	mu sync.RWMutex
 
 	// Configuration
-	Config *store.GridStrategyConfig
+	Config *kind.GridConfig
 
 	// Grid levels
-	Levels []agent.GridLevelInfo
+	Levels []traderagent.GridLevelInfo
 
 	// Calculated bounds
 	UpperPrice  float64
@@ -66,18 +66,18 @@ type GridState struct {
 	CurrentRegimeLevel string
 
 	// Grid direction adjustment
-	CurrentDirection     market.GridDirection
+	CurrentDirection     grid.Direction
 	DirectionChangedAt   time.Time
 	DirectionChangeCount int
 }
 
 // NewGridState creates a new grid state
-func NewGridState(config *store.GridStrategyConfig) *GridState {
+func NewGridState(config *kind.GridConfig) *GridState {
 	return &GridState{
 		Config:           config,
-		Levels:           make([]agent.GridLevelInfo, 0),
+		Levels:           make([]traderagent.GridLevelInfo, 0),
 		OrderBook:        make(map[string]int),
-		CurrentDirection: market.GridDirectionNeutral,
+		CurrentDirection: grid.DirectionNeutral,
 	}
 }
 
@@ -97,7 +97,7 @@ const (
 // checkBreakout detects if price has broken out of grid range
 // Returns breakout type and percentage beyond boundary
 func (at *AutoTrader) checkBreakout() (BreakoutType, float64) {
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 
 	currentPrice, err := at.trader.GetMarketPrice(gridConfig.Symbol)
 	if err != nil {
@@ -131,7 +131,7 @@ func (at *AutoTrader) checkBreakout() (BreakoutType, float64) {
 // checkMaxDrawdown checks if current drawdown exceeds maximum allowed
 // Returns: (exceeded bool, currentDrawdown float64)
 func (at *AutoTrader) checkMaxDrawdown() (bool, float64) {
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 	if gridConfig.MaxDrawdownPct <= 0 {
 		return false, 0
 	}
@@ -183,7 +183,7 @@ func (at *AutoTrader) checkMaxDrawdown() (bool, float64) {
 // checkDailyLossLimit checks if daily loss exceeds limit
 // Returns: (exceeded bool, dailyLossPct float64)
 func (at *AutoTrader) checkDailyLossLimit() (bool, float64) {
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 	if gridConfig.DailyLossLimitPct <= 0 {
 		return false, 0
 	}
@@ -210,7 +210,7 @@ func (at *AutoTrader) checkDailyLossLimit() (bool, float64) {
 
 // emergencyExit closes all positions and cancels all orders
 func (at *AutoTrader) emergencyExit(reason string) error {
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 
 	logger.Errorf("[Grid] EMERGENCY EXIT: %s", reason)
 
@@ -279,11 +279,11 @@ func (at *AutoTrader) handleBreakout(breakoutType BreakoutType, breakoutPct floa
 
 // InitializeGrid initializes the grid state and calculates levels
 func (at *AutoTrader) InitializeGrid() error {
-	if at.config.StrategyConfig == nil || at.config.StrategyConfig.GridConfig == nil {
+	if at.config.Grid == nil {
 		return fmt.Errorf("grid configuration not found")
 	}
 
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 	at.gridState = NewGridState(gridConfig)
 
 	// Get current market price
@@ -295,7 +295,7 @@ func (at *AutoTrader) InitializeGrid() error {
 	// Calculate grid bounds
 	if gridConfig.UseATRBounds {
 		// Get ATR for bound calculation
-		mktData, err := market.GetWithTimeframes(gridConfig.Symbol, []string{"4h"}, "4h", 20)
+		mktData, err := traderagent.GetWithTimeframes(gridConfig.Symbol, []string{"4h"}, "4h", 20)
 		if err != nil {
 			logger.Warnf("Failed to get market data for ATR: %v, using default bounds", err)
 			at.calculateDefaultBounds(price, gridConfig)
@@ -401,11 +401,7 @@ func (at *AutoTrader) RunGridCycle() error {
 		return nil
 	}
 
-	gridConfig := at.config.StrategyConfig.GridConfig
-	lang := at.config.StrategyConfig.Language
-	if lang == "" {
-		lang = "en"
-	}
+	gridConfig := at.config.Grid
 
 	// Build grid context
 	gridCtx, err := at.buildGridContext()
@@ -414,7 +410,7 @@ func (at *AutoTrader) RunGridCycle() error {
 	}
 
 	// Get agent decisions
-	decision, err := agent.GetGridDecisions(gridCtx, at.agentClient, gridConfig, lang, at.openConversation)
+	decision, err := traderagent.GetGridDecisions(gridCtx, at.agentClient, gridConfig, at.openConversation)
 	at.keepConversation(decision)
 	if err != nil {
 		return fmt.Errorf("failed to get grid decisions: %w", err)
@@ -455,17 +451,17 @@ func (at *AutoTrader) RunGridCycle() error {
 }
 
 // buildGridContext builds the context for agent grid decisions
-func (at *AutoTrader) buildGridContext() (*agent.GridContext, error) {
-	gridConfig := at.config.StrategyConfig.GridConfig
+func (at *AutoTrader) buildGridContext() (*traderagent.GridContext, error) {
+	gridConfig := at.config.Grid
 
 	// Get market data
-	mktData, err := market.GetWithTimeframes(gridConfig.Symbol, []string{"5m", "4h"}, "5m", 50)
+	mktData, err := traderagent.GetWithTimeframes(gridConfig.Symbol, []string{"5m", "4h"}, "5m", 50)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get market data: %w", err)
 	}
 
 	// Build base context from market data
-	ctx := agent.BuildGridContextFromMarketData(mktData, gridConfig)
+	ctx := traderagent.BuildGridContextFromMarketData(mktData, gridConfig)
 
 	// Add grid state
 	at.gridState.mu.RLock()
@@ -520,7 +516,7 @@ func (at *AutoTrader) buildGridContext() (*agent.GridContext, error) {
 }
 
 // executeGridDecision executes a single grid decision
-func (at *AutoTrader) executeGridDecision(d *agent.Decision) error {
+func (at *AutoTrader) executeGridDecision(d *traderagent.Decision) error {
 	switch d.Action {
 	case "place_buy_limit":
 		return at.placeGridLimitOrder(d, "BUY")
@@ -552,34 +548,32 @@ func (at *AutoTrader) executeGridDecision(d *agent.Decision) error {
 	}
 }
 
-// IsGridStrategy returns true if current strategy is grid trading
-func (at *AutoTrader) IsGridStrategy() bool {
-	if at.config.StrategyConfig == nil {
-		return false
-	}
-	return at.config.StrategyConfig.StrategyType == "grid_trading" && at.config.StrategyConfig.GridConfig != nil
+// IsGrid returns true for a grid trader
+func (at *AutoTrader) IsGrid() bool {
+	return at.config.Grid != nil
 }
 
 // saveGridDecisionRecord saves the grid decision to database
-func (at *AutoTrader) saveGridDecisionRecord(decision *agent.FullDecision) {
-	if at.store == nil {
+func (at *AutoTrader) saveGridDecisionRecord(decision *traderagent.FullDecision) {
+	if at.stores == nil {
 		return
 	}
 
 	at.cycleNumber++
 
-	record := &store.DecisionRecord{
+	record := &DecisionRecord{
 		TraderID:        at.id,
 		CycleNumber:     at.cycleNumber,
 		Timestamp:       time.Now().UTC(),
 		ConversationID:  decision.ConversationID,
 		AgentDurationMs: decision.AgentDurationMs,
+		Limits:          at.limits(),
 		Success:         true,
 	}
 
-	// Convert agent.Decision to store.DecisionAction for frontend display
+	// Convert traderagent.Decision to DecisionAction for frontend display
 	for _, d := range decision.Decisions {
-		actionRecord := store.DecisionAction{
+		actionRecord := DecisionAction{
 			Action:     d.Action,
 			Symbol:     d.Symbol,
 			Quantity:   d.Quantity,
@@ -599,7 +593,7 @@ func (at *AutoTrader) saveGridDecisionRecord(decision *agent.FullDecision) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), cycleSaveWait)
 	defer cancel()
-	if err := at.store.Decision().WithContext(ctx).LogDecision(record); err != nil {
+	if err := at.stores.Decisions.WithContext(ctx).LogDecision(record); err != nil {
 		logger.Warnf("[Grid] Failed to save decision record: %v", err)
 	}
 }

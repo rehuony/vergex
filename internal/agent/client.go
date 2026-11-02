@@ -91,18 +91,11 @@ type BaseClient struct {
 	Hooks ClientHooks
 }
 
-// New creates default client (backward compatible)
-//
-// Deprecated: Recommend using NewClient(...opts) for better flexibility
-func New() Client {
-	return NewClient()
-}
-
 // NewClient creates client (supports options pattern)
 //
 // Usage examples:
 //
-//	// Basic usage (backward compatible)
+//	// Basic usage
 //	client := agent.NewClient()
 //
 //	// Custom logger

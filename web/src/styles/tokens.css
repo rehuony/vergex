@@ -1,0 +1,205 @@
+/* vergex design tokens: the one place every colour, shadow, font, layout and
+   motion value lives. The values are the ones in DESIGN.md at the repository
+   root; change both together. Components use colours through the Tailwind
+   aliases in the @theme block below (bg-vergex-surface, text-vergex-muted) and
+   CSS uses var(--role); both follow the theme because the aliases point at
+   these variables. */
+
+:root {
+  color-scheme: light;
+
+  /* Neutrals */
+  --canvas: #f7f6f3;
+  --surface: #ffffff;
+  --surface-muted: #f1efeb;
+  --line: #e6e3dd;
+  --line-strong: #cfcac2;
+
+  /* Ink: primary text, and the one accent */
+  --ink: #1a1816;
+  --ink-hover: #332f2b;
+  --on-ink: #ffffff;
+  --ink-tint: rgba(26, 24, 22, 0.06);
+  --ink-soft: #4d4945;
+  --muted: #716b64;
+  --faint: #9d968d;
+
+  /* Status: only with the market's meaning */
+  --success: #2e8b57;
+  --success-bg: rgba(46, 139, 87, 0.12);
+  --success-border: rgba(46, 139, 87, 0.35);
+  --danger: #d6433a;
+  --danger-bg: rgba(214, 67, 58, 0.12);
+  --danger-border: rgba(214, 67, 58, 0.35);
+  --warning: #9b6a14;
+  --warning-bg: #fbf4e6;
+  --warning-border: #ead7ac;
+
+  /* Elevation: flat elements have none; these are for layers that float */
+  --scrim: rgba(26, 24, 22, 0.4);
+  --shadow-float: 0 4px 16px rgba(26, 24, 22, 0.08);
+  --shadow-overlay: 0 16px 48px rgba(26, 24, 22, 0.14);
+
+  /* Layout: the horizontal inset shared by the top bar and every page */
+  --page-gutter: 28px;
+
+  /* Motion: movement uses one curve; colour and opacity use ease-out and
+     finish sooner. Tailwind's transition classes default to the fade values. */
+  --ease-move: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-fade: ease-out;
+  --dur-fade: 120ms;
+  --dur-state: 200ms;
+  --dur-panel: 320ms;
+}
+
+/* The same ledger at night: warm near-black, never blue-black. Switched by
+   data-theme on <html> (contexts/theme-context.tsx). */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --canvas: #141312;
+  --surface: #1c1a18;
+  --surface-muted: #232120;
+  --line: #2b2825;
+  --line-strong: #3b3733;
+
+  --ink: #ece8e1;
+  --ink-hover: #f8f5f0;
+  --on-ink: #1a1816;
+  --ink-tint: rgba(236, 232, 225, 0.08);
+  --ink-soft: #c3bdb5;
+  --muted: #948d84;
+  --faint: #665f58;
+
+  --success: #3fb27f;
+  --success-bg: rgba(63, 178, 127, 0.14);
+  --success-border: rgba(63, 178, 127, 0.38);
+  --danger: #ef6a61;
+  --danger-bg: rgba(239, 106, 97, 0.14);
+  --danger-border: rgba(239, 106, 97, 0.38);
+  --warning: #e0b15a;
+  --warning-bg: rgba(224, 177, 90, 0.12);
+  --warning-border: rgba(224, 177, 90, 0.32);
+
+  --scrim: rgba(0, 0, 0, 0.6);
+  /* A shadow barely shows on near-black, so a lit top edge lifts the layer. */
+  --shadow-float:
+    inset 0 1px 0 rgba(236, 232, 225, 0.08), 0 4px 16px rgba(0, 0, 0, 0.4);
+  --shadow-overlay:
+    inset 0 1px 0 rgba(236, 232, 225, 0.08), 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+
+@media (max-width: 1450px) {
+  :root {
+    --page-gutter: 24px;
+  }
+}
+@media (max-width: 700px) {
+  :root {
+    --page-gutter: 16px;
+  }
+}
+
+/* What Tailwind generates utilities from. The palette, shadows and radii it
+   ships are switched off so only the tokens above exist as classes; the radius
+   ladder is rounded (4px), rounded-md, rounded-2xl and rounded-full, and
+   shadows are written as shadow-(--shadow-float). */
+@theme {
+  --color-*: initial;
+  /* The one palette colour: text on a status fill, and overlays on a photo. */
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  --shadow-*: initial;
+
+  --radius-*: initial;
+  --radius: 4px;
+  --radius-md: 6px;
+  --radius-2xl: 16px;
+
+  --font-sans:
+    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', Menlo, Monaco, 'Courier New', monospace;
+
+  --default-transition-duration: var(--dur-fade);
+  --default-transition-timing-function: var(--ease-fade);
+
+  --animate-menu-in: menu-in var(--dur-state) var(--ease-move);
+  --animate-overlay-in: overlay-in var(--dur-state) var(--ease-fade);
+  --animate-dialog-in: dialog-in var(--dur-panel) var(--ease-move);
+  --animate-page-in: page-in var(--dur-state) var(--ease-move);
+
+  /* Opacity settles at the keyframe halfway through; movement runs the full
+     length. A menu sets its origin so it grows from what opened it. */
+  @keyframes menu-in {
+    0% {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+    50% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes overlay-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes dialog-in {
+    0% {
+      opacity: 0;
+      transform: translateY(8px) scale(0.98);
+    }
+    50% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes page-in {
+    0% {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    50% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+/* Colour classes point at the variables, so bg-vergex-surface follows the
+   theme and bg-vergex-ink/25 mixes the current ink. */
+@theme inline {
+  --color-vergex-canvas: var(--canvas);
+  --color-vergex-surface: var(--surface);
+  --color-vergex-surface-muted: var(--surface-muted);
+  --color-vergex-line: var(--line);
+  --color-vergex-line-strong: var(--line-strong);
+  --color-vergex-ink: var(--ink);
+  --color-vergex-ink-hover: var(--ink-hover);
+  --color-vergex-on-ink: var(--on-ink);
+  --color-vergex-ink-tint: var(--ink-tint);
+  --color-vergex-ink-soft: var(--ink-soft);
+  --color-vergex-muted: var(--muted);
+  --color-vergex-faint: var(--faint);
+  --color-vergex-success: var(--success);
+  --color-vergex-success-bg: var(--success-bg);
+  --color-vergex-success-border: var(--success-border);
+  --color-vergex-danger: var(--danger);
+  --color-vergex-danger-bg: var(--danger-bg);
+  --color-vergex-danger-border: var(--danger-border);
+  --color-vergex-warning: var(--warning);
+  --color-vergex-warning-bg: var(--warning-bg);
+  --color-vergex-warning-border: var(--warning-border);
+  --color-vergex-scrim: var(--scrim);
+}

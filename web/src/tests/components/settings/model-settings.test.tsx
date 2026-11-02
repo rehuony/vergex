@@ -5,7 +5,7 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react'
-import { SWRConfig } from 'swr'
+import { QueryWrapper } from '@/tests/query-wrapper'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ModelSettings } from '@/components/settings/model-settings'
 
@@ -52,9 +52,9 @@ afterEach(() => {
 
 const show = () =>
   render(
-    <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+    <QueryWrapper>
       <ModelSettings language="en" />
-    </SWRConfig>
+    </QueryWrapper>
   )
 
 it('adds a provider that is not connected yet and sends only that one', async () => {

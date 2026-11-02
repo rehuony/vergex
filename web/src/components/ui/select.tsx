@@ -1,6 +1,7 @@
 import * as SelectPrimitive from '@radix-ui/react-select'
 import { Check, ChevronDown } from 'lucide-react'
 import { cn } from '@/utils/cn'
+import { buttonVariants } from './button'
 
 export interface SelectOption {
   value: string | number
@@ -49,7 +50,8 @@ export function AppSelect({
         id={id}
         aria-label={ariaLabel}
         className={cn(
-          'flex h-10 w-full items-center justify-between gap-2 rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-left text-sm text-vergex-text outline-none transition-colors hover:border-[var(--line-strong)] hover:duration-0 focus-visible:border-vergex-brand disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:border-vergex-brand',
+          buttonVariants({ variant: 'select' }),
+          'flex w-full shrink',
           className
         )}
       >
@@ -57,7 +59,7 @@ export function AppSelect({
           <SelectPrimitive.Value />
         </span>
         <SelectPrimitive.Icon asChild>
-          <ChevronDown className="size-4 shrink-0 text-vergex-text-muted" />
+          <ChevronDown className="size-4 shrink-0 text-vergex-muted" />
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>
       <SelectPrimitive.Portal>
@@ -65,7 +67,7 @@ export function AppSelect({
           position="popper"
           sideOffset={4}
           // Above the z-50 dialogs it is usually opened from.
-          className="z-[60] max-h-[min(var(--radix-select-content-available-height),18rem)] min-w-[var(--radix-select-trigger-width)] origin-[var(--radix-select-content-transform-origin)] animate-menu-in overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--surface)] p-1.5 shadow-[var(--shadow-lg)]"
+          className="z-[60] max-h-[min(var(--radix-select-content-available-height),18rem)] min-w-[var(--radix-select-trigger-width)] origin-[var(--radix-select-content-transform-origin)] animate-menu-in overflow-hidden rounded-2xl border border-vergex-line bg-vergex-surface p-1.5 shadow-(--shadow-float)"
         >
           <SelectPrimitive.Viewport>
             {options.map((option) => (
@@ -73,14 +75,14 @@ export function AppSelect({
                 key={option.value}
                 value={toItem(option.value)}
                 lang={option.lang}
-                className="flex h-9 cursor-pointer select-none items-center gap-2 rounded-lg px-2.5 text-sm text-vergex-text outline-none data-[disabled]:pointer-events-none data-[highlighted]:bg-vergex-bg data-[disabled]:opacity-50"
+                className="flex h-8 cursor-pointer select-none items-center gap-2 rounded-md px-2.5 text-sm text-vergex-ink outline-none data-[disabled]:pointer-events-none data-[highlighted]:bg-vergex-surface-muted data-[disabled]:opacity-50"
               >
                 <SelectPrimitive.ItemText>
                   {option.label}
                 </SelectPrimitive.ItemText>
                 <SelectPrimitive.ItemIndicator className="ml-auto">
                   <Check
-                    className="size-4 text-vergex-brand"
+                    className="size-4 text-vergex-ink"
                     aria-hidden="true"
                   />
                 </SelectPrimitive.ItemIndicator>

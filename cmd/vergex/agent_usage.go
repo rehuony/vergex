@@ -4,14 +4,13 @@ import (
 	"vergex/internal/agent"
 	"vergex/internal/agent/pricing"
 	"vergex/internal/logger"
-	"vergex/internal/store"
 )
 
 // recordAgentCalls returns a callback that stores every call to a model in
 // agent.calls, with a cost estimated from models.dev prices.
-func recordAgentCalls(st *store.Store, prices *pricing.Service) func(agent.CallReport) {
+func recordAgentCalls(calls *agent.CallStore, prices *pricing.Service) func(agent.CallReport) {
 	return func(report agent.CallReport) {
-		call := store.AgentCall{
+		call := agent.Call{
 			Feature:            report.Feature,
 			SourceID:           report.SourceID,
 			ConversationID:     report.ConversationID,
@@ -22,11 +21,11 @@ func recordAgentCalls(st *store.Store, prices *pricing.Service) func(agent.CallR
 			CachedPromptTokens: report.CachedPromptTokens,
 			CompletionTokens:   report.CompletionTokens,
 			DurationMs:         int(report.Duration.Milliseconds()),
-			Status:             store.CallOK,
+			Status:             agent.CallOK,
 			FinishReason:       report.FinishReason,
 		}
 		if report.Error != "" {
-			call.Status = store.CallFailed
+			call.Status = agent.CallFailed
 			call.Error = report.Error
 		}
 		// A call that used no tokens costs nothing, priced or not.
@@ -38,7 +37,7 @@ func recordAgentCalls(st *store.Store, prices *pricing.Service) func(agent.CallR
 			})
 			call.CostUSD, call.Unpriced = cost, !priced
 		}
-		if err := st.AgentCall().Record(&call); err != nil {
+		if err := calls.Record(&call); err != nil {
 			logger.Warnf("⚠️ Failed to record model call: %v", err)
 		}
 	}

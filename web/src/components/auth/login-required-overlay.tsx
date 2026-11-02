@@ -32,7 +32,7 @@ export function LoginRequiredOverlay({
           : tr('subtitleDefault')
       }
       icon={
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--brand-soft)] text-vergex-brand">
+        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-vergex-ink-tint text-vergex-ink">
           <LogIn className="h-[18px] w-[18px]" />
         </div>
       }
@@ -51,10 +51,10 @@ export function LoginRequiredOverlay({
         </>
       }
     >
-      <p className="text-[13px] leading-relaxed text-vergex-text-muted">
+      <p className="text-[13px] leading-relaxed text-vergex-muted">
         {tr('description')}
       </p>
-      <ul className="mt-4 space-y-2 text-[13px] text-vergex-text">
+      <ul className="mt-4 space-y-2 text-[13px] text-vergex-ink">
         {['benefit1', 'benefit2', 'benefit3'].map((key) => (
           <li key={key} className="flex items-center gap-2">
             <Check className="h-4 w-4 shrink-0 text-vergex-success" />

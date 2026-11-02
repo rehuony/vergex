@@ -23,26 +23,24 @@ import { t, type Language } from '@/i18n'
 import { api } from '@/api'
 import { cn } from '@/utils/cn'
 import { ApiError } from '@/api/http-client'
-import { displayWidth } from '@/utils/text'
 import { useProfile } from '@/hooks/use-profile'
 import { Dialog, dialogInputClass } from '@/components/common/dialog'
 import { AgentCostPanel } from './agent-cost-panel'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AvatarEditor } from './avatar-editor'
-import { ExchangeSettings } from './exchange-settings'
+import { AccountSettings } from './account-settings'
 import { ModelSettings } from './model-settings'
 import { SettingActions, SettingRow } from '@/components/common/setting-row'
 import { TelegramSettings } from './telegram-settings'
 
-// Listed shortest label first (ties keep this order), so the column of tabs
-// steps out evenly in every language.
+// In the order the tabs are shown.
 const SECTIONS = [
-  { id: 'account', label: 'accountTab', icon: UserRound },
-  { id: 'models', label: 'modelsTab', icon: Brain },
-  { id: 'exchanges', label: 'exchangesTab', icon: Landmark },
-  { id: 'costs', label: 'agentCostsTab', icon: Receipt },
+  { id: 'profile', label: 'profileTab', icon: UserRound },
+  { id: 'accounts', label: 'accountsTab', icon: Landmark },
   { id: 'telegram', label: 'telegramTab', icon: Send },
+  { id: 'models', label: 'modelsTab', icon: Brain },
+  { id: 'costs', label: 'agentCostsTab', icon: Receipt },
 ] as const
 
 export type SettingsSection = (typeof SECTIONS)[number]['id']
@@ -71,7 +69,7 @@ const PasswordInput = forwardRef<
         type="button"
         variant="ghost"
         size="icon"
-        className="absolute right-1 top-1/2 size-7 -translate-y-1/2 text-vergex-text-muted"
+        className="absolute right-1 top-1/2 size-7 -translate-y-1/2 text-vergex-muted"
         onClick={() => setVisible(!visible)}
         aria-label={t(visible ? 'hidePassword' : 'showPassword', language)}
         aria-pressed={visible}
@@ -221,7 +219,7 @@ function PasswordSettings({
 // loses focus; an emptied field goes back to the saved name.
 function DisplayNameSettings({ language }: { language: Language }) {
   const id = useId()
-  const { data: profile, mutate } = useProfile()
+  const { data: profile, setProfile } = useProfile()
   const saved = profile?.display_name ?? ''
   const [name, setName] = useState<string | null>(null)
   const saving = useRef(false)
@@ -237,9 +235,7 @@ function DisplayNameSettings({ language }: { language: Language }) {
     saving.current = true
     try {
       const stored = await api.updateDisplayName(next)
-      await mutate(profile && { ...profile, display_name: stored }, {
-        revalidate: false,
-      })
+      setProfile(profile && { ...profile, display_name: stored })
       setName(null)
       toast.success(t('displayNameSaved', language))
     } catch (err) {
@@ -273,23 +269,23 @@ function DisplayNameSettings({ language }: { language: Language }) {
   )
 }
 
-function AccountSettings({ language }: { language: Language }) {
+function ProfileSettings({ language }: { language: Language }) {
   const { user } = useAuth()
   return (
     <>
       <SettingRow label={t('avatar', language)}>
         <AvatarEditor language={language} />
       </SettingRow>
-      <DisplayNameSettings language={language} />
       <SettingRow label={t('email', language)}>
-        <p className="truncate text-sm text-vergex-text">{user?.email}</p>
+        <p className="truncate text-sm text-vergex-ink">{user?.email}</p>
       </SettingRow>
+      <DisplayNameSettings language={language} />
       <PasswordSettings language={language} email={user?.email ?? ''} />
     </>
   )
 }
 
-/** Account, model, exchange, agent cost and Telegram settings. */
+/** Profile, trading account, Telegram, agent model and agent cost settings. */
 export function SettingsDialog({
   section,
   onSectionChange,
@@ -307,10 +303,6 @@ export function SettingsDialog({
       ?.querySelector('[aria-selected="true"]')
       ?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' })
   }, [section])
-  const sections = [...SECTIONS].sort(
-    (a, b) =>
-      displayWidth(t(a.label, language)) - displayWidth(t(b.label, language))
-  )
   return (
     <Dialog
       title={t('settingsNav', language)}
@@ -324,9 +316,9 @@ export function SettingsDialog({
         role="tablist"
         aria-label={t('settingsNav', language)}
         // On a phone the tabs form one row that scrolls sideways.
-        className="flex shrink-0 gap-1 overflow-x-auto border-b border-[var(--line)] p-2 [scrollbar-width:none] sm:w-44 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r sm:p-3"
+        className="flex shrink-0 gap-1 overflow-x-auto border-b border-vergex-line p-2 [scrollbar-width:none] sm:w-48 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r sm:p-3"
       >
-        {sections.map(({ id, label, icon: Icon }) => (
+        {SECTIONS.map(({ id, label, icon: Icon }) => (
           <Button
             key={id}
             type="button"
@@ -334,7 +326,7 @@ export function SettingsDialog({
             variant="ghost"
             size="sm"
             aria-selected={section === id}
-            className="justify-start gap-2 px-2.5 font-normal aria-selected:bg-[var(--brand-soft)] aria-selected:font-medium aria-selected:text-vergex-brand"
+            className="justify-start gap-2 px-2.5 font-normal aria-selected:bg-vergex-ink-tint aria-selected:font-medium aria-selected:text-vergex-ink"
             onClick={() => onSectionChange(id)}
           >
             <Icon className="size-4" aria-hidden="true" />
@@ -343,9 +335,9 @@ export function SettingsDialog({
         ))}
       </div>
       <ScrollArea role="tabpanel" className="min-h-0 flex-1 px-6 py-2">
-        {section === 'account' && <AccountSettings language={language} />}
+        {section === 'profile' && <ProfileSettings language={language} />}
         {section === 'models' && <ModelSettings language={language} />}
-        {section === 'exchanges' && <ExchangeSettings language={language} />}
+        {section === 'accounts' && <AccountSettings language={language} />}
         {section === 'telegram' && <TelegramSettings language={language} />}
         {section === 'costs' && (
           <div className="flex min-h-full flex-col py-4">

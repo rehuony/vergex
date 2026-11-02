@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import useSWR from 'swr'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts'
 import { api } from '@/api'
 import { THEME_EVENT } from '@/contexts/theme-context'
 import { t, type Language } from '@/i18n'
 import type { EquityPoint, EquityRange } from '@/types'
-import { Panel, PanelState } from '@/components/common/panel'
+import { PanelState } from '@/components/common/panel'
 import { Segmented } from '@/components/common/segmented'
 import { pollEvery } from '@/utils/poll'
 
@@ -18,8 +18,8 @@ function colors() {
     surface: token('--surface'),
     text: token('--muted'),
     grid: token('--line'),
-    up: token('--binance-green'),
-    down: token('--binance-red'),
+    up: token('--success'),
+    down: token('--danger'),
   }
 }
 
@@ -123,20 +123,20 @@ export function EquityCurve({
   language: Language
 }) {
   const [range, setRange] = useState<EquityRange>('7d')
-  const { data, error, isLoading } = useSWR(
-    ['equity', traderId, range],
-    () => api.getEquity(traderId, range, true),
-    {
-      ...pollEvery(60000),
-      keepPreviousData: true,
-    }
-  )
+  const { data, error, isLoading } = useQuery({
+    queryKey: ['equity', traderId, range],
+    queryFn: () => api.getEquity(traderId, range, true),
+    ...pollEvery(60000),
+    placeholderData: keepPreviousData,
+  })
   const label = (key: string) => t(`traderDetail.${key}`, language)
   const points = data?.points ?? []
   return (
-    <Panel
-      title={label('equity')}
-      actions={
+    <section className="border-b border-vergex-line">
+      <header className="flex flex-wrap items-center justify-between gap-2 px-4 py-2">
+        <h3 className="text-[13px] font-medium text-vergex-ink">
+          {label('equity')}
+        </h3>
         <Segmented
           aria-label={label('equityRange')}
           value={range}
@@ -146,9 +146,8 @@ export function EquityCurve({
             label: label(`range.${value}`),
           }))}
         />
-      }
-    >
-      <div className="relative h-64 px-2 pb-2 sm:h-80">
+      </header>
+      <div className="relative h-64 px-2 pb-2">
         {points.length > 0 ? (
           <div className="relative h-full">
             <EquityChart points={points} base={data?.initial_balance ?? 0} />
@@ -163,6 +162,6 @@ export function EquityCurve({
           </PanelState>
         )}
       </div>
-    </Panel>
+    </section>
   )
 }

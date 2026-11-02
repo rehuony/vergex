@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"vergex/internal/exchange/binance"
-	"vergex/internal/market/wsfeed"
-	"vergex/internal/store/database/testdb"
+	"vergex/internal/database/testdb"
+	"vergex/internal/market/ws"
+	"vergex/internal/venue/binance"
 
 	"github.com/gorilla/websocket"
 )
@@ -66,7 +66,7 @@ func newRecentFixture(t *testing.T) *recentFixture {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	events := make(chan wsfeed.Event, 64)
+	events := make(chan ws.Event, 64)
 	service.stream.Set([]string{"btcusdt@kline_1h"})
 	go service.stream.Run(ctx, events)
 	go service.hub.Run(ctx, events)

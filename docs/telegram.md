@@ -20,19 +20,18 @@ Defined in `internal/telegram/agent/skills.go`:
 
 | Skill | Actions |
 | :---- | :------ |
-| `trader_management` | create, update, delete, start, stop, query |
-| `strategy_management` | create, update, delete, activate, duplicate, query |
+| `trader_management` | create, with a kind and preset; update, with a `config_patch` the server merges; delete, start, stop, query |
 | `model_management` | query |
-| `exchange_management` | query, with account connection state |
+| `account_management` | query, with account connection state |
 | `account_query` | overview, balance, positions, position history, trades, orders, open orders, decisions, statistics, agent costs |
 | `close_position` | closes a position after checking that it exists |
-| `diagnose` | `trader_start`, `model`, `exchange`, `order_execution` |
+| `diagnose` | `trader_start`, `model`, `account`, `order_execution` |
 
-Skills call the local REST API with fixed paths, so server-side validation and risk limits always apply. Keys and endpoints for models and exchanges can only be changed in the web UI.
+Skills call the local REST API with fixed paths, so server-side validation and risk limits always apply. Keys and endpoints for models and accounts can only be changed in the web UI.
 
 ## Confirmation
 
-These actions wait for your confirmation: starting, stopping or deleting a trader, updating a running trader, closing a position, deleting a strategy, and changing a strategy's `risk_control`, `grid_config` or `strategy_type`.
+These actions wait for your confirmation: starting, stopping or deleting a trader, updating a running trader, closing a position, and a `config_patch` that touches the risk fields of the trader's kind.
 
 The check runs in Go, not in the model. Your next message must be an explicit confirmation (`confirm`, `yes`, `确认`); anything else cancels the action, and it expires after 5 minutes.
 
@@ -49,18 +48,18 @@ Once the bot is bound, the assistant also tells you about events without being a
 | Rejected orders | The exchange rejects a trader's order, or an order action fails. Actions a risk guard stopped are not reported |
 | Safe mode | A trader enters safe mode or trading is blocked. Sent once each time it begins |
 | Closed positions | A trader's position closes, with its realized P/L |
-| Frontier plans | A plan needs reconciliation, including after a restart |
+| Futures plans | A plan needs reconciliation, including after a restart |
 | Forecast signals | A watchlist coin's score crosses the threshold in Forecast → Settings. See [Forecast](forecast.md#alerts) |
 
-`internal/telegram/alerts.go` checks every 30 seconds. It only reads the database and in-memory state, so it adds no exchange requests and does not touch the trading loop. What was already sent is stored in `telegram_alert_marks`, so a restart repeats nothing. Connecting the bot does not replay history, and after downtime events are reported from at most 24 hours back. If a message cannot be delivered, the same events go out on the next check.
+`internal/telegram/alerts.go` checks every 30 seconds. It only reads the database and in-memory state, so it adds no exchange requests and does not touch the trading loop. What was already sent is stored in `telegram.alert_marks`, so a restart repeats nothing. Connecting the bot does not replay history, and after downtime events are reported from at most 24 hours back. If a message cannot be delivered, the same events go out on the next check.
 
 ## Diagnostics
 
 `diagnose` follows a fixed path for each topic (`internal/telegram/agent/diagnose.go`). It reports the facts it collected with a hint for each known failure:
 
-- **`trader_start`:** preflight checks for the trader's model, exchange account and strategy.
+- **`trader_start`:** preflight checks for the trader's model, settings and account.
 - **`model`:** whether an enabled model exists and is complete.
-- **`exchange`:** account state, such as missing or rejected credentials, missing permissions, or an unreachable exchange.
+- **`account`:** account state, such as missing or rejected credentials, missing permissions, or an unreachable exchange.
 - **`order_execution`:** recent orders and their failures.
 
 Ask in plain language, for example "why won't my trader start?". It helps to separate three cases: the trader did not start, it is running but the model chose not to trade, and it tried to place an order that failed.

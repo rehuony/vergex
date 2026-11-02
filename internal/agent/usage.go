@@ -9,9 +9,9 @@ import (
 // The features a call can belong to.
 const (
 	FeatureTrader   = "trader"
-	FeatureFrontier = "frontier"
+	FeatureFutures  = "futures"
 	FeatureTelegram = "telegram"
-	// FeatureTest marks the one-off calls of a model test or a strategy test.
+	// FeatureTest marks the one-off calls of a model test or a trader dry run.
 	FeatureTest = "test"
 )
 

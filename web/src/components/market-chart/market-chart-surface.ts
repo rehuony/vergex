@@ -8,54 +8,82 @@ import {
   type IChartApi,
 } from 'lightweight-charts'
 
-// The market chart's surface on lightweight-charts, shared by Frontier and
+// The market chart's surface on lightweight-charts, shared by Futures and
 // Forecast: colours, theme and the candle and volume series.
 
-export const colors = {
-  up: '#2E8B57',
-  down: '#D6433A',
-  entry: '#9b6a14',
-  info: '#3575a8',
-  text: '#71819a',
-  grid: '#eef1f6',
+const token = (name: string) =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+
+// A hex token at an opacity, for what the chart library draws see-through.
+const tint = (hex: string, opacity: number) => {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+  return `rgba(${r},${g},${b},${opacity})`
 }
+
+// The theme's tokens, read each time something is drawn, so a repaint after the
+// theme changes picks up the new values.
+export const colors = {
+  get up() {
+    return token('--success')
+  },
+  get down() {
+    return token('--danger')
+  },
+  get ink() {
+    return token('--ink')
+  },
+  get inkSoft() {
+    return token('--ink-soft')
+  },
+  get muted() {
+    return token('--muted')
+  },
+  get faint() {
+    return token('--faint')
+  },
+}
+
 // The volume bar under a candle.
 export const volumeColor = (up: boolean) =>
-  up ? 'rgba(46,139,87,0.25)' : 'rgba(214,67,58,0.25)'
+  tint(up ? colors.up : colors.down, 0.25)
 
-// Surface, axis text and grid follow the page theme; light keeps the chart's
-// own quieter grid, dark reads the theme tokens.
-export function themeColors() {
-  const root = document.documentElement
-  if (root.dataset.theme !== 'dark')
-    return {
-      background: '#FFFFFF',
-      text: colors.text,
-      grid: colors.grid,
-      label: 'rgba(255,255,255,0.85)',
-    }
-  const css = getComputedStyle(root)
-  const token = (name: string) => css.getPropertyValue(name).trim()
-  return {
-    background: token('--surface'),
-    text: token('--muted'),
-    grid: token('--line'),
-    label: 'rgba(23,27,34,0.85)',
-  }
+// What the overlay paints over the candles: a backing for its labels and their
+// font.
+export function overlayStyle() {
+  return { label: tint(token('--surface'), 0.85), font: token('--font-sans') }
 }
 
 // themeOptions repaints the chart chrome for the current page theme.
 export function themeOptions() {
-  const theme = themeColors()
+  const grid = token('--line')
+  const crosshair = colors.faint
   return {
     layout: {
-      background: { type: ColorType.Solid, color: theme.background },
-      textColor: theme.text,
+      background: { type: ColorType.Solid, color: token('--surface') },
+      textColor: colors.muted,
     },
     grid: {
-      vertLines: { color: theme.grid },
-      horzLines: { color: theme.grid },
+      vertLines: { color: grid },
+      horzLines: { color: grid },
     },
+    crosshair: {
+      vertLine: { color: crosshair },
+      horzLine: { color: crosshair },
+    },
+  }
+}
+
+// candleColors repaints the candles for the current page theme.
+export function candleColors() {
+  const up = colors.up
+  const down = colors.down
+  return {
+    upColor: up,
+    downColor: down,
+    borderUpColor: up,
+    borderDownColor: down,
+    wickUpColor: up,
+    wickDownColor: down,
   }
 }
 
@@ -64,19 +92,16 @@ export function createMarketChart(
   host: HTMLElement,
   autoscale: (base: AutoscaleInfo | null) => AutoscaleInfo | null
 ) {
-  const theme = themeColors()
+  const theme = themeOptions()
   const chart = createChart(host, {
     autoSize: true,
     layout: {
-      background: { type: ColorType.Solid, color: theme.background },
-      textColor: theme.text,
+      ...theme.layout,
+      fontFamily: token('--font-mono'),
       attributionLogo: false,
     },
-    grid: {
-      vertLines: { color: theme.grid },
-      horzLines: { color: theme.grid },
-    },
-    crosshair: { mode: CrosshairMode.Normal },
+    grid: theme.grid,
+    crosshair: { ...theme.crosshair, mode: CrosshairMode.Normal },
     rightPriceScale: {
       borderVisible: false,
       scaleMargins: { top: 0.08, bottom: 0.22 },
@@ -89,12 +114,7 @@ export function createMarketChart(
     },
   })
   const candles = chart.addSeries(CandlestickSeries, {
-    upColor: colors.up,
-    downColor: colors.down,
-    borderUpColor: colors.up,
-    borderDownColor: colors.down,
-    wickUpColor: colors.up,
-    wickDownColor: colors.down,
+    ...candleColors(),
     autoscaleInfoProvider: (base: () => AutoscaleInfo | null) =>
       autoscale(base()),
   })
@@ -112,20 +132,23 @@ export function createMarketChart(
 
 // A simulated candle must not pass for a real one: mostly see-through, with only
 // its outline at some strength.
-const projectionFill = (up: boolean) =>
-  up ? 'rgba(46,139,87,0.18)' : 'rgba(214,67,58,0.18)'
-const projectionEdge = (up: boolean) =>
-  up ? 'rgba(46,139,87,0.65)' : 'rgba(214,67,58,0.65)'
+export function projectionColors() {
+  const up = colors.up
+  const down = colors.down
+  return {
+    upColor: tint(up, 0.18),
+    downColor: tint(down, 0.18),
+    borderUpColor: tint(up, 0.65),
+    borderDownColor: tint(down, 0.65),
+    wickUpColor: tint(up, 0.65),
+    wickDownColor: tint(down, 0.65),
+  }
+}
 
 // addProjectionSeries adds the series that draws a forecast as simulated candles.
 export function addProjectionSeries(chart: IChartApi) {
   return chart.addSeries(CandlestickSeries, {
-    upColor: projectionFill(true),
-    downColor: projectionFill(false),
-    borderUpColor: projectionEdge(true),
-    borderDownColor: projectionEdge(false),
-    wickUpColor: projectionEdge(true),
-    wickDownColor: projectionEdge(false),
+    ...projectionColors(),
     priceLineVisible: false,
     lastValueVisible: false,
   })

@@ -101,8 +101,8 @@ export function FAQLayout() {
               onActiveItemChange={setActiveItemId}
             />
           ) : (
-            <div className="rounded-xl border border-[var(--line)] bg-vergex-bg-lighter py-16 text-center">
-              <p className="font-sans text-sm text-vergex-text-muted">
+            <div className="rounded-2xl border border-vergex-line bg-vergex-surface py-16 text-center">
+              <p className="font-sans text-sm text-vergex-muted">
                 {t('helpNoMatch', language, { term: searchTerm })}
               </p>
               <Button

@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import useSWR from 'swr'
+import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api'
-import type { AgentCostPeriod, AgentCostTotals } from '@/api/data'
+import type { AgentCostPeriod, AgentCostTotals } from '@/api/agent'
 import { useLanguage } from '@/contexts/language-context'
 import { useTraders } from '@/hooks/use-connections'
 import { t, type Language } from '@/i18n'
@@ -36,22 +36,22 @@ export function AgentCostPanel() {
   const [period, setPeriod] = useState<AgentCostPeriod>('today')
   const [traderId, setTraderId] = useState('')
   const { data: traders } = useTraders()
-  const { data, error, isLoading } = useSWR(
-    ['agent-costs', period, traderId],
-    () => api.getAgentCostSummary(period, true, traderId || undefined)
-  )
+  const { data, error, isLoading } = useQuery({
+    queryKey: ['agent-costs', period, traderId],
+    queryFn: () => api.getAgentCostSummary(period, true, traderId || undefined),
+  })
   const models = Object.entries(data?.by_model ?? {}).sort(
     ([, a], [, b]) => b.total - a.total || b.count - a.count
   )
 
   const centered =
-    'flex flex-1 items-center justify-center py-6 text-center text-sm text-vergex-text-muted'
+    'flex flex-1 items-center justify-center py-6 text-center text-sm text-vergex-muted'
 
   return (
     <div className="flex flex-1 flex-col gap-4">
       <div className="flex flex-col gap-2 sm:flex-row">
         <div
-          className="flex flex-1 gap-0.5 rounded-lg border border-[var(--line)] p-0.5"
+          className="flex flex-1 gap-0.5 rounded-md border border-vergex-line p-0.5"
           role="group"
           aria-label={label('period')}
         >
@@ -59,7 +59,7 @@ export function AgentCostPanel() {
             <Button
               variant="segment"
               size="sm"
-              className="h-[30px] flex-1 rounded-md px-2 text-xs max-sm:h-9"
+              className="h-8 flex-1 rounded-md px-2 text-xs max-sm:h-9"
               key={p.key}
               onClick={() => setPeriod(p.key)}
               aria-pressed={period === p.key}
@@ -100,10 +100,10 @@ export function AgentCostPanel() {
             ].map(([label, value]) => (
               <div
                 key={label}
-                className="rounded-xl border border-[var(--line)] bg-vergex-bg px-3 py-2"
+                className="rounded-md border border-vergex-line bg-vergex-surface-muted px-3 py-2"
               >
-                <dt className="text-[11px] text-vergex-text-muted">{label}</dt>
-                <dd className="text-sm font-semibold text-vergex-text">
+                <dt className="text-[11px] text-vergex-muted">{label}</dt>
+                <dd className="text-sm font-semibold text-vergex-ink">
                   {value}
                 </dd>
               </div>
@@ -114,7 +114,7 @@ export function AgentCostPanel() {
             <p className={centered}>{label('empty')}</p>
           ) : (
             <table className="w-full text-left text-xs">
-              <thead className="text-vergex-text-muted">
+              <thead className="text-vergex-muted">
                 <tr>
                   <th className="py-1.5 font-medium">{label('model')}</th>
                   <th className="py-1.5 text-right font-medium">
@@ -131,9 +131,9 @@ export function AgentCostPanel() {
                   </th>
                 </tr>
               </thead>
-              <tbody className="text-vergex-text">
+              <tbody className="text-vergex-ink">
                 {models.map(([model, row]) => (
-                  <tr key={model} className="border-t border-[var(--line)]">
+                  <tr key={model} className="border-t border-vergex-line">
                     <td className="py-1.5 pr-2 break-all">{model || '—'}</td>
                     <td className="py-1.5 text-right">{tokens(row.count)}</td>
                     <td className="py-1.5 text-right">

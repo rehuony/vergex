@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"vergex/internal/exchange/binance"
-	"vergex/internal/exchange/okx"
 	"vergex/internal/logger"
-	"vergex/internal/market/wsfeed"
-	"vergex/internal/safe"
+	"vergex/internal/market/ws"
+	"vergex/internal/service"
+	"vergex/internal/venue/binance"
+	"vergex/internal/venue/okx"
 )
 
 const (
@@ -39,7 +39,7 @@ type Status struct {
 	TopSymbols   int                   `json:"top_symbols"`
 	Limiter      binance.LimiterStatus `json:"limiter"`
 	Backfill     BackfillProgress      `json:"backfill"`
-	Stream       wsfeed.Status         `json:"stream"`
+	Stream       ws.Status             `json:"stream"`
 }
 
 // Service ties collection together for the rest of the application.
@@ -51,16 +51,16 @@ type Service struct {
 	backfiller *Backfiller
 	hub        *Hub
 	writer     *Writer
-	stream     *wsfeed.Feed
-	okxCandles *wsfeed.Feed
-	okxMarks   *wsfeed.Feed
+	stream     *ws.Feed
+	okxCandles *ws.Feed
+	okxMarks   *ws.Feed
 	subs       *subscriptions
 	written    chan struct{}
 	now        func() time.Time
 
 	mu       sync.Mutex
 	backfill BackfillProgress
-	prices   map[string]float64
+	prices   map[string]Quote
 	pricedAt time.Time
 }
 
@@ -92,15 +92,15 @@ func NewService(store *Store) *Service {
 
 // Start begins collecting in the background until ctx ends.
 func (s *Service) Start(ctx context.Context) {
-	events := make(chan wsfeed.Event, eventQueueSize)
-	safe.GoNamed("market-stream", func() { s.stream.Run(ctx, events) })
-	safe.GoNamed("market-stream-okx-candles", func() { s.okxCandles.Run(ctx, events) })
-	safe.GoNamed("market-stream-okx-marks", func() { s.okxMarks.Run(ctx, events) })
-	safe.GoNamed("market-subscriptions", func() { s.subs.Run(ctx) })
-	safe.GoNamed("market-hub", func() { s.hub.Run(ctx, events) })
-	safe.GoNamed("market-writer", func() { s.writer.Run(ctx) })
-	safe.GoNamed("market-data-hydrator", func() { s.hydrator.Run(ctx) })
-	safe.GoNamed("market-data-derivatives", func() { s.collector.Run(ctx) })
+	events := make(chan ws.Event, eventQueueSize)
+	service.Go("market-stream", func() { s.stream.Run(ctx, events) })
+	service.Go("market-stream-okx-candles", func() { s.okxCandles.Run(ctx, events) })
+	service.Go("market-stream-okx-marks", func() { s.okxMarks.Run(ctx, events) })
+	service.Go("market-subscriptions", func() { s.subs.Run(ctx) })
+	service.Go("market-hub", func() { s.hub.Run(ctx, events) })
+	service.Go("market-writer", func() { s.writer.Run(ctx) })
+	service.Go("market-data-hydrator", func() { s.hydrator.Run(ctx) })
+	service.Go("market-data-derivatives", func() { s.collector.Run(ctx) })
 }
 
 // Client returns the rate-limited exchange client.
@@ -127,6 +127,34 @@ func (s *Service) FormingCandle(symbol, interval string, lastClosed int64) (Live
 		return LiveCandle{}, false
 	}
 	return live, true
+}
+
+// StreamCounts adds up the market streams: how many messages they have delivered since
+// they started, how many topics they follow, and whether the main one is up. It reads
+// only their counters.
+func (s *Service) StreamCounts() (messages uint64, topics int, connected bool) {
+	for _, stream := range []*ws.Feed{s.stream, s.okxCandles, s.okxMarks} {
+		status := stream.Status()
+		messages += status.Messages
+		topics += status.Topics
+	}
+	return messages, topics, s.stream.Status().Connected
+}
+
+// ActiveCoins lists the coins market data follows, each once.
+func (s *Service) ActiveCoins() ([]string, error) {
+	series, err := s.Store.ListSeries()
+	if err != nil {
+		return nil, err
+	}
+	coins := make([]string, 0, len(series))
+	for _, row := range series {
+		// Listed by symbol, so a coin's series sit together.
+		if row.Status == StatusActive && (len(coins) == 0 || coins[len(coins)-1] != row.Symbol) {
+			coins = append(coins, row.Symbol)
+		}
+	}
+	return coins, nil
 }
 
 // Status summarizes collection.
@@ -279,8 +307,9 @@ func (s *Service) Mark(exchange, symbol string) (float64, bool) {
 }
 
 // Prices returns the latest prices: from the live stream while it is up, otherwise
-// from the exchange at most every 10 seconds, without keeping a page waiting.
-func (s *Service) Prices(ctx context.Context) (map[string]float64, error) {
+// from the exchange at most every 10 seconds, without keeping a page waiting. Only the
+// stream gives the 24-hour change.
+func (s *Service) Prices(ctx context.Context) (map[string]Quote, error) {
 	if s.stream.Healthy() {
 		if prices := s.hub.Prices(binance.Venue); len(prices) > 0 {
 			return prices, nil
@@ -294,9 +323,13 @@ func (s *Service) Prices(ctx context.Context) (map[string]float64, error) {
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, priceWait)
 	defer cancel()
-	prices, err := s.client.TickerPrices(ctx)
+	latest, err := s.client.TickerPrices(ctx)
 	if err != nil {
 		return nil, err
+	}
+	prices := make(map[string]Quote, len(latest))
+	for symbol, price := range latest {
+		prices[symbol] = Quote{Price: price}
 	}
 	s.mu.Lock()
 	s.prices, s.pricedAt = prices, s.now()
@@ -314,7 +347,7 @@ func (s *Service) StartBackfill(ctx context.Context, options BackfillOptions) er
 	}
 	s.backfill = BackfillProgress{Running: true}
 	s.mu.Unlock()
-	safe.GoNamed("market-data-backfill", func() {
+	service.Go("market-data-backfill", func() {
 		err := s.backfiller.Run(ctx, options, func(progress BackfillProgress) {
 			s.mu.Lock()
 			s.backfill = progress

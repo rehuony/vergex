@@ -1,112 +1,257 @@
 import type { ReactNode } from 'react'
-import type { ForecastDetail } from '@/api/forecast'
+import { Star } from 'lucide-react'
+import type { ForecastDetail, ForecastSignal } from '@/api/forecast'
 import { Panel } from '@/components/common/panel'
+import { Button } from '@/components/ui/button'
 import { t, type Language } from '@/i18n'
+import { cn } from '@/utils/cn'
 import {
   DirectionLabel,
   baseAsset,
   fmtPct,
   fmtPrice,
+  fmtRate,
   fmtTime,
+  intervalMillis,
   scoreText,
 } from './forecast-format'
 
-function Reading({ name, children }: { name: string; children: ReactNode }) {
+function Figure({
+  name,
+  note,
+  title,
+  className,
+  children,
+}: {
+  name: string
+  // A smaller second value, such as a distance from the price.
+  note?: ReactNode
+  title?: string
+  className?: string
+  children: ReactNode
+}) {
   return (
-    <div className="min-w-0">
-      <dt className="truncate text-xs text-vergex-text-muted" title={name}>
-        {name}
-      </dt>
-      <dd className="mt-0.5 truncate text-[13px] font-medium tabular-nums text-vergex-text">
+    <div className="min-w-0" title={title}>
+      <dt className="truncate text-xs text-vergex-muted">{name}</dt>
+      <dd
+        className={cn(
+          'mt-0.5 truncate font-mono text-[13px] font-medium tabular-nums text-vergex-ink',
+          className
+        )}
+      >
         {children}
+        {note && (
+          <span className="ml-1.5 text-[11px] font-normal text-vergex-muted">
+            {note}
+          </span>
+        )}
       </dd>
     </div>
   )
 }
 
-const percent = (part: number, whole: number) =>
-  whole > 0 ? `${((part / whole) * 100).toFixed(1)}%` : '—'
+const distance = (level: number, price: number | null | undefined) =>
+  price ? fmtPct((level / price - 1) * 100, true, 1) : undefined
 
-// The call for the coin in view, and how this strategy's calls on it have done. The
-// layout stays the same while a coin loads, so the list below it does not move.
-export function ForecastReading({
+// The call for the coin in view, in one line at the head of the chart, so the chart
+// keeps the screen. While a coin loads, the coin list already knows what to show.
+export function ForecastCall({
   symbol,
+  latest,
+  price,
+  change,
+  stale,
+  starred,
+  onToggleWatch,
+  language,
+}: {
+  symbol: string
+  latest: ForecastSignal | null | undefined
+  price: number | null | undefined
+  change: number | null | undefined
+  stale: boolean | undefined
+  starred: boolean
+  onToggleWatch: (symbol: string) => void
+  language: Language
+}) {
+  const label = (key: string, params?: Record<string, string | number>) =>
+    t(`forecast.${key}`, language, params)
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 max-lg:contents">
+      <span className="flex min-w-0 items-center gap-1">
+        {/* Under `lg` the coin trigger beside this already names the coin. */}
+        <span
+          className="truncate text-sm font-medium text-vergex-ink max-lg:hidden"
+          title={symbol}
+        >
+          {baseAsset(symbol) || '—'}
+        </span>
+        {symbol && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-pressed={starred}
+            aria-label={label(starred ? 'removeWatch' : 'addWatch', {
+              symbol: baseAsset(symbol),
+            })}
+            onClick={() => onToggleWatch(symbol)}
+            className="size-6 max-lg:size-10"
+          >
+            <Star
+              className={cn(
+                'size-3.5',
+                starred ? 'fill-current text-vergex-ink' : 'text-vergex-faint'
+              )}
+              aria-hidden="true"
+            />
+          </Button>
+        )}
+      </span>
+      <span className="flex items-baseline gap-2 whitespace-nowrap">
+        <span className="font-mono text-xl font-semibold tracking-tight tabular-nums text-vergex-ink">
+          {fmtPrice(price ?? latest?.close)}
+        </span>
+        <span
+          title={label('change24h')}
+          className={cn(
+            'font-mono text-xs tabular-nums',
+            change === null || change === undefined
+              ? 'text-vergex-muted'
+              : change >= 0
+                ? 'text-vergex-success'
+                : 'text-vergex-danger'
+          )}
+        >
+          {change === null || change === undefined ? '—' : fmtPct(change, true)}
+        </span>
+      </span>
+      <span className="flex items-baseline gap-2 whitespace-nowrap">
+        {latest ? (
+          <DirectionLabel
+            direction={latest.direction}
+            language={language}
+            className="self-center text-xs font-medium"
+          />
+        ) : (
+          <span className="text-xs text-vergex-muted">—</span>
+        )}
+        <span
+          className={cn(
+            'text-xl font-semibold tracking-tight tabular-nums',
+            stale ? 'text-vergex-muted' : 'text-vergex-ink'
+          )}
+        >
+          {latest ? (
+            <>
+              {latest.calibrated ? '' : `${label('scoreWord')} `}
+              {scoreText(latest.display_prob, latest.calibrated)}
+            </>
+          ) : (
+            '—'
+          )}
+        </span>
+      </span>
+    </div>
+  )
+}
+
+// What the call rests on and how this strategy's calls on the coin have done, under
+// the chart. It holds its layout while a coin loads, so nothing below it moves.
+export function ForecastFigures({
   detail,
   price,
   language,
 }: {
-  symbol: string
   detail: ForecastDetail | undefined
   price: number | null | undefined
   language: Language
 }) {
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`forecast.${key}`, language, params)
-  const result = detail?.result
   const latest = detail?.latest
+  const result = detail?.result
   const stats = detail?.stats
-  const judged = stats ? stats.hits + stats.misses : 0
+  const readings = result?.derivatives
+  const shownPrice = price ?? latest?.close
+  const closes = (time: number) =>
+    latest ? fmtTime(time + intervalMillis[latest.interval]) : '—'
+  const signed = (value: number | null | undefined, digits = 2) =>
+    value === null || value === undefined ? '—' : fmtPct(value, true, digits)
   return (
-    <Panel className="shrink-0">
-      <div className="flex items-start justify-between gap-3 px-4 pt-3">
-        <div className="min-w-0">
-          <p className="truncate text-xs text-vergex-text-muted">
-            {baseAsset(symbol) || '—'}
-          </p>
-          <p className="mt-0.5 text-2xl font-semibold tabular-nums text-vergex-text">
-            {fmtPrice(price ?? result?.close)}
-          </p>
-        </div>
-        <div className="shrink-0 text-right">
-          <p className="text-xs">
-            {result ? (
-              <DirectionLabel
-                direction={result.direction}
-                language={language}
-                className="font-medium"
-              />
-            ) : (
-              <span className="text-vergex-text-muted">—</span>
-            )}
-          </p>
-          <p className="mt-0.5 whitespace-nowrap text-2xl font-semibold tabular-nums text-vergex-text">
-            {latest ? (
-              <>
-                {latest.calibrated ? '' : `${label('scoreWord')} `}
-                {scoreText(latest.display_prob, latest.calibrated)}
-              </>
-            ) : (
-              '—'
-            )}
-          </p>
-        </div>
-      </div>
-      <dl className="grid grid-cols-3 gap-x-3 gap-y-2 px-4 pb-3 pt-2">
-        <Reading name={label('confidence')}>
-          {result?.confidence ?? '—'}
-        </Reading>
-        <Reading name={label('expectedMove')}>
-          {result ? `±${fmtPct(result.expected_move_pct)}` : '—'}
-        </Reading>
-        <Reading name={label('horizon')}>
-          {result ? label('horizonBars', { bars: result.horizon }) : '—'}
-        </Reading>
-        <Reading name={label('support')}>{fmtPrice(result?.support)}</Reading>
-        <Reading name={label('resistance')}>
-          {fmtPrice(result?.resistance)}
-        </Reading>
-        <Reading name={label('regime')}>
-          {result ? label(`regimeName.${result.regime}`) : '—'}
-        </Reading>
-        <Reading name={label('hitRate')}>
-          {stats ? percent(stats.hits, judged) : '—'}
-        </Reading>
-        <Reading name={label('baseRate')}>
-          {stats ? percent(stats.rose, stats.moved) : '—'}
-        </Reading>
-        <Reading name={label('updated')}>
-          {latest ? fmtTime(latest.open_time) : '—'}
-        </Reading>
+    <Panel>
+      <dl className="grid grid-cols-[repeat(auto-fill,minmax(104px,1fr))] gap-x-3 gap-y-3 p-4">
+        <Figure name={label('confidence')}>{latest?.confidence ?? '—'}</Figure>
+        <Figure
+          name={label('expectedMove')}
+          note={
+            latest ? label('horizonBars', { bars: latest.horizon }) : undefined
+          }
+          title={
+            latest
+              ? `${fmtPrice(latest.close * (1 - latest.expected_move_pct / 100))} – ${fmtPrice(latest.close * (1 + latest.expected_move_pct / 100))}`
+              : undefined
+          }
+        >
+          {latest ? `±${fmtPct(latest.expected_move_pct)}` : '—'}
+        </Figure>
+        <Figure name={label('judgedAt')}>
+          {latest ? closes(latest.target_time) : '—'}
+        </Figure>
+        <Figure
+          name={label('support')}
+          note={latest && distance(latest.support, shownPrice)}
+        >
+          {fmtPrice(latest?.support)}
+        </Figure>
+        <Figure
+          name={label('resistance')}
+          note={latest && distance(latest.resistance, shownPrice)}
+        >
+          {fmtPrice(latest?.resistance)}
+        </Figure>
+        <Figure
+          name={label('regime')}
+          note={
+            result ? label('adxValue', { value: result.adx.toFixed(0) }) : ''
+          }
+        >
+          {latest ? label(`regimeName.${latest.regime}`) : '—'}
+        </Figure>
+        <Figure
+          name={label('hitRate')}
+          note={
+            stats ? label('callsCount', { count: stats.samples }) : undefined
+          }
+        >
+          {fmtRate(stats?.hit_rate)}
+        </Figure>
+        <Figure name={label('chanceRate')}>
+          {fmtRate(stats?.chance_rate)}
+        </Figure>
+        <Figure name={label('funding')}>
+          {readings?.funding === null || readings?.funding === undefined
+            ? '—'
+            : `${(readings.funding * 100).toFixed(4)}%`}
+        </Figure>
+        <Figure name={label('openInterest')}>
+          {signed(readings?.oi_change_pct)}
+        </Figure>
+        <Figure name={label('longShort')}>
+          {readings?.long_short_z === null ||
+          readings?.long_short_z === undefined
+            ? '—'
+            : `z ${readings.long_short_z > 0 ? '+' : ''}${readings.long_short_z.toFixed(2)}`}
+        </Figure>
+        <Figure
+          name={label('madeAt')}
+          className={detail?.stale ? 'text-vergex-warning' : undefined}
+          title={detail?.stale ? label('stale') : undefined}
+        >
+          {latest
+            ? `${detail?.stale ? `${label('stale')} ` : ''}${closes(latest.open_time)}`
+            : '—'}
+        </Figure>
       </dl>
     </Panel>
   )

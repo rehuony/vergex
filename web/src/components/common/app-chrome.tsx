@@ -43,7 +43,7 @@ export function AppChrome({
       ? null
       : isSettingsSection(requestedSection)
         ? requestedSection
-        : 'account'
+        : 'profile'
 
   const handleLoginRequired = (featureName: string) => {
     setLoginOverlayFeature(featureName)
@@ -63,7 +63,7 @@ export function AppChrome({
   )
 
   return (
-    <div className="vergex-shell min-h-screen bg-vergex-bg text-vergex-text">
+    <div className="vergex-shell min-h-screen bg-vergex-canvas text-vergex-ink">
       <HeaderBar
         isLoggedIn={!!user}
         currentPage={currentPage}
@@ -80,7 +80,7 @@ export function AppChrome({
         }
         onLogout={logout}
         onLoginRequired={handleLoginRequired}
-        onOpenSettings={() => showSettings('account')}
+        onOpenSettings={() => showSettings('profile')}
       />
 
       <main className="min-h-screen pt-[72px]">{content}</main>

@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import {
   streamActivity,
   type ActivityEvent,
+  type ActivityStream,
   type ActivityTotals,
-} from '@/api/activity'
+} from '@/api/dashboard'
 
 /** How many events the list holds, newest first. */
 const KEEP_EVENTS = 200
@@ -21,6 +22,8 @@ export interface Activity {
   stale: boolean
   /** When the last message arrived, in epoch milliseconds. */
   at: number
+  /** How the market streams stand, once the feed has said. */
+  stream: ActivityStream | null
 }
 
 const initial: Activity = {
@@ -29,24 +32,30 @@ const initial: Activity = {
   loaded: false,
   stale: false,
   at: 0,
+  stream: null,
 }
 
 // Follows the activity stream, reconnecting until the page closes. onNew hears only
-// events that just happened, never the ones a connection starts with.
+// events that just happened, never the ones a connection starts with, and onStream each
+// round of what the market streams delivered.
 export function useActivity(
   enabled: boolean,
-  onNew: (events: ActivityEvent[]) => void
+  onNew: (events: ActivityEvent[]) => void,
+  onStream: (flow: ActivityStream) => void
 ): Activity {
   const [activity, setActivity] = useState(initial)
   const listener = useRef(onNew)
+  const streamListener = useRef(onStream)
   useEffect(() => {
     listener.current = onNew
+    streamListener.current = onStream
   })
 
   useEffect(() => {
     if (!enabled) return
     const stopped = new AbortController()
     let retry = RETRY_MIN_MS
+    let flowAt = 0
 
     const connect = async () => {
       const connection = new AbortController()
@@ -58,6 +67,21 @@ export function useActivity(
           clearTimeout(silence)
           silence = setTimeout(abort, SILENCE_MS)
           retry = RETRY_MIN_MS
+          const flow = message.stream
+          if (flow && flow.at !== flowAt) {
+            flowAt = flow.at
+            streamListener.current(flow)
+          }
+          // These come every few seconds, and only what they say about the stream is kept.
+          if (message.type === 'stream') {
+            setActivity((current) =>
+              current.stream?.connected === flow?.connected &&
+              current.stream?.topics === flow?.topics
+                ? current
+                : { ...current, stream: flow ?? null }
+            )
+            return
+          }
           setActivity((current) => ({
             events:
               message.type === 'snapshot'
@@ -70,6 +94,7 @@ export function useActivity(
             loaded: true,
             stale: false,
             at: message.at,
+            stream: flow ?? current.stream,
           }))
           if (message.type === 'events') listener.current(message.events)
         })

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"vergex/internal/exchange/binance"
-	"vergex/internal/market/wsfeed"
-	"vergex/internal/store/database/testdb"
+	"vergex/internal/database/testdb"
+	"vergex/internal/market/ws"
+	"vergex/internal/venue/binance"
 )
 
 func writerFixture(t *testing.T) (*Writer, *Store, *Series, *int) {
@@ -33,8 +33,8 @@ func closedBar(openTime int64) binance.Candle {
 	return binance.Candle{OpenTime: openTime, Open: 100, High: 110, Low: 90, Close: 105, Volume: 5}
 }
 
-func streamBar(openTime int64) wsfeed.Candle {
-	return wsfeed.Candle{Symbol: "BTCUSDT", Interval: "1h", OpenTime: openTime, Open: 100, High: 110, Low: 90, Close: 105, Volume: 5, Closed: true}
+func streamBar(openTime int64) ws.Candle {
+	return ws.Candle{Symbol: "BTCUSDT", Interval: "1h", OpenTime: openTime, Open: 100, High: 110, Low: 90, Close: 105, Volume: 5, Closed: true}
 }
 
 func TestWriterExtendsASeriesAndNeedsNoREST(t *testing.T) {
@@ -42,7 +42,7 @@ func TestWriterExtendsASeriesAndNeedsNoREST(t *testing.T) {
 	wrote := 0
 	writer.written = func() { wrote++ }
 
-	writer.flush([]wsfeed.Candle{streamBar(base() + 99*hour), streamBar(base() + 98*hour)})
+	writer.flush([]ws.Candle{streamBar(base() + 99*hour), streamBar(base() + 98*hour)})
 
 	stored, err := store.FindSeries("BTCUSDT", "1h")
 	if err != nil {
@@ -66,7 +66,7 @@ func TestWriterLeavesAHoleToTheHydrator(t *testing.T) {
 	writer, store, series, holes := writerFixture(t)
 
 	// The candle after the water mark never arrived, as across a reconnect.
-	writer.flush([]wsfeed.Candle{streamBar(base() + 99*hour)})
+	writer.flush([]ws.Candle{streamBar(base() + 99*hour)})
 
 	stored, _ := store.FindSeries("BTCUSDT", "1h")
 	if stored.LastClosedTime != base()+97*hour {
@@ -88,7 +88,7 @@ func TestWriterRefusesImpossibleCandles(t *testing.T) {
 	bad := streamBar(base() + 98*hour)
 	bad.High = 1
 
-	writer.flush([]wsfeed.Candle{bad})
+	writer.flush([]ws.Candle{bad})
 
 	stored, _ := store.FindSeries("BTCUSDT", "1h")
 	if stored.LastClosedTime != base()+97*hour {
@@ -107,7 +107,7 @@ func TestWriterIgnoresWhatItHasAndWhatNobodyTracks(t *testing.T) {
 
 	other := streamBar(base() + 98*hour)
 	other.Symbol = "ETHUSDT"
-	writer.flush([]wsfeed.Candle{streamBar(base() + 97*hour), other})
+	writer.flush([]ws.Candle{streamBar(base() + 97*hour), other})
 
 	after, _ := store.FindSeries("BTCUSDT", "1h")
 	if after.NextDueAt != before.NextDueAt || after.LastClosedTime != before.LastClosedTime {
@@ -127,7 +127,7 @@ func TestWriterDoesNotStartASeriesBeforeItsHistory(t *testing.T) {
 	bar := streamBar(base() + 99*hour)
 	bar.Symbol = "ETHUSDT"
 
-	writer.flush([]wsfeed.Candle{bar})
+	writer.flush([]ws.Candle{bar})
 
 	if count, _ := store.CandleCount(fresh.ID); count != 0 || *holes != 0 {
 		t.Fatalf("candles = %d, holes = %d", count, *holes)
@@ -138,7 +138,7 @@ func TestAnOlderViewOfASeriesCannotUndoTheWaterMark(t *testing.T) {
 	writer, store, _, _ := writerFixture(t)
 	stale, _ := store.FindSeries("BTCUSDT", "1h")
 
-	writer.flush([]wsfeed.Candle{streamBar(base() + 98*hour)})
+	writer.flush([]ws.Candle{streamBar(base() + 98*hour)})
 
 	// What the hydrator does with the copy it read before the writer ran.
 	stale.FailCount = 1
@@ -156,7 +156,7 @@ func TestAnOlderViewOfASeriesCannotUndoTheWaterMark(t *testing.T) {
 
 func TestWriterWritesWhatIsLeftWhenStopped(t *testing.T) {
 	writer, store, _, _ := writerFixture(t)
-	in := make(chan wsfeed.Candle, 1)
+	in := make(chan ws.Candle, 1)
 	writer.in = in
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})

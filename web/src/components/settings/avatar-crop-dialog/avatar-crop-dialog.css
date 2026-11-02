@@ -2,7 +2,18 @@
    with corner brackets, and a circle marking the part the avatar shows. The
    frame sits on the photo, so it stays white and black in both themes. */
 .vergex-avatar-crop {
-  --rc-focus-color: var(--brand);
+  --rc-focus-color: var(--ink);
+}
+/* Only the frame moves: the photo under it is not something to select or drag. */
+.vergex-avatar-crop,
+.vergex-avatar-crop img {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.vergex-avatar-crop img {
+  pointer-events: none;
 }
 /* Mirrors the library's marching-ants selector so it outranks it. */
 .vergex-avatar-crop
@@ -21,7 +32,7 @@
   border: 0 solid rgb(255 255 255);
 }
 .vergex-avatar-crop .ReactCrop__drag-handle:focus-visible {
-  border-color: var(--brand);
+  border-color: var(--ink);
 }
 .vergex-avatar-crop .ReactCrop__drag-handle.ord-nw {
   border-width: 4px 0 0 4px;

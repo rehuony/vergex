@@ -72,7 +72,7 @@ func newFakeAPI(gets map[string]string) (*fakeAPI, int, func()) {
 			w.Write([]byte(`{"error":"not found"}`)) //nolint:errcheck
 			return
 		}
-		w.Write([]byte(`{"message":"ok","trader_id":"new-trader","id":"new-strategy"}`)) //nolint:errcheck
+		w.Write([]byte(`{"message":"ok","trader_id":"new-trader","kind":"agent"}`)) //nolint:errcheck
 	}))
 	var port int
 	fmt.Sscanf(srv.Listener.Addr().String(), "127.0.0.1:%d", &port)
@@ -99,12 +99,13 @@ func (f *fakeAPI) body(key string) map[string]any {
 }
 
 var account = map[string]string{
-	"/api/my-traders": `[{"trader_id":"t1","trader_name":"BTC Trend","is_running":false,"strategy_name":"Trend"},
-		{"trader_id":"t2","trader_name":"ETH Grid","is_running":true}]`,
-	"/api/models":     `[{"id":"u_deepseek","name":"DeepSeek","provider":"deepseek","enabled":true,"has_api_key":true},{"id":"u_openai","name":"OpenAI","provider":"openai","enabled":false}]`,
-	"/api/exchanges":  `[{"id":"ex1","exchange_type":"binance","account_name":"Main","enabled":true,"has_api_key":true,"has_secret_key":true}]`,
-	"/api/strategies": `{"strategies":[{"id":"s1","name":"Trend","is_active":true},{"id":"s2","name":"Scalp"}]}`,
-	"/api/positions":  `[{"symbol":"BTCUSDT","side":"long","size":0.1}]`,
+	"/api/traders": `[{"trader_id":"t1","trader_name":"BTC Trend","is_running":false,"kind":"agent"},
+		{"trader_id":"t2","trader_name":"ETH Grid","is_running":true,"kind":"grid"},
+		{"trader_id":"t3","trader_name":"ADA Scalp","is_running":true,"kind":"agent"},
+		{"trader_id":"t4","trader_name":"XRP Grid","is_running":false,"kind":"grid"}]`,
+	"/api/agent/models":              `[{"id":"u_deepseek","name":"DeepSeek","provider":"deepseek","enabled":true,"has_api_key":true},{"id":"u_openai","name":"OpenAI","provider":"openai","enabled":false}]`,
+	"/api/accounts":                  `[{"id":"ex1","venue":"binance","name":"Main","enabled":true,"has_api_key":true,"has_secret_key":true}]`,
+	"/api/traders/t1/open-positions": `[{"symbol":"BTCUSDT","side":"long","size":0.1}]`,
 }
 
 func newAgent(port int, model *mockClient) *Agent {
@@ -215,7 +216,7 @@ func TestAmbiguousAndUnknownTargetsAreNotGuessed(t *testing.T) {
 	}
 }
 
-func TestCreateTraderInfersSingleEnabledModelAndExchange(t *testing.T) {
+func TestCreateTraderInfersSingleEnabledModelAndAccount(t *testing.T) {
 	api, port, stop := newFakeAPI(account)
 	defer stop()
 	a := newAgent(port, &mockClient{})
@@ -226,41 +227,92 @@ func TestCreateTraderInfersSingleEnabledModelAndExchange(t *testing.T) {
 		t.Fatalf("missing name not reported: %v", out)
 	}
 
-	json.Unmarshal([]byte(a.runSkill(skillTrader, `{"action":"create","slots":{"name":"SOL bot","strategy":"scalp"}}`)), &out)
+	json.Unmarshal([]byte(a.runSkill(skillTrader, `{"action":"create","slots":{"name":"SOL bot","kind":"agent","preset":"careful","config_patch":{"coin_source":{"static_coins":["SOLUSDT"]}}}}`)), &out)
 	if out["status"] != "created" {
 		t.Fatalf("create failed: %v", out)
 	}
 	body := api.body("POST /api/traders")
-	if body["agent_model_id"] != "u_deepseek" || body["exchange_id"] != "ex1" || body["strategy_id"] != "s2" {
+	if body["agent_model_id"] != "u_deepseek" || body["account_id"] != "ex1" || body["kind"] != "agent" || body["preset"] != "careful" {
 		t.Fatalf("create body = %v", body)
+	}
+	patch, _ := body["config"].(map[string]any)
+	if _, ok := patch["coin_source"]; !ok {
+		t.Fatalf("create body lost the config patch: %v", body)
 	}
 	if a.pending != nil {
 		t.Fatal("create without auto_start must not hold a start")
 	}
 }
 
-func TestStrategyRiskChangesNeedConfirmation(t *testing.T) {
+func TestTraderConfigChangesNeedConfirmationWhenRisky(t *testing.T) {
 	api, port, stop := newFakeAPI(account)
 	defer stop()
 	a := newAgent(port, &mockClient{})
 
-	a.runSkill(skillStrategy, `{"action":"update","target_ref":{"name":"Scalp"},"slots":{"name":"Scalp v2"}}`)
-	if !api.called("PUT /api/strategies/s2") || a.pending != nil {
-		t.Fatal("a rename should apply directly")
+	// A stopped trader: what does not touch risk applies directly and sends only itself.
+	a.runSkill(skillTrader, `{"action":"update","target_ref":{"name":"BTC Trend"},"slots":{"name":"BTC v2","config_patch":{"coin_source":{"static_coins":["BTCUSDT"]}}}}`)
+	if !api.called("PUT /api/traders/t1") || a.pending != nil {
+		t.Fatal("a rename and a coin list should apply directly")
+	}
+	body := api.body("PUT /api/traders/t1")
+	if body["name"] != "BTC v2" || body["agent_model_id"] != nil || body["config"] == nil {
+		t.Fatalf("update body = %v", body)
+	}
+
+	// A stopped trader: risk fields of its kind wait, whichever kind it is.
+	api.requests = nil
+	a.runSkill(skillTrader, `{"action":"update","target_ref":{"name":"BTC Trend"},"slots":{"config_patch":{"risk_control":{"max_positions":5}}}}`)
+	if api.called("PUT /api/traders/t1") || a.pending == nil {
+		t.Fatal("a risk change must wait for confirmation")
+	}
+	if reply := runPending(a.takePending(), false); !strings.HasPrefix(reply, "✅ Done") || !api.called("PUT /api/traders/t1") {
+		t.Fatalf("confirmed reply = %q", reply)
 	}
 
 	api.requests = nil
-	a.runSkill(skillStrategy, `{"action":"update","target_ref":{"name":"Trend"},"slots":{"config_patch":{"agent_config":{"risk_control":{"max_positions":5}}}}}`)
-	if api.called("PUT /api/strategies/s1") || a.pending == nil {
-		t.Fatal("a risk-control change must wait for confirmation")
+	a.runSkill(skillTrader, `{"action":"update","target_ref":{"name":"XRP Grid"},"slots":{"config_patch":{"leverage":2}}}`)
+	if api.called("PUT /api/traders/t4") || a.pending == nil {
+		t.Fatal("a grid risk change must wait for confirmation")
+	}
+	a.takePending()
+
+	a.runSkill(skillTrader, `{"action":"update","target_ref":{"name":"XRP Grid"},"slots":{"config_patch":{"use_maker_only":false}}}`)
+	if !api.called("PUT /api/traders/t4") || a.pending != nil {
+		t.Fatal("a grid setting without risk should apply directly")
+	}
+
+	// A running trader always waits.
+	api.requests = nil
+	var out map[string]any
+	json.Unmarshal([]byte(a.runSkill(skillTrader, `{"action":"update","target_ref":{"name":"ADA Scalp"},"slots":{"config_patch":{"custom_prompt":"be calm"}}}`)), &out)
+	if api.called("PUT /api/traders/t3") || a.pending == nil {
+		t.Fatal("changing a running trader must wait for confirmation")
+	}
+	if summary := fmt.Sprint(out["summary"]); !strings.Contains(summary, "next cycle") {
+		t.Fatalf("an agent trader's config takes effect next cycle: %v", out)
+	}
+	a.takePending()
+
+	json.Unmarshal([]byte(a.runSkill(skillTrader, `{"action":"update","target_ref":{"name":"ETH Grid"},"slots":{"config_patch":{"use_maker_only":false}}}`)), &out)
+	if summary := fmt.Sprint(out["summary"]); !strings.Contains(summary, "restarted") {
+		t.Fatalf("a grid trader restarts with its config: %v", out)
+	}
+	a.takePending()
+}
+
+func TestStrategyManagementIsGone(t *testing.T) {
+	for _, name := range skillNames() {
+		if strings.Contains(name, "strategy") {
+			t.Fatalf("skill %s is still offered", name)
+		}
 	}
 }
 
-func TestModelAndExchangeAreReadOnly(t *testing.T) {
+func TestModelAndAccountAreReadOnly(t *testing.T) {
 	_, port, stop := newFakeAPI(account)
 	defer stop()
 	a := newAgent(port, &mockClient{})
-	for _, name := range []string{skillModel, skillExchange} {
+	for _, name := range []string{skillModel, skillAccounts} {
 		var out map[string]any
 		json.Unmarshal([]byte(a.runSkill(name, `{"action":"update"}`)), &out)
 		if out["error"] != "not_available_in_chat" {
@@ -297,7 +349,7 @@ func TestAccountQueryRoutesToTraderData(t *testing.T) {
 	a := newAgent(port, &mockClient{})
 	var out map[string]any
 	json.Unmarshal([]byte(a.runSkill(skillAccount, `{"scope":"positions","trader_ref":{"name":"BTC"}}`)), &out)
-	if out["trader"] != "BTC Trend" || !api.called("GET /api/positions") {
+	if out["trader"] != "BTC Trend" || !api.called("GET /api/traders/t1/open-positions") {
 		t.Fatalf("positions query = %v", out)
 	}
 }

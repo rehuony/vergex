@@ -1,25 +1,28 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import type { ReactNode } from 'react'
 import { t, type Language } from '@/i18n'
 import {
-  getExchangeDisplayName,
+  getAccountDisplayName,
   getTraderModelLabel,
 } from '@/constants/model-providers'
 import { buildTraderPath } from '@/constants/route-paths'
-import { Panel, PanelState } from '@/components/common/panel'
+import {
+  cellClass,
+  gainTone,
+  headClass,
+  numberClass,
+  tableClass,
+} from '@/components/common/figures'
+import { PanelState } from '@/components/common/panel'
 import { SortHeader, type ColumnSort } from '@/components/common/sort-header'
 import { SettingsLink } from '@/components/settings/settings-link'
 import { buttonVariants } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import type { AgentModel, Exchange, TraderInfo, TraderMetrics } from '@/types'
+import type { Account, AgentModel, TraderInfo, TraderMetrics } from '@/types'
 import { cn } from '@/utils/cn'
-import { getTraderSlug } from '@/utils/trader-slug'
 import { fmtPct, fmtUsd } from '@/utils/trader-format'
 
-const headClass =
-  'sticky top-0 z-10 bg-[var(--surface)] px-4 py-3 text-xs font-medium whitespace-nowrap'
-const cellClass = 'px-4 py-3 whitespace-nowrap'
-const numberClass = 'w-28 text-right tabular-nums'
 const narrowHidden = 'max-md:hidden'
 
 type SortKey = 'name' | 'equity' | 'return' | 'winRate' | 'drawdown' | 'trades'
@@ -38,7 +41,7 @@ const sortValue: Record<
 }
 
 // Running traders come first until a column is chosen; then unknown values stay last.
-function sortTraders(
+export function sortTraders(
   traders: TraderInfo[],
   metrics: Record<string, TraderMetrics> | undefined,
   sort: Sort | null
@@ -61,36 +64,42 @@ function sortTraders(
 }
 
 // What a first trader is still waiting for, and the way to add it.
-function NoTraders({
+export function NoTraders({
   modelCount,
-  exchangeCount,
+  accountCount,
   language,
+  create,
 }: {
   modelCount: number
-  exchangeCount: number
+  accountCount: number
   language: Language
+  // The way to create one, once nothing else is missing.
+  create?: ReactNode
 }) {
   const label = (key: string) => t(`traderList.${key}`, language)
   const addClass = buttonVariants({ variant: 'secondary', size: 'sm' })
   return (
     <PanelState role="status">
-      <p className="font-medium text-vergex-text">{t('noTraders', language)}</p>
+      <p className="font-medium text-vergex-ink">{t('noTraders', language)}</p>
       {modelCount === 0 ? (
         <>
-          <p>{label(exchangeCount === 0 ? 'needBoth' : 'needModel')}</p>
+          <p>{label(accountCount === 0 ? 'needBoth' : 'needModel')}</p>
           <SettingsLink section="models" className={addClass}>
             {label('addModel')}
           </SettingsLink>
         </>
-      ) : exchangeCount === 0 ? (
+      ) : accountCount === 0 ? (
         <>
-          <p>{label('needExchange')}</p>
-          <SettingsLink section="exchanges" className={addClass}>
-            {label('addExchange')}
+          <p>{label('needAccount')}</p>
+          <SettingsLink section="accounts" className={addClass}>
+            {label('addAccount')}
           </SettingsLink>
         </>
       ) : (
-        <p>{label('createFirst')}</p>
+        <>
+          <p>{label('createFirst')}</p>
+          {create}
+        </>
       )}
     </PanelState>
   )
@@ -101,24 +110,24 @@ interface TradersListProps {
   metrics?: Record<string, TraderMetrics>
   failed: boolean
   models: AgentModel[]
-  exchanges: Exchange[]
+  accounts: Account[]
   modelCount: number
-  exchangeCount: number
+  accountCount: number
   search: string
   language: Language
 }
 
-// The trader table. A row opens that trader, where it is started, stopped,
-// edited and deleted. Numbers come from stored data. The header stays in view
-// while a long list scrolls inside the panel.
+// The traders side by side. A row opens that trader, where it is started, stopped,
+// edited and deleted. Numbers come from stored data. The header stays in view while a
+// long list scrolls inside the panel.
 export function TradersList({
   traders,
   metrics,
   failed,
   models,
-  exchanges,
+  accounts,
   modelCount,
-  exchangeCount,
+  accountCount,
   search,
   language,
 }: TradersListProps) {
@@ -128,8 +137,9 @@ export function TradersList({
 
   const describe = (trader: TraderInfo) =>
     [
+      label(trader.kind === 'grid' ? 'kindGrid' : 'kindAgent'),
       getTraderModelLabel(trader.agent_model, models),
-      getExchangeDisplayName(trader.exchange_id, exchanges),
+      getAccountDisplayName(trader.account_id, accounts),
     ].join(' · ')
 
   const rows = useMemo(() => {
@@ -137,12 +147,10 @@ export function TradersList({
     const matching = (traders ?? []).filter(
       (trader) =>
         !term ||
-        `${trader.trader_name} ${describe(trader)} ${trader.strategy_name ?? ''}`
-          .toLowerCase()
-          .includes(term)
+        `${trader.trader_name} ${describe(trader)}`.toLowerCase().includes(term)
     )
     return sortTraders(matching, metrics, sort)
-  }, [traders, metrics, models, exchanges, search, sort])
+  }, [traders, metrics, models, accounts, search, sort])
 
   // The first click on a name sorts A to Z, on a number highest first.
   const chooseColumn = (key: SortKey) =>
@@ -153,160 +161,135 @@ export function TradersList({
     )
 
   if (!traders) {
-    return (
-      <Panel>
-        {failed ? (
-          <PanelState role="alert">{label('loadFailed')}</PanelState>
-        ) : (
-          <PanelState role="status">{t('loading', language)}</PanelState>
-        )}
-      </Panel>
+    return failed ? (
+      <PanelState role="alert">{label('loadFailed')}</PanelState>
+    ) : (
+      <PanelState role="status">{t('loading', language)}</PanelState>
     )
   }
 
   if (traders.length === 0) {
     return (
-      <Panel>
-        <NoTraders
-          modelCount={modelCount}
-          exchangeCount={exchangeCount}
-          language={language}
-        />
-      </Panel>
+      <NoTraders
+        modelCount={modelCount}
+        accountCount={accountCount}
+        language={language}
+      />
     )
   }
 
   if (rows.length === 0) {
-    return (
-      <Panel>
-        <PanelState role="status">{label('noMatch')}</PanelState>
-      </Panel>
-    )
+    return <PanelState role="status">{label('noMatch')}</PanelState>
   }
 
   const header = { sort, onSort: chooseColumn }
+  const number = cn(headClass, 'w-28 text-right')
   return (
-    <Panel className="overflow-hidden">
-      <ScrollArea className="max-h-[max(10rem,calc(100dvh-204px))]">
-        <table className="w-full text-left text-[13px]">
-          <thead className="text-vergex-text-muted">
-            <tr>
-              <SortHeader
-                column="name"
-                title={label('name')}
-                className={headClass}
-                {...header}
-              />
-              <SortHeader
-                column="equity"
-                title={label('equity')}
-                className={cn(headClass, numberClass)}
-                {...header}
-              />
-              <SortHeader
-                column="return"
-                title={label('return')}
-                className={cn(headClass, numberClass)}
-                {...header}
-              />
-              <SortHeader
-                column="winRate"
-                title={label('winRate')}
-                className={cn(headClass, numberClass, narrowHidden)}
-                {...header}
-              />
-              <SortHeader
-                column="drawdown"
-                title={label('drawdown')}
-                className={cn(headClass, numberClass, narrowHidden)}
-                {...header}
-              />
-              <SortHeader
-                column="trades"
-                title={label('trades')}
-                className={cn(headClass, numberClass, narrowHidden)}
-                {...header}
-              />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((trader) => {
-              const row = metrics?.[trader.trader_id]
-              const path = buildTraderPath(getTraderSlug(trader))
-              const change = row?.return_pct
-              return (
-                <tr
-                  key={trader.trader_id}
-                  className="cursor-pointer border-t border-[var(--line)] hover:bg-vergex-bg"
-                  onClick={() => navigate(path)}
-                >
-                  <td className={cn(cellClass, 'max-w-0 w-full')}>
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span
-                        className={cn(
-                          'size-2 shrink-0 rounded-full',
-                          trader.is_running
-                            ? 'bg-vergex-success'
-                            : 'bg-[var(--line-strong)]'
-                        )}
-                        role="img"
-                        aria-label={
-                          trader.is_running
-                            ? label('running')
-                            : label('stopped')
-                        }
-                      />
-                      <Link
-                        to={path}
-                        className="truncate text-sm font-medium text-vergex-text hover:underline"
-                        title={trader.trader_name}
-                        onClick={(event) => event.stopPropagation()}
-                      >
-                        {trader.trader_name}
-                      </Link>
-                    </div>
-                    <div
-                      className="mt-0.5 truncate pl-4 text-xs text-vergex-text-muted"
-                      title={describe(trader)}
+    <ScrollArea className="min-h-0 flex-1 rounded-b-2xl">
+      <table className={tableClass}>
+        <thead className="sticky top-0 z-10">
+          <tr>
+            <SortHeader
+              column="name"
+              title={label('name')}
+              className={headClass}
+              {...header}
+            />
+            <SortHeader
+              column="equity"
+              title={label('equity')}
+              className={number}
+              {...header}
+            />
+            <SortHeader
+              column="return"
+              title={label('return')}
+              className={number}
+              {...header}
+            />
+            <SortHeader
+              column="winRate"
+              title={label('winRate')}
+              className={cn(number, narrowHidden)}
+              {...header}
+            />
+            <SortHeader
+              column="drawdown"
+              title={label('drawdown')}
+              className={cn(number, narrowHidden)}
+              {...header}
+            />
+            <SortHeader
+              column="trades"
+              title={label('trades')}
+              className={cn(number, narrowHidden)}
+              {...header}
+            />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((trader) => {
+            const row = metrics?.[trader.trader_id]
+            const path = buildTraderPath(trader.trader_id)
+            const change = row?.return_pct
+            return (
+              <tr
+                key={trader.trader_id}
+                className="cursor-pointer hover:bg-vergex-surface-muted"
+                onClick={() => navigate(path)}
+              >
+                <td className={cn(cellClass, 'h-14')}>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span
+                      className={cn(
+                        'size-2 shrink-0 rounded-full',
+                        trader.is_running
+                          ? 'bg-vergex-success'
+                          : 'bg-vergex-line-strong'
+                      )}
+                      role="img"
+                      aria-label={
+                        trader.is_running ? label('running') : label('stopped')
+                      }
+                    />
+                    <Link
+                      to={path}
+                      className="truncate font-medium text-vergex-ink hover:underline"
+                      title={trader.trader_name}
+                      onClick={(event) => event.stopPropagation()}
                     >
-                      {describe(trader)}
-                    </div>
-                  </td>
-                  <td className={cn(cellClass, numberClass)}>
-                    {fmtUsd(row?.equity)}
-                  </td>
-                  <td
-                    className={cn(
-                      cellClass,
-                      numberClass,
-                      change == null
-                        ? ''
-                        : change >= 0
-                          ? 'text-vergex-success'
-                          : 'text-vergex-danger'
-                    )}
+                      {trader.trader_name}
+                    </Link>
+                  </div>
+                  <div
+                    className="mt-0.5 truncate pl-4 text-xs text-vergex-muted"
+                    title={describe(trader)}
                   >
-                    {fmtPct(change)}
-                  </td>
-                  <td className={cn(cellClass, numberClass, narrowHidden)}>
-                    {row?.win_rate == null
-                      ? '—'
-                      : `${row.win_rate.toFixed(1)}%`}
-                  </td>
-                  <td className={cn(cellClass, numberClass, narrowHidden)}>
-                    {row?.max_drawdown_pct == null
-                      ? '—'
-                      : `${row.max_drawdown_pct.toFixed(1)}%`}
-                  </td>
-                  <td className={cn(cellClass, numberClass, narrowHidden)}>
-                    {row?.total_trades ?? '—'}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </ScrollArea>
-    </Panel>
+                    {describe(trader)}
+                  </div>
+                </td>
+                <td className={cn(cellClass, numberClass)}>
+                  {fmtUsd(row?.equity)}
+                </td>
+                <td className={cn(cellClass, numberClass, gainTone(change))}>
+                  {fmtPct(change)}
+                </td>
+                <td className={cn(cellClass, numberClass, narrowHidden)}>
+                  {row?.win_rate == null ? '—' : `${row.win_rate.toFixed(1)}%`}
+                </td>
+                <td className={cn(cellClass, numberClass, narrowHidden)}>
+                  {row?.max_drawdown_pct == null
+                    ? '—'
+                    : `${row.max_drawdown_pct.toFixed(1)}%`}
+                </td>
+                <td className={cn(cellClass, numberClass, narrowHidden)}>
+                  {row?.total_trades ?? '—'}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </ScrollArea>
   )
 }

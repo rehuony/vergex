@@ -5,7 +5,7 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react'
-import { SWRConfig } from 'swr'
+import { QueryWrapper } from '@/tests/query-wrapper'
 import { afterEach, expect, it, vi } from 'vitest'
 import { AgentCostPanel } from '@/components/settings/agent-cost-panel'
 
@@ -54,9 +54,9 @@ afterEach(() => {
 
 function show() {
   return render(
-    <SWRConfig value={{ provider: () => new Map() }}>
+    <QueryWrapper>
       <AgentCostPanel />
-    </SWRConfig>
+    </QueryWrapper>
   )
 }
 

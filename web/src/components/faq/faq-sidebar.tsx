@@ -25,12 +25,12 @@ export function FAQSidebar({
         {categories.map((category) => (
           <div key={category.id}>
             <div className="mb-2 flex items-center gap-2 px-2">
-              <category.icon className="h-3.5 w-3.5 text-vergex-brand" />
-              <h3 className="font-sans text-[11px] font-bold tracking-normal text-vergex-brand">
+              <category.icon className="h-3.5 w-3.5 text-vergex-ink" />
+              <h3 className="font-sans text-[11px] font-semibold tracking-normal text-vergex-ink">
                 {category.title}
               </h3>
             </div>
-            <ul className="space-y-0.5 border-l border-[var(--line)]">
+            <ul className="space-y-0.5 border-l border-vergex-line">
               {category.items.map((item) => {
                 const isActive = activeItemId === item.id
                 return (
@@ -39,8 +39,8 @@ export function FAQSidebar({
                       onClick={() => onItemClick(category.id, item.id)}
                       className={`-ml-px w-full border-l-2 py-1.5 pl-3 pr-2 text-left text-[13px] leading-5 transition-colors ${
                         isActive
-                          ? 'border-vergex-brand bg-vergex-brand/5 font-medium text-vergex-text'
-                          : 'border-transparent text-vergex-text-muted hover:border-vergex-brand/40 hover:text-vergex-text'
+                          ? 'border-vergex-ink bg-vergex-ink-tint font-medium text-vergex-ink'
+                          : 'border-transparent text-vergex-muted hover:border-vergex-line-strong hover:text-vergex-ink'
                       }`}
                     >
                       {item.question}

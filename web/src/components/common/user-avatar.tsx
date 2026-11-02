@@ -11,13 +11,18 @@ interface UserAvatarProps {
 export function UserAvatar({ email, avatar, className }: UserAvatarProps) {
   const base = 'size-8 shrink-0 rounded-full text-[13px]'
   return avatar ? (
-    <img src={avatar} alt="" className={cn(base, 'object-cover', className)} />
+    <img
+      src={avatar}
+      alt=""
+      draggable={false}
+      className={cn(base, 'select-none object-cover', className)}
+    />
   ) : (
     <span
       aria-hidden="true"
       className={cn(
         base,
-        'inline-grid place-items-center bg-[var(--brand-soft)] font-semibold text-vergex-brand',
+        'inline-grid place-items-center bg-vergex-ink-tint font-semibold text-vergex-ink',
         className
       )}
     >

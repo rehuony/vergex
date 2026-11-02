@@ -1,9 +1,8 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { SWRConfig } from 'swr'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LoginPage } from '@/pages/login-page'
-import { ResetAccountPage } from '@/pages/reset-account-page'
+import { ResetUserPage } from '@/pages/reset-user-page'
 
 const login = vi.fn()
 
@@ -12,12 +11,6 @@ vi.mock('@/contexts/auth-context', () => ({
 }))
 vi.mock('@/contexts/language-context', () => ({
   useLanguage: () => ({ language: 'en' }),
-}))
-vi.mock('@/api', () => ({
-  api: {
-    getSupportedExchanges: async () => [{ id: 'a' }, { id: 'b' }],
-    getSupportedModels: async () => [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
-  },
 }))
 
 afterEach(() => {
@@ -28,14 +21,12 @@ afterEach(() => {
 
 function renderPage() {
   render(
-    <SWRConfig value={{ provider: () => new Map() }}>
-      <MemoryRouter initialEntries={['/login']}>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/reset-account" element={<ResetAccountPage />} />
-        </Routes>
-      </MemoryRouter>
-    </SWRConfig>
+    <MemoryRouter initialEntries={['/login']}>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/reset-user" element={<ResetUserPage />} />
+      </Routes>
+    </MemoryRouter>
   )
   return {
     email: screen.getByLabelText('Email'),
@@ -81,21 +72,9 @@ it('says the session expired after a 401 sent the user here', () => {
   expect(sessionStorage.getItem('from401')).toBeNull()
 })
 
-it('counts the exchanges and Model providers the server supports', async () => {
+it('opens the reset-user page from "Forgot login?"', () => {
   renderPage()
-  expect(
-    (await screen.findByText('Exchanges')).previousSibling
-  ).toHaveTextContent('2')
-  expect(screen.getByText('Model providers').previousSibling).toHaveTextContent(
-    '3'
-  )
-})
-
-it('opens the reset-account page from "Forgot account?"', () => {
-  renderPage()
-  fireEvent.click(screen.getByRole('button', { name: 'Forgot account?' }))
-  expect(
-    screen.getByRole('heading', { name: 'Reset your account' })
-  ).toBeVisible()
-  expect(screen.getByText(/\.\/vergex reset-account$/)).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Forgot login?' }))
+  expect(screen.getByRole('heading', { name: 'Start over' })).toBeVisible()
+  expect(screen.getByText(/\.\/vergex reset-user$/)).toBeVisible()
 })

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"vergex/internal/account"
 	"vergex/internal/market/instrument"
-	"vergex/internal/store"
-	"vergex/internal/trader/agent"
+	traderagent "vergex/internal/trader/agent"
 )
 
 const (
@@ -27,7 +27,7 @@ const (
 
 // positionPricePnLPct converts the margin-based UnrealizedPnLPct reported for
 // a position into the underlying price-move percentage.
-func positionPricePnLPct(pos *agent.PositionInfo) float64 {
+func positionPricePnLPct(pos *traderagent.PositionInfo) float64 {
 	if pos == nil {
 		return 0
 	}
@@ -81,7 +81,7 @@ func normalizedDecisionSymbol(symbol string) string {
 	return instrument.Normalize(strings.TrimSpace(symbol))
 }
 
-func (at *AutoTrader) tradeThrottleReason(decision agent.Decision, ctx *agent.Context) string {
+func (at *AutoTrader) tradeThrottleReason(decision traderagent.Decision, ctx *traderagent.Context) string {
 	if ctx == nil {
 		return ""
 	}
@@ -96,7 +96,7 @@ func (at *AutoTrader) tradeThrottleReason(decision agent.Decision, ctx *agent.Co
 	}
 }
 
-func (at *AutoTrader) openThrottleReason(decision agent.Decision, ctx *agent.Context) string {
+func (at *AutoTrader) openThrottleReason(decision traderagent.Decision, ctx *traderagent.Context) string {
 	symbol := normalizedDecisionSymbol(decision.Symbol)
 	if symbol == "" {
 		return ""
@@ -118,7 +118,7 @@ func (at *AutoTrader) openThrottleReason(decision agent.Decision, ctx *agent.Con
 	return ""
 }
 
-func (at *AutoTrader) closeThrottleReason(decision agent.Decision, ctx *agent.Context) string {
+func (at *AutoTrader) closeThrottleReason(decision traderagent.Decision, ctx *traderagent.Context) string {
 	symbol := normalizedDecisionSymbol(decision.Symbol)
 	side := closeActionSide(decision.Action)
 	if symbol == "" || side == "" {
@@ -182,7 +182,7 @@ func (at *AutoTrader) closeThrottleReason(decision agent.Decision, ctx *agent.Co
 	) + fmt.Sprintf("; wait about %s", roundDuration(remaining))
 }
 
-func findContextPosition(ctx *agent.Context, symbol string, side string) *agent.PositionInfo {
+func findContextPosition(ctx *traderagent.Context, symbol string, side string) *traderagent.PositionInfo {
 	if ctx == nil {
 		return nil
 	}
@@ -195,7 +195,7 @@ func findContextPosition(ctx *agent.Context, symbol string, side string) *agent.
 	return nil
 }
 
-func findAnyContextPosition(ctx *agent.Context, symbol string) *agent.PositionInfo {
+func findAnyContextPosition(ctx *traderagent.Context, symbol string) *traderagent.PositionInfo {
 	if ctx == nil {
 		return nil
 	}
@@ -208,14 +208,14 @@ func findAnyContextPosition(ctx *agent.Context, symbol string) *agent.PositionIn
 	return nil
 }
 
-func (at *AutoTrader) recentOrders(limit int) ([]*store.TraderOrder, error) {
-	if at == nil || at.store == nil {
+func (at *AutoTrader) recentOrders(limit int) ([]*account.TraderOrder, error) {
+	if at == nil || at.stores == nil {
 		return nil, nil
 	}
-	return at.store.Order().GetTraderOrders(at.id, limit)
+	return at.stores.Orders.GetTraderOrders(at.id, limit)
 }
 
-func (at *AutoTrader) findRecentCloseOrder(symbol string, since time.Time) *store.TraderOrder {
+func (at *AutoTrader) findRecentCloseOrder(symbol string, since time.Time) *account.TraderOrder {
 	orders, err := at.recentOrders(100)
 	if err != nil {
 		at.logWarnf("⚠️ Trade throttle could not read recent close orders: %v", err)
@@ -233,7 +233,7 @@ func (at *AutoTrader) findRecentCloseOrder(symbol string, since time.Time) *stor
 	return nil
 }
 
-func (at *AutoTrader) findRecentOpenOrder(symbol string, side string, since time.Time) *store.TraderOrder {
+func (at *AutoTrader) findRecentOpenOrder(symbol string, side string, since time.Time) *account.TraderOrder {
 	orders, err := at.recentOrders(100)
 	if err != nil {
 		at.logWarnf("⚠️ Trade throttle could not read recent open orders: %v", err)
@@ -252,7 +252,7 @@ func (at *AutoTrader) findRecentOpenOrder(symbol string, side string, since time
 	return nil
 }
 
-func isCanceledOrder(order *store.TraderOrder) bool {
+func isCanceledOrder(order *account.TraderOrder) bool {
 	status := strings.ToUpper(strings.TrimSpace(order.Status))
 	return status == "CANCELED" || status == "CANCELLED" || status == "REJECTED" || status == "EXPIRED"
 }

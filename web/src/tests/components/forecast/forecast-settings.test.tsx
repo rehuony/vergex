@@ -4,8 +4,9 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
-import { SWRConfig } from 'swr'
+import { QueryWrapper } from '@/tests/query-wrapper'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ForecastSettings } from '@/components/forecast/forecast-settings'
 
@@ -28,9 +29,9 @@ vi.mock('@/api', () => ({
 
 const show = () =>
   render(
-    <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+    <QueryWrapper>
       <ForecastSettings language="en" />
-    </SWRConfig>
+    </QueryWrapper>
   )
 
 beforeEach(() => {
@@ -53,24 +54,25 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
-it('shows progress and saves what changed', async () => {
+const card = (name: string) =>
+  within(screen.getByRole('heading', { name }).closest('section')!)
+
+it('shows how collection is doing', async () => {
   show()
-  expect(await screen.findByText('5 of 8 ready · 2 behind')).toBeVisible()
-  const save = screen.getByRole('button', { name: 'Save' })
-  await waitFor(() =>
-    expect(screen.getByLabelText('Alert at score')).toHaveValue(70)
-  )
-  expect(save).toBeDisabled()
+  expect(await screen.findByText('5 / 8')).toBeVisible()
+  expect(screen.getByText('Connected · 41 topics')).toBeVisible()
+})
+
+it('saves collection with its button, and only what changed', async () => {
+  show()
+  await screen.findByLabelText('Top coins')
+  fireEvent.click(card('Collection').getByRole('button', { name: 'Save' }))
+  expect(mocks.save).not.toHaveBeenCalled()
 
   fireEvent.change(screen.getByLabelText('Top coins'), {
     target: { value: '50' },
   })
-  fireEvent.change(screen.getByLabelText('Alert at score'), {
-    target: { value: '80' },
-  })
-  expect(screen.getByText('up, or 20 down')).toBeVisible()
-  fireEvent.click(save)
-
+  fireEvent.click(card('Collection').getByRole('button', { name: 'Save' }))
   await waitFor(() =>
     expect(mocks.save).toHaveBeenCalledWith({
       enabled: true,
@@ -78,7 +80,40 @@ it('shows progress and saves what changed', async () => {
       top_n: 50,
     })
   )
+  expect(mocks.saveForecast).not.toHaveBeenCalled()
+})
+
+it('saves the alert on leaving its field, and only when it changed', async () => {
+  show()
+  const field = await screen.findByLabelText('Alert at score')
+  expect(card('Alerts').queryByRole('button')).toBeNull()
+  fireEvent.blur(field)
+  expect(mocks.saveForecast).not.toHaveBeenCalled()
+
+  fireEvent.change(field, { target: { value: '80' } })
+  expect(screen.getByText('up, or 20 down')).toBeVisible()
+  expect(mocks.saveForecast).not.toHaveBeenCalled()
+  fireEvent.blur(field)
   await waitFor(() => expect(mocks.saveForecast).toHaveBeenCalledWith(80))
+})
+
+it('saves an alert out of range at its limit', async () => {
+  show()
+  const field = await screen.findByLabelText('Alert at score')
+  fireEvent.change(field, { target: { value: '120' } })
+  fireEvent.blur(field)
+  await waitFor(() => expect(mocks.saveForecast).toHaveBeenCalledWith(99))
+  expect(field).toHaveValue(99)
+})
+
+it('goes back to the saved alert when saving fails', async () => {
+  mocks.saveForecast.mockRejectedValue(new Error('Refused'))
+  show()
+  const field = await screen.findByLabelText('Alert at score')
+  fireEvent.change(field, { target: { value: '80' } })
+  fireEvent.blur(field)
+  await waitFor(() => expect(mocks.saveForecast).toHaveBeenCalledWith(80))
+  await waitFor(() => expect(field).toHaveValue(70))
 })
 
 it('reports a rate limit pause', async () => {

@@ -1,4 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { Minus, Plus, RotateCcw } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { cn } from '@/utils/cn'
+import { ChartLegend, type LegendText } from './chart-legend'
 import type {
   ChartCandle,
   ChartLevel,
@@ -10,8 +14,16 @@ import type {
 const NO_LINES: ChartLines = {}
 const NO_CANDLES: ChartCandle[] = []
 
+export interface ChartText extends LegendText {
+  zoomIn: string
+  zoomOut: string
+  reset: string
+}
+
 // Shows candles held locally. The charting library loads only when this mounts,
-// which keeps it out of the main bundle.
+// which keeps it out of the main bundle. Scrolling over it scrolls the page: Ctrl or
+// Command with the wheel, a pinch or the buttons zoom, and a drag or a sideways scroll
+// moves along time.
 export function LocalMarketChartView({
   candles,
   levels,
@@ -20,9 +32,9 @@ export function LocalMarketChartView({
   lines = NO_LINES,
   live = null,
   fitFor,
-  onProjectionHover,
   label,
   failure,
+  text,
   className,
 }: {
   candles: ChartCandle[]
@@ -34,20 +46,16 @@ export function LocalMarketChartView({
   live?: ChartCandle | null
   // Names what is shown: the view fits once for each.
   fitFor: string
-  onProjectionHover?: (hovering: boolean) => void
   label: string
   failure: string
+  text: ChartText
   className?: string
 }) {
   const host = useRef<HTMLDivElement>(null)
   const chart = useRef<LocalMarketChart | null>(null)
-  const hover = useRef(onProjectionHover)
   const [ready, setReady] = useState(false)
   const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    hover.current = onProjectionHover
-  }, [onProjectionHover])
+  const [hoveredTime, setHoveredTime] = useState<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -55,9 +63,7 @@ export function LocalMarketChartView({
       .then(({ LocalMarketChart }) => {
         if (cancelled || !host.current) return
         chart.current = new LocalMarketChart(host.current)
-        chart.current.onCrosshair((onProjection) =>
-          hover.current?.(onProjection)
-        )
+        chart.current.onCrosshair(setHoveredTime)
         setReady(true)
       })
       .catch(() => {
@@ -86,6 +92,19 @@ export function LocalMarketChartView({
     if (ready && live) chart.current?.update(live)
   }, [ready, live])
 
+  const byTime = useMemo(
+    () => new Map(candles.map((candle) => [candle.time, candle])),
+    [candles]
+  )
+  const newest = live ?? candles[candles.length - 1]
+  // A simulated candle has no price to read, so the newest real one stays.
+  const shownCandle =
+    hoveredTime === null
+      ? newest
+      : hoveredTime === live?.time
+        ? live
+        : (byTime.get(hoveredTime) ?? newest)
+
   if (failed) {
     return (
       <p
@@ -96,5 +115,34 @@ export function LocalMarketChartView({
       </p>
     )
   }
-  return <div ref={host} role="img" aria-label={label} className={className} />
+  return (
+    <div className={cn('group relative', className)}>
+      <div ref={host} role="img" aria-label={label} className="h-full" />
+      {ready && shownCandle && <ChartLegend candle={shownCandle} text={text} />}
+      {ready && (
+        <div className="absolute bottom-8 left-1/2 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-vergex-line bg-vergex-surface p-0.5 opacity-0 shadow-(--shadow-float) transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+          {(
+            [
+              [text.zoomOut, Minus, () => chart.current?.zoomOut()],
+              [text.zoomIn, Plus, () => chart.current?.zoomIn()],
+              [text.reset, RotateCcw, () => chart.current?.resetView()],
+            ] as const
+          ).map(([name, Icon, press]) => (
+            <Button
+              key={name}
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={name}
+              title={name}
+              className="size-7"
+              onClick={press}
+            >
+              <Icon className="size-3.5" aria-hidden="true" />
+            </Button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }

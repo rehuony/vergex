@@ -2,8 +2,8 @@
 
 vergex is a single-user, self-hosted agent trading system for Binance and OKX USDT perpetuals.
 
-- **Backend:** Go (module `vergex`), Gin, GORM with PostgreSQL, logrus, Starlark for Frontier calculators
-- **Frontend:** React 18, TypeScript, Vite, Tailwind v4, SWR, lightweight-charts; pnpm
+- **Backend:** Go (module `vergex`), Gin, GORM with PostgreSQL, logrus, Starlark for Futures calculators
+- **Frontend:** React 18, TypeScript, Vite, Tailwind v4, TanStack Query, lightweight-charts; pnpm
 - **Deployment:** Docker Compose with local builds, driven by the Makefile
 
 ## Layout
@@ -11,32 +11,43 @@ vergex is a single-user, self-hosted agent trading system for Binance and OKX US
 ```text
 cmd/vergex/          entry point and local admin subcommands
 internal/
-  api/               HTTP API, JWT auth, rate limiting, Frontier endpoints
-  trader/            Trader loop, risk control, grid, position sync
-    agent/           strategy engine: coin selection, prompts, decision parsing; grid engine
-    manager/         trader lifecycle: load from the database, assemble, start, stop
-  exchange/          one directory per exchange, and nothing else
-    binance/ okx/    account, orders and fills (live order paths), and public data
-  trading/           what all exchanges share: interfaces, order types, exact decimals
-    accountsync/     reads each active account's new trades into the ledger
-  planning/          Frontier
-    agent/           chat, tools and the model adapter
-    core/            plan compiler, risk and reward
-    live/            approved execution and reconciliation (live order path)
-    market/ plugins/ forge/
-  market/            candles and indicators for trading
+  Infrastructure: knows nothing of trading
+  config/ logger/
+  service/           goroutines that survive a panic, and what each background service last reported
+  security/          SSRF checks; auth/ for JWT; crypto/ for stored keys and transport
+  database/          connection, migrations, serializers, core.settings; testdb/ for tests
+
+  Shared domain: features depend on these, never the reverse
+  user/              the user and their password
+  agent/             model clients and their tables; provider/ for the registry, pricing/ for costs
+  market/            candles and indicators
     feed/            live data hub, local candles, hydrator and stream writer
     instrument/      what can be traded, and naming a symbol
-    wsfeed/          one WebSocket connection to a changing set of topics
-  agent/             model clients, provider registry, SSE streaming, usage callback
-    pricing/         models.dev price cache and cost estimates
-  store/             GORM models and storage
-  telegram/          Telegram bot and skill-first agent
-  security/          SSRF checks; auth/ for JWT; crypto/ for stored keys and transport
-  safe/ config/ logger/
+    ws/              one WebSocket connection to a changing set of topics
+  venue/             one directory per venue, and nothing else
+    binance/ okx/    account, orders, executor and fills (live order paths), and public data
+  account/           accounts and their keys, what orders go through, exact decimals, the ledger
+    syncer/          reads each active account's new trades into the ledger
+
+  Features: each has a schema and a page, and none imports another
+  trader/            the trader loop, risk control, position sync, and the trader's tables
+    kind/            the kinds of trader: their config, limits and presets
+    agent/           coin selection, prompts, decision parsing; the grid's prompts
+    grid/            the grid's pure calculations
+  futures/          plans and account closes
+    agent/           chat, tools and the model adapter
+    plan/            plan compiler, risk and reward
+    run/             approved execution and reconciliation (live order path)
+    forge/ plugins/  entry calculators, and public data the agent can ask for
+  forecast/          experimental signals, their strategies, records and backtests
+
+  Surfaces: read every feature, and nothing imports them
+  dashboard/         the event feed and the overview
+  telegram/          bot and alerts; agent/ for the skill-first assistant
+  api/               HTTP API and JWT auth, one file per module
 web/                 React frontend (see web/README.md)
 docker/              Dockerfiles and the frontend nginx config
-scripts/             key generation for make init; offline strategy parameter search
+scripts/             key generation for make init; offline parameter search
 ```
 
 ## Requests
@@ -44,17 +55,17 @@ scripts/             key generation for make init; offline strategy parameter se
 ```text
 Browser (React)                Telegram bot
   Dashboard · Forecast ·         skill-first agent
-  Frontier · Traders ·                │
-  Strategies · Settings               │
+  Futures · Traders ·                │
+  Settings                            │
           │                           │
           └──────── Gin API (/api) ───┘
                         │
-        ┌───────────────┼────────────────┐
-   Frontier planning  Traders         Grid engine
-   (planning/)        (trader/)
-        └───────────────┼────────────────┘
-               Exchange adapters
-               exchange/binance · exchange/okx
+              ┌─────────┴─────────┐
+           Futures            Traders
+          (futures/)         (trader/)
+              └─────────┬─────────┘
+                     Accounts
+             venue/binance · venue/okx
                         │
             Binance / OKX USDT perpetuals
 ```
@@ -63,8 +74,8 @@ In the Docker setup, the frontend container's nginx serves the static files and 
 
 ## Main flows
 
-- **Traders:** `internal/trader/auto_trader_loop.go` builds the context, `trader/agent` asks the model for decisions, and the trader executes them within the strategy's limits. See [traders.md](traders.md).
-- **Frontier:** chat → compile → approve → execute → reconcile under `/api/planning/*`. The agent can read data, draft plans and draw on the chart, but it cannot place orders. See [frontier.md](frontier.md).
+- **Traders:** `internal/trader/auto_trader_loop.go` builds the context, `trader/agent` asks the model for decisions, and the trader executes them within the limits in its settings. See [traders.md](traders.md).
+- **Futures:** chat → compile → approve → execute → reconcile under `/api/futures/*`. The agent can read data, draft plans and draw on the chart, but it cannot place orders. See [futures.md](futures.md).
 - **Telegram:** the agent exposes task-level skills only, and high-risk actions wait for a confirmation checked in Go. See [telegram.md](telegram.md).
 
 Code conventions and the rules for live order paths are in [AGENTS.md](../AGENTS.md).

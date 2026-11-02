@@ -11,8 +11,7 @@ import (
 	_ "vergex/internal/agent/provider"
 	"vergex/internal/config"
 	"vergex/internal/logger"
-	"vergex/internal/servicestate"
-	"vergex/internal/store"
+	"vergex/internal/service"
 	telegramagent "vergex/internal/telegram/agent"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -30,19 +29,19 @@ var retryDelay = time.Minute
 // (sent when its token, model or binding is saved) restarts it with the
 // settings in the database; with no token it waits for one. Must be called as
 // a goroutine from main.go.
-func Start(cfg *config.Config, st *store.Store, reloadCh <-chan struct{}) {
+func Start(cfg *config.Config, st *Stores, reloadCh <-chan struct{}) {
 	for {
 		token := resolveToken(cfg, st)
 		if token == "" {
 			logger.Info("Telegram bot disabled (no token configured), waiting for reload signal...")
-			servicestate.Set(servicestate.Telegram, servicestate.Off, "")
+			service.Report(service.Telegram, service.Off, "")
 			<-reloadCh
 			continue
 		}
 
 		if err := runBot(token, cfg, st, reloadCh); err != nil {
 			logger.Errorf("Telegram bot stopped: %v; retrying in %v or when its settings change", err, retryDelay)
-			servicestate.Set(servicestate.Telegram, servicestate.Failed, err.Error())
+			service.Report(service.Telegram, service.Failed, err.Error())
 			select {
 			case <-reloadCh:
 			case <-time.After(retryDelay):
@@ -54,8 +53,8 @@ func Start(cfg *config.Config, st *store.Store, reloadCh <-chan struct{}) {
 }
 
 // resolveToken returns the bot token from DB (configured via Web UI).
-func resolveToken(cfg *config.Config, st *store.Store) string {
-	dbCfg, err := st.TelegramConfig().Get()
+func resolveToken(cfg *config.Config, st *Stores) string {
+	dbCfg, err := st.Telegram.Get()
 	if err == nil && dbCfg.BotToken != "" {
 		return string(dbCfg.BotToken)
 	}
@@ -64,17 +63,17 @@ func resolveToken(cfg *config.Config, st *store.Store) string {
 
 // runBot serves the bot until a reload signal (nil) or until it cannot start or
 // loses its update stream (an error).
-func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan struct{}) error {
+func runBot(token string, cfg *config.Config, st *Stores, reloadCh <-chan struct{}) error {
 	bot, err := tgbotapi.NewBotAPIWithAPIEndpoint(token, apiEndpoint)
 	if err != nil {
 		return fmt.Errorf("start: %w", err)
 	}
 	logger.Infof("Telegram bot @%s started", bot.Self.UserName)
-	servicestate.Set(servicestate.Telegram, servicestate.Running, "")
+	service.Report(service.Telegram, service.Running, "")
 
 	// Allowed chat ID: read from DB binding (0 = unbound, first /start will bind).
 	allowedChatID := int64(0)
-	if id, err := st.TelegramConfig().GetBoundChatID(); err == nil && id != 0 {
+	if id, err := st.Telegram.GetBoundChatID(); err == nil && id != 0 {
 		allowedChatID = id
 	}
 
@@ -87,7 +86,7 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 	)
 
 	resolveBotUser := func() bool {
-		users, err := st.User().GetAll()
+		users, err := st.Users.GetAll()
 		if err != nil || len(users) == 0 {
 			return false
 		}
@@ -106,7 +105,7 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 		botToken = newToken
 		agents = telegramagent.NewManager(cfg.APIServerPort, botToken, botUserEmail, botUserID,
 			func() agent.Client { return newAgentClient(st, botUserID) },
-			&chatHistory{conversations: st.AgentConversation(), userID: botUserID},
+			&chatHistory{conversations: st.Conversations, userID: botUserID},
 		)
 		if prev == "" {
 			logger.Infof("Bot: resolved user %s (%s)", botUserID, botUserEmail)
@@ -146,7 +145,7 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 		if awaitingLang && chatID == allowedChatID {
 			if lang := parseLangChoice(text); lang != "" {
 				awaitingLang = false
-				st.TelegramConfig().SetLanguage(lang) //nolint:errcheck
+				st.Telegram.SetLanguage(lang) //nolint:errcheck
 				sendMarkdownMsg(bot, chatID, statusMsg(st, botUserID, cfg.APIServerPort, lang))
 			} else {
 				sendMarkdownMsg(bot, chatID, langMenuMsg())
@@ -164,7 +163,7 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 			}
 			if allowedChatID == 0 {
 				username := update.Message.From.UserName
-				if err := st.TelegramConfig().BindUser(chatID, "@"+username); err != nil {
+				if err := st.Telegram.BindUser(chatID, "@"+username); err != nil {
 					logger.Errorf("Failed to bind Telegram user: %v", err)
 					sendMsg(bot, chatID, "Binding failed. Please try again.")
 					continue
@@ -177,7 +176,7 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 			} else {
 				agents.Reset(chatID)
 			}
-			lang := st.TelegramConfig().GetLanguage()
+			lang := st.Telegram.GetLanguage()
 			sendMarkdownMsg(bot, chatID, statusMsg(st, botUserID, cfg.APIServerPort, lang))
 			continue
 		}
@@ -191,7 +190,7 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 
 		// ── /help ─────────────────────────────────────────────────────────────
 		if text == "/help" {
-			lang := st.TelegramConfig().GetLanguage()
+			lang := st.Telegram.GetLanguage()
 			sendMarkdownMsg(bot, chatID, helpMsg(lang))
 			continue
 		}
@@ -216,7 +215,7 @@ func runBot(token string, cfg *config.Config, st *store.Store, reloadCh <-chan s
 			continue
 		}
 
-		lang := st.TelegramConfig().GetLanguage()
+		lang := st.Telegram.GetLanguage()
 
 		// ── Guard: show status if not ready for trading ───────────────────────
 		if newAgentClient(st, botUserID) == nil {
@@ -289,10 +288,10 @@ func sendMarkdownMsg(bot *tgbotapi.BotAPI, chatID int64, text string) {
 
 // ── model client ───────────────────────────────────────────────────────────────
 
-func newAgentClient(st *store.Store, userID string) agent.Client {
+func newAgentClient(st *Stores, userID string) agent.Client {
 	// 1. Prefer the model explicitly configured for Telegram (Settings → Telegram → Model)
-	if tgCfg, err := st.TelegramConfig().Get(); err == nil && tgCfg.AgentModelID != "" {
-		if model, err := st.AgentModel().Get(userID, tgCfg.AgentModelID); err == nil && model.Enabled {
+	if tgCfg, err := st.Telegram.Get(); err == nil && tgCfg.AgentModelID != "" {
+		if model, err := st.Models.Get(userID, tgCfg.AgentModelID); err == nil && model.Enabled {
 			apiKey := string(model.APIKey)
 			if apiKey != "" {
 				client := clientForProvider(model.Provider)
@@ -304,7 +303,7 @@ func newAgentClient(st *store.Store, userID string) agent.Client {
 	}
 
 	// 2. Fall back to first enabled model
-	if model, err := st.AgentModel().GetDefault(userID); err == nil {
+	if model, err := st.Models.GetDefault(userID); err == nil {
 		apiKey := string(model.APIKey)
 		if apiKey != "" {
 			client := clientForProvider(model.Provider)
@@ -342,36 +341,36 @@ func clientForProvider(provider string) agent.Client {
 
 // statusMsg is the single entry-point message shown after /start.
 // It checks what's configured and shows either a setup prompt or the ready state.
-func statusMsg(st *store.Store, userID string, apiPort int, lang string) string {
+func statusMsg(st *Stores, userID string, apiPort int, lang string) string {
 	webURL := "http://localhost:8000"
 
 	// Determine what's missing.
 	hasModel := false
-	if _, err := st.AgentModel().GetDefault(userID); err == nil {
+	if _, err := st.Models.GetDefault(userID); err == nil {
 		hasModel = true
 	}
 
-	hasExchange := false
-	if exchanges, err := st.Exchange().List(userID); err == nil {
-		hasExchange = len(exchanges) > 0
+	hasAccount := false
+	if accounts, err := st.Accounts.List(userID); err == nil {
+		hasAccount = len(accounts) > 0
 	}
 
-	if !hasModel || !hasExchange {
+	if !hasModel || !hasAccount {
 		missing := ""
 		if lang == "zh" {
 			if !hasModel {
 				missing += "\n❌ Model → Settings → Models → Add"
 			}
-			if !hasExchange {
-				missing += "\n❌ Exchange → Settings → Exchanges → Add"
+			if !hasAccount {
+				missing += "\n❌ Account → Settings → Accounts → Add"
 			}
 			return "⚙️ *Setup required*\n\nOpen the web dashboard to complete setup:\n→ " + webURL + "\n" + missing + "\n\nSend /start when done."
 		}
 		if !hasModel {
 			missing += "\n❌ Model → Settings → Models → Add"
 		}
-		if !hasExchange {
-			missing += "\n❌ Exchange → Settings → Exchanges → Add"
+		if !hasAccount {
+			missing += "\n❌ Account → Settings → Accounts → Add"
 		}
 		return "⚙️ *Setup required*\n\nOpen the web dashboard to complete setup:\n→ " + webURL + "\n" + missing + "\n\nSend /start when done."
 	}
@@ -384,7 +383,7 @@ Just tell me what you want:
 
 📊 "Show my positions"
 💰 "What's my balance?"
-🤖 "Create a BTC trend strategy and start it"
+🤖 "Create a BTC trend trader and start it"
 ⏹ "Stop all traders"
 
 /help for more · /lang to change language`
@@ -395,7 +394,7 @@ Just tell me what you want:
 
 📊 "Show my positions"
 💰 "What's my balance?"
-🤖 "Create a BTC trend strategy and start it"
+🤖 "Create a BTC trend trader and start it"
 ⏹ "Stop all traders"
 
 /help for more · /lang to change language`
@@ -429,8 +428,8 @@ func helpMsg(lang string) string {
 • "List my traders"
 
 *Create & start*
-• "Create a BTC trend strategy and start it"
-• "Conservative strategy, BTC and ETH only"
+• "Create a BTC trend trader and start it"
+• "A careful trader, BTC and ETH only"
 
 *Control*
 • "Start trader"
@@ -450,8 +449,8 @@ func helpMsg(lang string) string {
 • "List my traders"
 
 *Create & start*
-• "Create a BTC trend strategy and start it"
-• "Conservative strategy, BTC and ETH only"
+• "Create a BTC trend trader and start it"
+• "A careful trader, BTC and ETH only"
 
 *Control*
 • "Start trader"

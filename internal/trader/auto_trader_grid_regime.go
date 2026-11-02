@@ -5,7 +5,7 @@ import (
 	"math"
 	"time"
 	"vergex/internal/logger"
-	"vergex/internal/market"
+	"vergex/internal/trader/grid"
 )
 
 // ============================================================================
@@ -14,13 +14,13 @@ import (
 
 // checkBoxBreakout checks for multi-period box breakouts and takes appropriate action
 func (at *AutoTrader) checkBoxBreakout() error {
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 	if gridConfig == nil {
 		return nil
 	}
 
 	// Get box data
-	box, err := market.GetBoxData(gridConfig.Symbol)
+	box, err := grid.FetchBox(gridConfig.Symbol)
 	if err != nil {
 		logger.Infof("Failed to get box data: %v", err)
 		return nil // Non-fatal, continue with other checks
@@ -37,17 +37,17 @@ func (at *AutoTrader) checkBoxBreakout() error {
 	at.gridState.mu.Unlock()
 
 	// Detect breakout
-	breakoutLevel, direction := detectBoxBreakout(box)
+	breakoutLevel, direction := grid.DetectBoxBreakout(box)
 
 	// Get current breakout state
-	state := &BreakoutState{
-		Level:        market.BreakoutLevel(at.gridState.BreakoutLevel),
+	state := &grid.BreakoutState{
+		Level:        grid.BreakoutLevel(at.gridState.BreakoutLevel),
 		Direction:    at.gridState.BreakoutDirection,
 		ConfirmCount: at.gridState.BreakoutConfirmCount,
 	}
 
 	// Check if breakout is confirmed (3 candles)
-	confirmed := confirmBreakout(state, breakoutLevel, direction)
+	confirmed := grid.ConfirmBreakout(state, breakoutLevel, direction)
 
 	// Update grid state
 	at.gridState.mu.Lock()
@@ -63,12 +63,12 @@ func (at *AutoTrader) checkBoxBreakout() error {
 	// Take action based on breakout level
 	// Use direction-aware action if enabled
 	enableDirectionAdjust := gridConfig.EnableDirectionAdjust
-	action := getBreakoutActionWithDirection(breakoutLevel, enableDirectionAdjust)
+	action := grid.BreakoutActionWithDirection(breakoutLevel, enableDirectionAdjust)
 
 	// If direction adjustment action, determine the new direction
-	if action == BreakoutActionAdjustDirection {
-		box, _ := market.GetBoxData(gridConfig.Symbol)
-		newDirection := determineGridDirection(box, at.gridState.CurrentDirection, breakoutLevel, direction)
+	if action == grid.BreakoutActionAdjustDirection {
+		box, _ := grid.FetchBox(gridConfig.Symbol)
+		newDirection := grid.DetermineDirection(box, at.gridState.CurrentDirection, breakoutLevel, direction)
 		return at.executeDirectionAdjustment(newDirection)
 	}
 
@@ -76,9 +76,9 @@ func (at *AutoTrader) checkBoxBreakout() error {
 }
 
 // executeBreakoutAction executes the appropriate action for a breakout
-func (at *AutoTrader) executeBreakoutAction(action BreakoutAction) error {
+func (at *AutoTrader) executeBreakoutAction(action grid.BreakoutAction) error {
 	switch action {
-	case BreakoutActionReducePosition:
+	case grid.BreakoutActionReducePosition:
 		// Short box breakout: reduce position to 50%
 		logger.Infof("Short box breakout confirmed, reducing position to 50%%")
 		at.gridState.mu.Lock()
@@ -86,7 +86,7 @@ func (at *AutoTrader) executeBreakoutAction(action BreakoutAction) error {
 		at.gridState.mu.Unlock()
 		return nil
 
-	case BreakoutActionPauseGrid:
+	case grid.BreakoutActionPauseGrid:
 		// Mid box breakout: pause grid + cancel orders
 		logger.Infof("Mid box breakout confirmed, pausing grid and canceling orders")
 		at.gridState.mu.Lock()
@@ -94,7 +94,7 @@ func (at *AutoTrader) executeBreakoutAction(action BreakoutAction) error {
 		at.gridState.mu.Unlock()
 		return at.cancelAllGridOrders()
 
-	case BreakoutActionCloseAll:
+	case grid.BreakoutActionCloseAll:
 		// Long box breakout: pause + cancel + close all
 		logger.Infof("Long box breakout confirmed, closing all positions")
 		at.gridState.mu.Lock()
@@ -105,7 +105,7 @@ func (at *AutoTrader) executeBreakoutAction(action BreakoutAction) error {
 		}
 		return at.closeAllPositions()
 
-	case BreakoutActionAdjustDirection:
+	case grid.BreakoutActionAdjustDirection:
 		// Direction adjustment is handled separately via executeDirectionAdjustment
 		// This case should not be reached, but handle gracefully
 		logger.Infof("Direction adjustment action received via executeBreakoutAction")
@@ -116,7 +116,7 @@ func (at *AutoTrader) executeBreakoutAction(action BreakoutAction) error {
 }
 
 // executeDirectionAdjustment handles grid direction changes based on box breakout
-func (at *AutoTrader) executeDirectionAdjustment(newDirection market.GridDirection) error {
+func (at *AutoTrader) executeDirectionAdjustment(newDirection grid.Direction) error {
 	at.gridState.mu.RLock()
 	oldDirection := at.gridState.CurrentDirection
 	at.gridState.mu.RUnlock()
@@ -137,7 +137,7 @@ func (at *AutoTrader) executeDirectionAdjustment(newDirection market.GridDirecti
 }
 
 // adjustGridDirection handles runtime direction adjustment when breakout is detected
-func (at *AutoTrader) adjustGridDirection(newDirection market.GridDirection) error {
+func (at *AutoTrader) adjustGridDirection(newDirection grid.Direction) error {
 	at.gridState.mu.Lock()
 	defer at.gridState.mu.Unlock()
 
@@ -167,7 +167,7 @@ func (at *AutoTrader) adjustGridDirection(newDirection market.GridDirection) err
 
 // checkFalseBreakoutRecovery checks if price has returned to box after breakout
 func (at *AutoTrader) checkFalseBreakoutRecovery() error {
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 	if gridConfig == nil {
 		return nil
 	}
@@ -180,17 +180,17 @@ func (at *AutoTrader) checkFalseBreakoutRecovery() error {
 	at.gridState.mu.RUnlock()
 
 	// Only check if we had a breakout or non-neutral direction
-	needsRecoveryCheck := breakoutLevel != string(market.BreakoutNone) ||
+	needsRecoveryCheck := breakoutLevel != string(grid.BreakoutNone) ||
 		positionReduction != 0 ||
 		isPaused ||
-		(gridConfig.EnableDirectionAdjust && currentDirection != market.GridDirectionNeutral)
+		(gridConfig.EnableDirectionAdjust && currentDirection != grid.DirectionNeutral)
 
 	if !needsRecoveryCheck {
 		return nil
 	}
 
 	// Get current box data
-	box, err := market.GetBoxData(gridConfig.Symbol)
+	box, err := grid.FetchBox(gridConfig.Symbol)
 	if err != nil {
 		return nil
 	}
@@ -200,7 +200,7 @@ func (at *AutoTrader) checkFalseBreakoutRecovery() error {
 		logger.Infof("Price returned to box, recovering with 50%% position")
 
 		at.gridState.mu.Lock()
-		at.gridState.BreakoutLevel = string(market.BreakoutNone)
+		at.gridState.BreakoutLevel = string(grid.BreakoutNone)
 		at.gridState.BreakoutDirection = ""
 		at.gridState.BreakoutConfirmCount = 0
 		at.gridState.PositionReductionPct = 50 // Recover at 50%
@@ -209,9 +209,9 @@ func (at *AutoTrader) checkFalseBreakoutRecovery() error {
 	}
 
 	// Check for direction recovery toward neutral (if direction adjustment is enabled)
-	if gridConfig.EnableDirectionAdjust && currentDirection != market.GridDirectionNeutral {
-		if shouldRecoverDirection(box, currentDirection) {
-			newDirection := determineRecoveryDirection(box.CurrentPrice, box, currentDirection)
+	if gridConfig.EnableDirectionAdjust && currentDirection != grid.DirectionNeutral {
+		if grid.ShouldRecoverDirection(box, currentDirection) {
+			newDirection := grid.DetermineRecoveryDirection(box.CurrentPrice, box, currentDirection)
 			if newDirection != currentDirection {
 				logger.Infof("[Grid] Direction recovery: %s -> %s (price back in short box)",
 					currentDirection, newDirection)
@@ -223,15 +223,24 @@ func (at *AutoTrader) checkFalseBreakoutRecovery() error {
 	return nil
 }
 
-// GetGridRiskInfo returns current risk information for frontend display
+// GetGridRiskInfo returns current risk information for frontend display, or nil
+// when no grid is running: a stopped trader has no live reading to give, and its
+// grid state does not exist until its first run.
 func (at *AutoTrader) GetGridRiskInfo() *GridRiskInfo {
-	gridConfig := at.config.StrategyConfig.GridConfig
-	if gridConfig == nil {
-		return &GridRiskInfo{}
+	at.isRunningMutex.RLock()
+	running := at.isRunning
+	at.isRunningMutex.RUnlock()
+
+	gridConfig := at.config.Grid
+	if !running || gridConfig == nil || at.gridState == nil {
+		return nil
 	}
 
 	at.gridState.mu.RLock()
 	defer at.gridState.mu.RUnlock()
+	if !at.gridState.IsInitialized {
+		return nil
+	}
 
 	// Get current price
 	currentPrice, _ := at.trader.GetMarketPrice(gridConfig.Symbol)
@@ -260,37 +269,37 @@ func (at *AutoTrader) GetGridRiskInfo() *GridRiskInfo {
 	}
 
 	// Calculate max position based on regime
-	regimeLevel := market.RegimeLevel(at.gridState.CurrentRegimeLevel)
+	regimeLevel := grid.RegimeLevel(at.gridState.CurrentRegimeLevel)
 	if regimeLevel == "" {
-		regimeLevel = market.RegimeLevelStandard
+		regimeLevel = grid.RegimeLevelStandard
 	}
 
-	// Use default position limit since GridStrategyConfig doesn't have regime-specific limits
+	// Use default position limit since GridConfig doesn't have regime-specific limits
 	// Default is 70% for standard regime
 	maxPositionPct := 70.0
 	switch regimeLevel {
-	case market.RegimeLevelNarrow:
+	case grid.RegimeLevelNarrow:
 		maxPositionPct = 40.0
-	case market.RegimeLevelStandard:
+	case grid.RegimeLevelStandard:
 		maxPositionPct = 70.0
-	case market.RegimeLevelWide:
+	case grid.RegimeLevelWide:
 		maxPositionPct = 60.0
-	case market.RegimeLevelVolatile:
+	case grid.RegimeLevelVolatile:
 		maxPositionPct = 40.0
 	}
 
 	maxPosition := totalInvestment * maxPositionPct / 100 * float64(leverage)
 
-	// Use default leverage limits since GridStrategyConfig doesn't have regime-specific limits
+	// Use default leverage limits since GridConfig doesn't have regime-specific limits
 	recommendedLeverage := leverage
 	switch regimeLevel {
-	case market.RegimeLevelNarrow:
+	case grid.RegimeLevelNarrow:
 		recommendedLeverage = min(leverage, 2)
-	case market.RegimeLevelStandard:
+	case grid.RegimeLevelStandard:
 		recommendedLeverage = min(leverage, 4)
-	case market.RegimeLevelWide:
+	case grid.RegimeLevelWide:
 		recommendedLeverage = min(leverage, 3)
-	case market.RegimeLevelVolatile:
+	case grid.RegimeLevelVolatile:
 		recommendedLeverage = min(leverage, 2)
 	}
 

@@ -1,8 +1,5 @@
-import { ArrowRight } from 'lucide-react'
 import { t, type Language } from '@/i18n'
 import type { DecisionRecord, Position } from '@/types'
-import { cn } from '@/utils/cn'
-import { Panel, PanelState } from '@/components/common/panel'
 import { actionSide, tradeActions, type ActionSide } from './decision-format'
 import { baseLabel } from '@/utils/trader-format'
 
@@ -14,25 +11,25 @@ interface Item {
 const sideClass: Record<ActionSide, string> = {
   long: 'text-vergex-success',
   short: 'text-vergex-danger',
-  flat: 'text-vergex-text-muted',
+  flat: 'text-vergex-muted',
 }
 
 function Layer({ title, items }: { title: string; items: Item[] }) {
   return (
-    <div className="min-w-0 flex-1 rounded-lg border border-[var(--line)] p-3">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-xs text-vergex-text-muted">{title}</span>
-        <span className="text-base font-semibold tabular-nums text-vergex-text">
-          {items.length}
-        </span>
-      </div>
-      <ul className="mt-2 flex max-h-24 flex-wrap gap-x-2 gap-y-1 overflow-hidden text-xs font-medium">
-        {items.map((item) => (
-          <li key={item.symbol} className={sideClass[item.side]}>
-            {item.symbol}
-          </li>
-        ))}
-      </ul>
+    <div className="min-w-0 bg-vergex-surface px-4 py-3">
+      <dt className="text-xs text-vergex-muted">{title}</dt>
+      <dd className="mono mt-1 text-2xl leading-[1.2] tracking-[-0.02em] text-vergex-ink">
+        {items.length}
+      </dd>
+      <dd>
+        <ul className="mt-1 flex max-h-10 flex-wrap gap-x-2 overflow-hidden text-xs leading-5">
+          {items.map((item) => (
+            <li key={item.symbol} className={sideClass[item.side]}>
+              {item.symbol}
+            </li>
+          ))}
+        </ul>
+      </dd>
     </div>
   )
 }
@@ -49,13 +46,7 @@ export function DecisionFunnel({
   language: Language
 }) {
   const label = (key: string) => t(`traderDetail.${key}`, language)
-  if (!latest) {
-    return (
-      <Panel title={label('latestCycle')}>
-        <PanelState role="status">{label('noDecisions')}</PanelState>
-      </Panel>
-    )
-  }
+  if (!latest) return null
   const decided = new Map<string, ActionSide>()
   for (const action of latest.decisions ?? []) {
     decided.set(baseLabel(action.symbol), actionSide(action.action))
@@ -73,23 +64,15 @@ export function DecisionFunnel({
     symbol: baseLabel(position.symbol),
     side: /short/i.test(position.side) ? 'short' : 'long',
   }))
-  const arrow = cn(
-    'size-4 shrink-0 self-center text-vergex-text-muted max-sm:rotate-90'
-  )
   return (
-    <Panel
-      title={label('latestCycle')}
-      meta={t('traderDetail.cycleNumber', language, {
-        cycle: latest.cycle_number,
-      })}
+    <section
+      aria-label={`${label('latestCycle')} · ${t('traderDetail.cycleNumber', language, { cycle: latest.cycle_number })}`}
     >
-      <div className="flex gap-2 px-4 pb-4 max-sm:flex-col">
+      <dl className="grid grid-cols-3 gap-px border-b border-vergex-line bg-vergex-line max-sm:grid-cols-1">
         <Layer title={label('candidates')} items={candidates} />
-        <ArrowRight className={arrow} aria-hidden="true" />
         <Layer title={label('executed')} items={executed} />
-        <ArrowRight className={arrow} aria-hidden="true" />
         <Layer title={label('holding')} items={held} />
-      </div>
-    </Panel>
+      </dl>
+    </section>
   )
 }

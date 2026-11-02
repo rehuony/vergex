@@ -3,6 +3,7 @@ package forecast
 import (
 	"context"
 	"math"
+	"math/rand"
 	"testing"
 
 	"vergex/internal/market"
@@ -102,6 +103,56 @@ func TestDerivativesAtReadsNothingLater(t *testing.T) {
 	}
 }
 
+// A live forecast reads readingsSpan of readings up to its moment, and a backtest reads
+// its whole range. At every interval they must see the same thing.
+func TestDerivativesAreTheSameLiveAndInABacktest(t *testing.T) {
+	const day = 24 * hour
+	openTime := 100 * day
+	var whole Readings
+	for at := openTime - 40*day; at <= openTime+2*day; at += hour {
+		value := 100 + float64(at)/float64(day) + math.Sin(float64(at)/float64(7*hour))
+		whole.Funding = append(whole.Funding, Reading{Time: at, Value: value / 1e6})
+		whole.OpenValue = append(whole.OpenValue, Reading{Time: at, Value: value})
+		whole.LongShort = append(whole.LongShort, Reading{Time: at, Value: value})
+	}
+	within := func(readings []Reading, from, to int64) []Reading {
+		var kept []Reading
+		for _, reading := range readings {
+			if reading.Time >= from && reading.Time <= to {
+				kept = append(kept, reading)
+			}
+		}
+		return kept
+	}
+	same := func(a, b *float64) bool { return a != nil && b != nil && *a == *b }
+	for _, interval := range Intervals {
+		step := intervalMillis(interval)
+		moment := readingTime(openTime, step)
+		from := moment - readingsSpan(step)
+		live := Readings{
+			Funding:   within(whole.Funding, from, moment),
+			OpenValue: within(whole.OpenValue, from, moment),
+			LongShort: within(whole.LongShort, from, moment),
+		}
+		backtest, got := DerivativesAt(whole, openTime, step), DerivativesAt(live, openTime, step)
+		if !same(backtest.Funding, got.Funding) || !same(backtest.OIChangePct, got.OIChangePct) || !same(backtest.LongShortZ, got.LongShortZ) {
+			t.Errorf("%s: backtest %+v, live %+v", interval, backtest, got)
+		}
+	}
+}
+
+func TestDerivativesAreReadAsOfTheCandlesClose(t *testing.T) {
+	const day = 24 * hour
+	readings := Readings{Funding: []Reading{{Time: 100*day + 16*hour, Value: 0.0001}, {Time: 101 * day, Value: 0.9}}}
+	got := DerivativesAt(readings, 100*day, day)
+	if got.Funding == nil || *got.Funding != 0.0001 {
+		t.Fatalf("funding = %v, want the reading from within the day, not from its close", got.Funding)
+	}
+	if early := DerivativesAt(readings, 100*day+16*hour-hour, hour); early.Funding != nil {
+		t.Fatalf("funding = %v, read before it was published", early.Funding)
+	}
+}
+
 func TestDerivativesMoveTheFullProbabilityOnly(t *testing.T) {
 	klines := walk(WindowBars, 0.1)
 	bare, _ := Evaluate(DefaultConfig(), "1h", klines, Derivatives{})
@@ -118,6 +169,9 @@ func TestDerivativesMoveTheFullProbabilityOnly(t *testing.T) {
 	}
 	if crowded.ProbFull >= bare.ProbFull {
 		t.Fatalf("high funding should lean down: %.4f vs %.4f", crowded.ProbFull, bare.ProbFull)
+	}
+	if crowded.Derivatives.Funding == nil || len(crowded.Missing) != 2 || len(bare.Missing) != 3 {
+		t.Fatalf("readings = %+v, missing = %v and %v", crowded.Derivatives, crowded.Missing, bare.Missing)
 	}
 }
 
@@ -146,7 +200,7 @@ func TestConfigValidation(t *testing.T) {
 }
 
 func TestCalibrationOnlyEverRises(t *testing.T) {
-	points := []CalibrationPoint{{0.2, false}, {0.3, true}, {0.4, false}, {0.5, false}, {0.6, true}, {0.7, false}, {0.8, true}, {0.9, true}}
+	points := []CalibrationPoint{{Prob: 0.2}, {Prob: 0.3, Up: true}, {Prob: 0.4}, {Prob: 0.5}, {Prob: 0.6, Up: true}, {Prob: 0.7}, {Prob: 0.8, Up: true}, {Prob: 0.9, Up: true}}
 	knots := FitCalibration(points)
 	for i := 1; i < len(knots); i++ {
 		if knots[i].Y < knots[i-1].Y || knots[i].X <= knots[i-1].X {
@@ -161,6 +215,44 @@ func TestCalibrationOnlyEverRises(t *testing.T) {
 	}
 	if got := ApplyCalibration(nil, 0.42); got != 0.42 {
 		t.Fatalf("no curve should pass through, got %f", got)
+	}
+}
+
+func calibrationPoints(r *rand.Rand, moments, coins int, up func(prob float64) bool) []CalibrationPoint {
+	var points []CalibrationPoint
+	for moment := 0; moment < moments; moment++ {
+		for coin := 0; coin < coins; coin++ {
+			prob := 0.2 + 0.6*r.Float64()
+			points = append(points, CalibrationPoint{Prob: prob, Up: up(prob), Moment: int64(moment)})
+		}
+	}
+	return points
+}
+
+func TestManyCoinsAtFewMomentsDoNotEarnACurve(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+	points := calibrationPoints(r, MinCalibrationMoments-1, 50, func(prob float64) bool { return r.Float64() < prob })
+	if _, earned := EarnCalibration(points); earned {
+		t.Fatalf("%d points from %d moments earned a curve", len(points), MinCalibrationMoments-1)
+	}
+}
+
+func TestScoresThatPredictEarnACurveAndNoiseRarelyDoes(t *testing.T) {
+	r := rand.New(rand.NewSource(2))
+	real := calibrationPoints(r, MinCalibrationMoments, 5, func(prob float64) bool { return r.Float64() < prob })
+	if _, earned := EarnCalibration(real); !earned {
+		t.Fatal("scores that match outcomes should earn a curve")
+	}
+	earned := 0
+	const trials = 200
+	for i := 0; i < trials; i++ {
+		noise := calibrationPoints(r, MinCalibrationMoments, 1, func(float64) bool { return r.Intn(2) == 0 })
+		if _, ok := EarnCalibration(noise); ok {
+			earned++
+		}
+	}
+	if earned > trials/10 {
+		t.Fatalf("noise earned a curve in %d of %d trials", earned, trials)
 	}
 }
 
@@ -222,6 +314,73 @@ func TestBacktestMatchesLiveEvaluationAndDoesNotOverlap(t *testing.T) {
 	}
 }
 
+func TestBacktestReportsEachFactorAndCandlesAlone(t *testing.T) {
+	candles := walk(WindowBars+400, 0.15)
+	options := BacktestOptions{Symbols: []string{"BTCUSDT"}, Intervals: []string{"1h"}, From: candles[WindowBars].OpenTime, To: candles[len(candles)-1].OpenTime}
+	report, err := RunBacktest(context.Background(), fixedSource{candles}, DefaultConfig(), options, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Factors) != len(CandleFactors) {
+		t.Fatalf("factors = %d, want each candle factor, with no derivatives to read", len(report.Factors))
+	}
+	if report.Factors[0].Name != CandleFactors[0] {
+		t.Fatalf("first factor = %s, want the fixed order", report.Factors[0].Name)
+	}
+	var seen int
+	for _, factor := range report.Factors {
+		seen += factor.Trending.Samples + factor.Ranging.Samples
+		for _, edge := range []FactorEdge{factor.Trending, factor.Ranging} {
+			if edge.AgreeRate != nil && (*edge.AgreeRate < 0 || *edge.AgreeRate > 1) {
+				t.Fatalf("%s agree rate = %f", factor.Name, *edge.AgreeRate)
+			}
+			if edge.Correlation != nil && (*edge.Correlation < -1.0001 || *edge.Correlation > 1.0001) {
+				t.Fatalf("%s correlation = %f", factor.Name, *edge.Correlation)
+			}
+		}
+	}
+	if seen != report.Overall.Samples*len(CandleFactors) {
+		t.Fatalf("factors saw %d samples, want %d each", seen, report.Overall.Samples)
+	}
+	// With no derivatives, candles alone are the whole score.
+	if math.Abs(report.Overall.Brier-report.Overall.BrierCandles) > 1e-9 {
+		t.Fatalf("brier = %f, candles only = %f", report.Overall.Brier, report.Overall.BrierCandles)
+	}
+}
+
+func TestFactorEdgeReadsAgreementAndCorrelation(t *testing.T) {
+	var f factorAccumulator
+	for _, c := range []struct{ value, move float64 }{{1, 2}, {0.5, 1}, {-1, -2}, {-0.5, 1}} {
+		f.add(c.value, c.move, 1)
+	}
+	edge := f.edge()
+	if edge.Samples != 4 || edge.AgreeRate == nil || *edge.AgreeRate != 0.75 {
+		t.Fatalf("edge = %+v", edge)
+	}
+	if edge.Correlation == nil || *edge.Correlation <= 0.5 {
+		t.Fatalf("correlation = %v, want clearly positive", edge.Correlation)
+	}
+	if empty := (&factorAccumulator{}).edge(); empty.AgreeRate != nil || empty.Correlation != nil {
+		t.Fatalf("empty = %+v, want no rates", empty)
+	}
+}
+
+func TestChanceRateFollowsTheMixOfCalls(t *testing.T) {
+	// Always calling down while price rises 40% of the time hits 60% with no skill.
+	if rate := chanceRate(0, 100, 40, 100); math.Abs(*rate-0.6) > 1e-9 {
+		t.Fatalf("all down = %f", *rate)
+	}
+	if rate := chanceRate(100, 0, 40, 100); math.Abs(*rate-0.4) > 1e-9 {
+		t.Fatalf("all up = %f", *rate)
+	}
+	if rate := chanceRate(50, 50, 40, 100); math.Abs(*rate-0.5) > 1e-9 {
+		t.Fatalf("half and half = %f", *rate)
+	}
+	if chanceRate(0, 0, 40, 100) != nil || chanceRate(5, 5, 0, 0) != nil {
+		t.Fatal("no calls or no moves should have no rate")
+	}
+}
+
 func TestMetricsAreWorkedOutAsDescribed(t *testing.T) {
 	a := &accumulator{}
 	a.add(backtestSample{direction: DirectionUp, prob: 0.8, movePct: 2, expectedPct: 3, up: true})
@@ -234,6 +393,9 @@ func TestMetricsAreWorkedOutAsDescribed(t *testing.T) {
 	}
 	if *m.HitRate != 2.0/3 {
 		t.Fatalf("hit rate = %f", *m.HitRate)
+	}
+	if m.ChanceRate == nil || *m.ChanceRate != 0.5 {
+		t.Fatalf("chance rate = %v, want a half in a market that rose half the time", m.ChanceRate)
 	}
 	if m.BaselineUp != 0.5 || m.BaselineBrier != 0.25 {
 		t.Fatalf("baseline: %+v", m)

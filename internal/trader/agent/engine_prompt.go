@@ -11,8 +11,8 @@ import (
 // Prompt Building - User Prompt
 // ============================================================================
 
-// BuildUserPrompt builds User Prompt based on strategy configuration
-func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
+// BuildUserPrompt builds User Prompt based on the config
+func (e *Engine) BuildUserPrompt(ctx *Context) string {
 	var sb strings.Builder
 
 	// System status
@@ -54,7 +54,7 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 
 	// Historical trading statistics (helps agent understand past performance)
 	if ctx.TradingStats != nil && ctx.TradingStats.TotalTrades > 0 {
-		// Get language from strategy config
+		// Get language from the prompt sections
 		lang := e.GetLanguage()
 
 		// Win/Loss ratio
@@ -163,7 +163,7 @@ func (e *StrategyEngine) BuildUserPrompt(ctx *Context) string {
 	return sb.String()
 }
 
-func (e *StrategyEngine) formatPositionInfo(index int, pos PositionInfo, ctx *Context) string {
+func (e *Engine) formatPositionInfo(index int, pos PositionInfo, ctx *Context) string {
 	var sb strings.Builder
 
 	holdingDuration := ""
@@ -206,7 +206,7 @@ var coinSourceLabels = map[string]string{
 	"losers":     "24h loser",
 }
 
-func (e *StrategyEngine) formatCoinSourceTag(sources []string) string {
+func (e *Engine) formatCoinSourceTag(sources []string) string {
 	labels := make([]string, 0, len(sources))
 	for _, source := range sources {
 		if label, ok := coinSourceLabels[source]; ok {

@@ -18,7 +18,7 @@ export function FAQSearchBar({
 }: FAQSearchBarProps) {
   return (
     <div className="group relative">
-      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-vergex-text-muted transition-colors group-focus-within:text-vergex-brand" />
+      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-vergex-muted transition-colors group-focus-within:text-vergex-ink" />
       <input
         type="text"
         value={searchTerm}
@@ -31,7 +31,7 @@ export function FAQSearchBar({
         <Button
           variant="ghost"
           size="icon"
-          className="absolute right-1 top-1/2 size-8 -translate-y-1/2 text-vergex-text-muted"
+          className="absolute right-1 top-1/2 size-8 -translate-y-1/2 text-vergex-muted"
           aria-label={clearLabel}
           onClick={() => onSearchChange('')}
         >

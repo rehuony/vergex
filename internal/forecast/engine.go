@@ -12,8 +12,7 @@ import (
 	"vergex/internal/logger"
 	"vergex/internal/market"
 	"vergex/internal/market/feed"
-	"vergex/internal/safe"
-	"vergex/internal/servicestate"
+	"vergex/internal/service"
 )
 
 const (
@@ -21,11 +20,11 @@ const (
 	verifyBatch      = 2000
 	calibrateEvery   = time.Hour
 	maxCatchUpBars   = 8 // After downtime, only the latest candles get a forecast.
-	derivativesSpan  = 8 * 24 * time.Hour
-	recentRecordRows = 50
+	staleBars        = 3 // A series this far behind is no longer current.
+	recentSignalRows = 50
 )
 
-// Engine records forecasts as candles close, judges them when their target
+// Engine stores forecasts as candles close, judges them when their target
 // candle closes and sends threshold alerts. It reads only local data.
 type Engine struct {
 	Store  *Store
@@ -33,16 +32,24 @@ type Engine struct {
 	now    func() time.Time
 	notify func(ctx context.Context, text string) error
 
-	mu          sync.Mutex
-	skipped     map[int64]string
-	backtesting bool
-	calibrated  time.Time
+	mu             sync.Mutex
+	skipped        map[int64]skip
+	backtesting    bool
+	backtestRun    int64
+	cancelBacktest context.CancelFunc
+	calibrated     time.Time
+}
+
+// skip is why a series has no forecast for its newest candle.
+type skip struct {
+	pending string
+	reason  string
 }
 
 // NewEngine creates an engine over the market data service. notify sends alert
 // text and may be nil.
 func NewEngine(store *Store, service *feed.Service, notify func(ctx context.Context, text string) error) *Engine {
-	return &Engine{Store: store, market: service, now: time.Now, notify: notify, skipped: map[int64]string{}}
+	return &Engine{Store: store, market: service, now: time.Now, notify: notify, skipped: map[int64]skip{}}
 }
 
 // Start runs the engine in the background until ctx ends.
@@ -50,7 +57,10 @@ func (e *Engine) Start(ctx context.Context) {
 	if err := e.Store.failInterruptedBacktests(e.now()); err != nil {
 		logger.Warnf("Forecast: %v", err)
 	}
-	safe.GoNamed("forecast-engine", func() {
+	if err := e.Store.carryForward(e.now()); err != nil {
+		logger.Warnf("Forecast: carry the strategy in use to this engine: %v", err)
+	}
+	service.Go("forecast-engine", func() {
 		ticker := time.NewTicker(engineTick)
 		defer ticker.Stop()
 		for {
@@ -71,35 +81,49 @@ func (e *Engine) Start(ctx context.Context) {
 // Tick does one round of work.
 func (e *Engine) Tick(ctx context.Context) {
 	strategy, err := e.Store.ActiveStrategy(e.now())
-	if err != nil {
-		logger.Warnf("Forecast: read the active strategy: %v", err)
-		servicestate.Set(servicestate.Forecast, servicestate.Failed, err.Error())
+	if errors.Is(err, ErrNoStrategyInUse) {
+		// Nothing new is forecast or alerted, but calls already made are still judged.
+		if failed := e.verify(); failed > 0 {
+			service.Report(service.Forecast, service.Degraded, fmt.Sprintf("%d signals could not be judged", failed))
+		} else {
+			service.Report(service.Forecast, service.Off, err.Error())
+		}
 		return
 	}
-	servicestate.Set(servicestate.Forecast, servicestate.Running, "")
-	created := e.record(strategy)
-	e.verify()
+	if err != nil {
+		logger.Warnf("Forecast: read the active strategy: %v", err)
+		service.Report(service.Forecast, service.Failed, err.Error())
+		return
+	}
+	created, failed := e.record(strategy)
+	failed += e.verify()
+	if failed > 0 {
+		service.Report(service.Forecast, service.Degraded, fmt.Sprintf("%d series or signals could not be worked out", failed))
+	} else {
+		service.Report(service.Forecast, service.Running, "")
+	}
 	e.calibrateIfDue(strategy)
 	e.alert(ctx, created)
 }
 
-// record forecasts every candle that closed since the last round.
-func (e *Engine) record(strategy *Strategy) []Signal {
+// record forecasts every candle that closed since the last round. It also reports how
+// many failed for a reason waiting will not fix.
+func (e *Engine) record(strategy *Strategy) (created []Signal, failed int) {
 	series, err := e.market.Store.ListSeries()
 	if err != nil {
 		logger.Warnf("Forecast: list series: %v", err)
-		return nil
+		return nil, 1
 	}
 	latest, err := e.Store.LatestOpenTimes(strategy.ID)
 	if err != nil {
-		logger.Warnf("Forecast: read latest records: %v", err)
-		return nil
+		logger.Warnf("Forecast: read latest signals: %v", err)
+		return nil, 1
 	}
 	curves, err := e.Store.Calibrations(strategy.ID)
 	if err != nil {
 		logger.Warnf("Forecast: read calibrations: %v", err)
+		failed++
 	}
-	var created []Signal
 	for _, row := range series {
 		// Trading keeps series of its own at intervals Forecast has no settings for.
 		if row.Status != feed.StatusActive || row.LastClosedTime == 0 || intervalMillis(row.Interval) == 0 {
@@ -114,33 +138,84 @@ func (e *Engine) record(strategy *Strategy) []Signal {
 			start = max(last+step, row.LastClosedTime-(maxCatchUpBars-1)*step)
 		}
 		for at := start; at <= row.LastClosedTime; at += step {
-			record, err := e.forecast(strategy, row, at, curves[row.Interval])
+			signal, err := e.forecast(strategy, row, at, curves[row.Interval])
 			if err != nil {
-				e.setSkipped(row.ID, err.Error())
+				if e.noteSkipped(row, err) {
+					failed++
+				}
 				continue
 			}
-			e.setSkipped(row.ID, "")
-			isNew, err := e.Store.SaveSignal(record)
+			e.clearSkipped(row.ID)
+			isNew, err := e.Store.SaveSignal(signal)
 			if err != nil {
 				logger.Warnf("Forecast: save %s %s: %v", row.Symbol, row.Interval, err)
+				failed++
 				continue
 			}
 			if isNew {
-				created = append(created, *record)
+				created = append(created, *signal)
 			}
 		}
 	}
-	return created
+	return created, failed
 }
 
-func (e *Engine) setSkipped(seriesID int64, reason string) {
+// pendingFor says which wait an error stands for, or "" if it is a real failure.
+func pendingFor(err error) string {
+	switch {
+	case errors.Is(err, ErrNotEnoughHistory):
+		return PendingNotEnoughHistory
+	case errors.Is(err, feed.ErrIncomplete):
+		return PendingNotContinuous
+	case errors.Is(err, ErrNothingToRead):
+		return PendingWaiting
+	}
+	return ""
+}
+
+// noteSkipped remembers why a series has no forecast and says whether it is a real
+// failure. A real failure is logged once, not on every round.
+func (e *Engine) noteSkipped(row *feed.Series, err error) (failed bool) {
+	pending := pendingFor(err)
+	failed = pending == ""
+	if failed {
+		pending = PendingWaiting
+	}
+	e.mu.Lock()
+	held := e.skipped[row.ID]
+	e.skipped[row.ID] = skip{pending: pending, reason: err.Error()}
+	e.mu.Unlock()
+	if failed && held.reason != err.Error() {
+		logger.Warnf("Forecast: %s %s: %v", row.Symbol, row.Interval, err)
+	}
+	return failed
+}
+
+func (e *Engine) clearSkipped(seriesID int64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if reason == "" {
-		delete(e.skipped, seriesID)
-	} else {
-		e.skipped[seriesID] = reason
+	delete(e.skipped, seriesID)
+}
+
+// pendingOf says why a series has no forecast yet.
+func (e *Engine) pendingOf(row *feed.Series) string {
+	if row.LastClosedTime == 0 {
+		if row.FailCount > 0 {
+			return PendingUnavailable
+		}
+		return PendingFetching
 	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if held, known := e.skipped[row.ID]; known {
+		return held.pending
+	}
+	return PendingWaiting
+}
+
+// isStale says a candle is further behind than a series that is keeping up can be.
+func isStale(openTime, step, now int64) bool {
+	return now-openTime > staleBars*step
 }
 
 // evaluateAt forecasts a series at one candle from local data.
@@ -152,11 +227,12 @@ func (e *Engine) evaluateAt(strategy *Strategy, series *feed.Series, at int64) (
 		}
 		return Result{}, err
 	}
-	readings, err := readingsFrom(e.market.Store, series.Symbol, at-derivativesSpan.Milliseconds(), at)
+	step := feed.IntervalMillis(series.Interval)
+	moment := readingTime(at, step)
+	readings, err := readingsFrom(e.market.Store, series.Symbol, moment-readingsSpan(step), moment)
 	if err != nil {
 		return Result{}, err
 	}
-	step := feed.IntervalMillis(series.Interval)
 	return Evaluate(strategy.Config, series.Interval, feed.ToKlines(candles, series.Interval), DerivativesAt(readings, at, step))
 }
 
@@ -187,7 +263,10 @@ func (e *Engine) forecast(strategy *Strategy, series *feed.Series, at int64, cur
 	if err != nil {
 		return nil, err
 	}
-	step := feed.IntervalMillis(series.Interval)
+	return signalFrom(strategy, series, at, result, curve), nil
+}
+
+func signalFrom(strategy *Strategy, series *feed.Series, at int64, result Result, curve []Knot) *Signal {
 	display := result.ProbFull
 	calibrated := len(curve) > 0
 	if calibrated {
@@ -198,62 +277,67 @@ func (e *Engine) forecast(strategy *Strategy, series *feed.Series, at int64, cur
 		Close: result.Close, ProbCandles: result.ProbCandles, ProbFull: result.ProbFull, DisplayProb: display, Calibrated: calibrated,
 		Direction: result.Direction, Confidence: result.Confidence, ExpectedMovePct: result.ExpectedMovePct,
 		Support: result.Support, Resistance: result.Resistance, Regime: result.Regime, Horizon: result.Horizon,
-		TargetTime: at + int64(result.Horizon)*step, Status: StatusOpen,
-	}, nil
+		TargetTime: at + int64(result.Horizon)*feed.IntervalMillis(series.Interval), Status: StatusOpen,
+	}
 }
 
-// verify judges records whose target candle has closed.
-func (e *Engine) verify() {
+// currentSignal is the forecast of a series' newest closed candle: what was stored, or
+// until the next round stores it, the same thing worked out now. It is the one source
+// for what a page shows of a call, so a page and what was stored cannot disagree.
+func (e *Engine) currentSignal(strategy *Strategy, series *feed.Series, result Result, stored []Signal) (*Signal, error) {
+	if len(stored) > 0 && stored[0].OpenTime == series.LastClosedTime {
+		return &stored[0], nil
+	}
+	curves, err := e.Store.Calibrations(strategy.ID)
+	if err != nil {
+		return nil, err
+	}
+	return signalFrom(strategy, series, series.LastClosedTime, result, curves[series.Interval]), nil
+}
+
+// verify judges signals whose target candle has closed, and says how many it could not.
+func (e *Engine) verify() (failed int) {
 	now := e.now().UnixMilli()
-	records, err := e.Store.DueSignals(now, verifyBatch)
+	due, err := e.Store.DueSignals(verifyBatch)
 	if err != nil {
-		logger.Warnf("Forecast: read due records: %v", err)
-		return
+		logger.Warnf("Forecast: read due signals: %v", err)
+		return 1
 	}
-	series, err := e.market.Store.ListSeries()
-	if err != nil {
-		return
-	}
-	byID := make(map[int64]*feed.Series, len(series))
-	for _, row := range series {
-		byID[row.ID] = row
-	}
-	for i := range records {
-		record := &records[i]
-		row := byID[record.SeriesID]
-		if row == nil || row.LastClosedTime < record.TargetTime {
-			continue // Not there yet.
-		}
-		candles, err := e.market.Store.Range(record.SeriesID, record.TargetTime, record.TargetTime)
+	for i := range due {
+		signal := &due[i]
+		candles, err := e.market.Store.Range(signal.SeriesID, signal.TargetTime, signal.TargetTime)
 		if err != nil {
 			logger.Warnf("Forecast: read target candle: %v", err)
+			failed++
 			continue
 		}
 		if len(candles) == 0 {
-			record.Status = StatusVoid
-			record.VerifiedAt = now
+			signal.Status = StatusVoid
+			signal.VerifiedAt = now
 		} else {
-			Judge(record, candles[0].Close, now)
+			Judge(signal, candles[0].Close, now)
 		}
-		if err := e.Store.saveVerification(record, feed.IntervalMillis(record.Interval)); err != nil {
+		if err := e.Store.saveVerification(signal, feed.IntervalMillis(signal.Interval)); err != nil {
 			logger.Warnf("Forecast: save verification: %v", err)
+			failed++
 		}
 	}
+	return failed
 }
 
-// Judge fills in how a record turned out, given its target candle's close.
-func Judge(record *Signal, targetClose float64, now int64) {
-	record.Status = StatusVerified
-	record.TargetClose = targetClose
-	record.VerifiedAt = now
-	record.ActualMovePct = (targetClose/record.Close - 1) * 100
+// Judge fills in how a signal turned out, given its target candle's close.
+func Judge(signal *Signal, targetClose float64, now int64) {
+	signal.Status = StatusVerified
+	signal.TargetClose = targetClose
+	signal.VerifiedAt = now
+	signal.ActualMovePct = (targetClose/signal.Close - 1) * 100
 	switch {
-	case record.Direction == DirectionNeutral || targetClose == record.Close:
-		record.Outcome = OutcomeNeutral
-	case (record.Direction == DirectionUp) == (targetClose > record.Close):
-		record.Outcome = OutcomeHit
+	case signal.Direction == DirectionNeutral || targetClose == signal.Close:
+		signal.Outcome = OutcomeNeutral
+	case (signal.Direction == DirectionUp) == (targetClose > signal.Close):
+		signal.Outcome = OutcomeHit
 	default:
-		record.Outcome = OutcomeMiss
+		signal.Outcome = OutcomeMiss
 	}
 }
 
@@ -274,27 +358,29 @@ func (e *Engine) calibrateIfDue(strategy *Strategy) {
 	}
 }
 
-// Calibrate rebuilds an interval's curve from verified forecasts that do not
-// overlap, once there are enough of them.
+// Calibrate rebuilds an interval's curve from verified forecasts that do not overlap,
+// or removes it once those no longer earn one.
 func (e *Engine) Calibrate(strategy *Strategy, interval string) error {
 	points, err := e.Store.IndependentPoints(strategy.ID, interval)
 	if err != nil {
 		return err
 	}
-	if len(points) < MinCalibrationSamples {
-		return nil
+	knots, earned := EarnCalibration(points)
+	if !earned {
+		return e.Store.removeCalibration(strategy.ID, interval)
 	}
 	return e.Store.saveCalibration(Calibration{
 		StrategyID: strategy.ID, Interval: interval, Samples: len(points),
-		Knots: encodeKnots(FitCalibration(points)), BuiltAt: e.now().UnixMilli(),
+		Knots: encodeKnots(knots), BuiltAt: e.now().UnixMilli(),
 	})
 }
 
 // Score is a probability as the 0-100 number shown to the user.
 func Score(prob float64) int { return int(math.Round(prob * 100)) }
 
-// alert sends watchlist signals crossing the threshold, once each time: a series
-// that alerted is silent until its score comes back inside.
+// alert sends watchlist calls crossing the threshold, once each time: a series that
+// alerted is silent until its score comes back inside. After downtime a series catches
+// up on several candles, and only the newest can alert, if it has only just closed.
 func (e *Engine) alert(ctx context.Context, created []Signal) {
 	if e.notify == nil || len(created) == 0 {
 		return
@@ -311,22 +397,26 @@ func (e *Engine) alert(ctx context.Context, created []Signal) {
 	for _, symbol := range marketSettings.Watchlist {
 		watched[symbol] = true
 	}
-	var lines []string
-	var fired []int64
-	var rearmed []int64
+	newest := map[int64]*Signal{}
 	for i := range created {
-		record := &created[i]
-		if !watched[record.Symbol] {
+		if held := newest[created[i].SeriesID]; held == nil || created[i].OpenTime > held.OpenTime {
+			newest[created[i].SeriesID] = &created[i]
+		}
+	}
+	now := e.now().UnixMilli()
+	var lines []string
+	var fired, rearmed []int64
+	for i := range created {
+		signal := &created[i]
+		if newest[signal.SeriesID] != signal || !watched[signal.Symbol] {
 			continue
 		}
-		score := Score(record.DisplayProb)
-		beyond := score >= settings.AlertThreshold || score <= 100-settings.AlertThreshold
 		switch {
-		case beyond && !e.Store.alertArm(record.SeriesID):
-			lines = append(lines, alertLine(record, score))
-			fired = append(fired, record.SeriesID)
-		case !beyond:
-			rearmed = append(rearmed, record.SeriesID)
+		case !beyondThreshold(signal, settings.AlertThreshold):
+			rearmed = append(rearmed, signal.SeriesID)
+		case now < signal.OpenTime+2*intervalMillis(signal.Interval) && !e.Store.alertArm(signal.SeriesID):
+			lines = append(lines, alertLine(signal))
+			fired = append(fired, signal.SeriesID)
 		}
 	}
 	for _, seriesID := range rearmed {
@@ -348,23 +438,30 @@ func (e *Engine) alert(ctx context.Context, created []Signal) {
 	}
 }
 
-func alertLine(record *Signal, score int) string {
-	direction := "Up"
-	if record.DisplayProb < 0.5 {
-		direction = "Down"
+// beyondThreshold says whether a call's score is past the threshold on the call's own
+// side. A neutral call has no side, and a curve can put a score on the other one.
+func beyondThreshold(signal *Signal, threshold int) bool {
+	score := Score(signal.DisplayProb)
+	switch signal.Direction {
+	case DirectionUp:
+		return score >= threshold
+	case DirectionDown:
+		return score <= 100-threshold
 	}
-	value := fmt.Sprintf("Score %d", score)
-	if record.Calibrated {
-		value = fmt.Sprintf("%d%%", score)
-	}
-	return fmt.Sprintf("Forecast %s %s: %s, %s over the next %d bars", record.Symbol, record.Interval, direction, value, record.Horizon)
+	return false
 }
 
-// SeriesSkipReason says why a series has no current forecast, if it is known.
-func (e *Engine) SeriesSkipReason(seriesID int64) string {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.skipped[seriesID]
+func alertLine(signal *Signal) string {
+	direction := "Up"
+	if signal.Direction == DirectionDown {
+		direction = "Down"
+	}
+	score := Score(signal.DisplayProb)
+	value := fmt.Sprintf("Score %d", score)
+	if signal.Calibrated {
+		value = fmt.Sprintf("%d%%", score)
+	}
+	return fmt.Sprintf("Forecast %s %s: %s, %s over the next %d bars", signal.Symbol, signal.Interval, direction, value, signal.Horizon)
 }
 
 // Candles reads local candles as Klines, for backtests.
@@ -388,32 +485,40 @@ func (e *Engine) Readings(symbol string, from, to int64) (Readings, error) {
 	return readingsFrom(e.market.Store, symbol, from, to)
 }
 
+// ErrBacktestRunning refuses a second backtest while one runs.
+var ErrBacktestRunning = errors.New("a backtest is already running")
+
 // StartBacktest runs a backtest in the background, one at a time. It reads only
 // the local store and never requests anything from the exchange.
-func (e *Engine) StartBacktest(ctx context.Context, strategyID string, options BacktestOptions) (*Backtest, error) {
-	strategy, err := e.Store.StrategyByID(strategyID)
+func (e *Engine) StartBacktest(ctx context.Context, strategyID, name string, options BacktestOptions) (*Backtest, error) {
+	strategy, err := e.Store.usableStrategy(strategyID)
 	if err != nil {
-		return nil, errors.New("strategy strategy not found")
+		return nil, err
 	}
 	e.mu.Lock()
 	if e.backtesting {
 		e.mu.Unlock()
-		return nil, errors.New("a backtest is already running")
+		return nil, ErrBacktestRunning
 	}
 	e.backtesting = true
 	e.mu.Unlock()
 
-	run, err := e.Store.CreateBacktest(strategyID, options, e.now())
+	run, err := e.Store.CreateBacktest(strategyID, name, options, e.now())
 	if err != nil {
 		e.mu.Lock()
 		e.backtesting = false
 		e.mu.Unlock()
 		return nil, err
 	}
-	safe.GoNamed("forecast-backtest", func() {
+	ctx, cancel := context.WithCancel(ctx)
+	e.mu.Lock()
+	e.backtestRun, e.cancelBacktest = run.ID, cancel
+	e.mu.Unlock()
+	service.Go("forecast-backtest", func() {
 		defer func() {
+			cancel()
 			e.mu.Lock()
-			e.backtesting = false
+			e.backtesting, e.backtestRun, e.cancelBacktest = false, 0, nil
 			e.mu.Unlock()
 		}()
 		report, err := RunBacktest(ctx, e, strategy.Config, options, func(done, _ int) {
@@ -421,15 +526,29 @@ func (e *Engine) StartBacktest(ctx context.Context, strategyID string, options B
 				logger.Warnf("Forecast: %v", err)
 			}
 		})
-		failure := ""
+		saved, failure := &report, ""
 		if err != nil {
-			failure = err.Error()
+			saved, failure = nil, err.Error()
+			if errors.Is(err, context.Canceled) {
+				failure = BacktestCanceled
+			}
 		}
-		if err := e.Store.finishBacktest(run.ID, &report, failure, e.now()); err != nil {
+		if err := e.Store.finishBacktest(run.ID, saved, failure, e.now()); err != nil {
 			logger.Warnf("Forecast: save backtest: %v", err)
 		}
 	})
 	return run, nil
+}
+
+// CancelBacktest stops a running backtest. It reports false if that run is not going.
+func (e *Engine) CancelBacktest(id int64) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.backtestRun != id || e.cancelBacktest == nil {
+		return false
+	}
+	e.cancelBacktest()
+	return true
 }
 
 // Why a coin has no forecast yet.
@@ -439,71 +558,75 @@ const (
 	PendingNotEnoughHistory = "not_enough_history"
 	PendingNotContinuous    = "not_continuous"
 	PendingUnavailable      = "unavailable" // The exchange has no such coin.
+	PendingNoStrategy       = "no_strategy" // Every strategy has been stopped.
 )
 
-// CoinSignal is one row of the signal table: a series and its latest forecast.
-type CoinSignal struct {
+// Coin is one row of the coin list: a series and its latest forecast.
+type Coin struct {
 	Symbol   string   `json:"symbol"`
 	Interval string   `json:"interval"`
 	Tier     int      `json:"tier"`
 	Price    *float64 `json:"price"`
-	Signal   *Signal  `json:"record"`
-	Stale    bool     `json:"stale"`
+	// Change24hPct is known only while the live stream is up.
+	Change24hPct *float64 `json:"change_24h_pct"`
+	Signal       *Signal  `json:"signal"`
+	Stale        bool     `json:"stale"`
 	// Pending says why there is no forecast yet.
 	Pending string `json:"pending,omitempty"`
 }
 
-// Signals lists every tracked coin at an interval with its latest forecast.
-func (e *Engine) Signals(strategy *Strategy, interval string, prices map[string]float64) ([]CoinSignal, error) {
+// Coins lists every tracked coin at an interval with its latest forecast.
+func (e *Engine) Coins(strategy *Strategy, interval string, prices map[string]feed.Quote) ([]Coin, error) {
 	series, err := e.market.Store.ListSeries()
 	if err != nil {
 		return nil, err
 	}
-	records, err := e.Store.LatestSignals(strategy.ID, interval)
+	signals, err := e.Store.LatestSignals(strategy.ID, interval)
 	if err != nil {
 		return nil, err
 	}
-	bySeries := make(map[int64]*Signal, len(records))
-	for i := range records {
-		bySeries[records[i].SeriesID] = &records[i]
+	bySeries := make(map[int64]*Signal, len(signals))
+	for i := range signals {
+		bySeries[signals[i].SeriesID] = &signals[i]
 	}
 	now := e.now().UnixMilli()
 	step := intervalMillis(interval)
-	signals := []CoinSignal{}
+	coins := []Coin{}
 	for _, row := range series {
 		if row.Status != feed.StatusActive || row.Interval != interval {
 			continue
 		}
-		signal := CoinSignal{Symbol: row.Symbol, Interval: interval, Tier: row.Tier, Signal: bySeries[row.ID]}
-		if price, ok := prices[row.Symbol]; ok {
-			signal.Price = &price
+		coin := Coin{Symbol: row.Symbol, Interval: interval, Tier: row.Tier, Signal: bySeries[row.ID]}
+		if quote, ok := prices[row.Symbol]; ok {
+			coin.Price, coin.Change24hPct = &quote.Price, quote.Change24hPct
 		}
-		switch {
-		case signal.Signal != nil:
-			signal.Stale = now-signal.Signal.OpenTime > 3*step
-		case row.LastClosedTime == 0:
-			signal.Pending = PendingFetching
-		default:
-			signal.Pending = PendingWaiting
-			if e.SeriesSkipReason(row.ID) == ErrNotEnoughHistory.Error() {
-				signal.Pending = PendingNotEnoughHistory
-			}
+		if coin.Signal != nil {
+			coin.Stale = isStale(coin.Signal.OpenTime, step, now)
+		} else {
+			coin.Pending = e.pendingOf(row)
 		}
-		signals = append(signals, signal)
+		coins = append(coins, coin)
 	}
-	return signals, nil
+	return coins, nil
 }
 
 // Detail is everything the forecast page shows for one coin at one interval.
 type Detail struct {
-	Symbol     string      `json:"symbol"`
-	Interval   string      `json:"interval"`
-	Price      *float64    `json:"price"`
-	Ready      bool        `json:"ready"`
-	Pending    string      `json:"pending,omitempty"`
+	Symbol   string   `json:"symbol"`
+	Interval string   `json:"interval"`
+	Price    *float64 `json:"price"`
+	// Change24hPct is known only while the live stream is up.
+	Change24hPct *float64 `json:"change_24h_pct"`
+	Ready        bool     `json:"ready"`
+	Pending      string   `json:"pending,omitempty"`
+	// Stale says the newest candle is further behind than a series keeping up can be.
+	Stale bool `json:"stale"`
+	// Latest is the call to show: the forecast of the newest closed candle, or while
+	// there is none, the newest on record.
+	Latest *Signal `json:"latest"`
+	// Result holds what a signal does not keep, such as its factors.
 	Result     *Result     `json:"result"`
-	Latest     *Signal     `json:"latest"`
-	Records    []Signal    `json:"records"`
+	Signals    []Signal    `json:"signals"`
 	Stats      SignalStats `json:"stats"`
 	Candles    []CandleRow `json:"candles"`
 	LastClosed int64       `json:"last_closed"`
@@ -535,23 +658,21 @@ type DetailOptions struct {
 
 // Detail opens a coin, putting it first in the queue if it is not ready, and
 // works out its factors with the same function that made the forecast.
-func (e *Engine) Detail(strategy *Strategy, symbol, interval string, prices map[string]float64, options DetailOptions) (*Detail, error) {
+func (e *Engine) Detail(strategy *Strategy, symbol, interval string, prices map[string]feed.Quote, options DetailOptions) (*Detail, error) {
 	series, err := e.market.Open(symbol, interval)
 	if err != nil {
 		return nil, err
 	}
-	detail := &Detail{Symbol: symbol, Interval: interval, Records: []Signal{}, Candles: []CandleRow{}, Projection: []CandleRow{}, LastClosed: series.LastClosedTime}
-	if price, ok := prices[symbol]; ok {
-		detail.Price = &price
+	detail := &Detail{Symbol: symbol, Interval: interval, Signals: []Signal{}, Candles: []CandleRow{}, Projection: []CandleRow{}, LastClosed: series.LastClosedTime}
+	if quote, ok := prices[symbol]; ok {
+		detail.Price, detail.Change24hPct = &quote.Price, quote.Change24hPct
 	}
 	if series.LastClosedTime == 0 {
-		detail.Pending = PendingFetching
-		if series.FailCount > 0 {
-			detail.Pending = PendingUnavailable
-		}
+		detail.Pending = e.pendingOf(series)
 		return detail, nil
 	}
 	step := feed.IntervalMillis(interval)
+	detail.Stale = isStale(series.LastClosedTime, step, e.now().UnixMilli())
 	candles, err := e.market.Store.Range(series.ID, series.LastClosedTime-(detailCandles-1)*step, series.LastClosedTime)
 	if err != nil {
 		return nil, err
@@ -562,34 +683,30 @@ func (e *Engine) Detail(strategy *Strategy, symbol, interval string, prices map[
 	if live, ok := e.market.FormingCandle(symbol, interval, series.LastClosedTime); ok {
 		detail.Forming = &CandleRow{Time: live.OpenTime / 1000, Open: live.Open, High: live.High, Low: live.Low, Close: live.Close, Volume: live.Volume}
 	}
-	result, err := e.evaluateAt(strategy, series, series.LastClosedTime)
-	switch {
-	case errors.Is(err, ErrNotEnoughHistory):
-		detail.Pending = PendingNotEnoughHistory
-	case err != nil:
-		detail.Pending = PendingNotContinuous
-	default:
-		detail.Ready = true
-		detail.Result = &result
-	}
-	records, err := e.Store.RecentSignals(strategy.ID, series.ID, recentRecordRows)
+	signals, err := e.Store.RecentSignals(strategy.ID, series.ID, recentSignalRows)
 	if err != nil {
 		return nil, err
 	}
-	detail.Records = records
-	if len(records) > 0 {
-		detail.Latest = &records[0]
+	detail.Signals = signals
+	if len(signals) > 0 {
+		detail.Latest = &signals[0]
 	}
 	detail.Stats, err = e.Store.SignalStats(strategy.ID, series.ID)
 	if err != nil {
 		return nil, err
 	}
-	if detail.Result != nil {
-		prob := detail.Result.ProbFull
-		if detail.Latest != nil && detail.Latest.OpenTime == series.LastClosedTime {
-			prob = detail.Latest.DisplayProb
+	result, err := e.evaluateAt(strategy, series, series.LastClosedTime)
+	if pending := pendingFor(err); pending != "" {
+		detail.Pending = pending
+	} else if err != nil {
+		return nil, err
+	} else {
+		detail.Ready = true
+		detail.Result = &result
+		if detail.Latest, err = e.currentSignal(strategy, series, result, signals); err != nil {
+			return nil, err
 		}
-		detail.Projection = Project(*detail.Result, prob, series.LastClosedTime, step)
+		detail.Projection = Project(*detail.Latest, step)
 	}
 	if options.Indicators {
 		if err := e.addIndicators(detail, series, step); err != nil {
@@ -637,37 +754,34 @@ func (e *Engine) OverlayFor(strategy *Strategy, symbol, interval string) (*Overl
 	overlay := &Overlay{Symbol: symbol, Interval: interval, Projection: []CandleRow{}}
 	step := feed.IntervalMillis(interval)
 	switch {
-	case series.LastClosedTime == 0 && series.FailCount > 0:
-		overlay.Pending = PendingUnavailable
+	case series.LastClosedTime == 0:
+		overlay.Pending = e.pendingOf(series)
 		return overlay, nil
-	case series.LastClosedTime == 0 || e.now().UnixMilli()-series.LastClosedTime > 3*step:
+	case isStale(series.LastClosedTime, step, e.now().UnixMilli()):
 		overlay.Pending = PendingFetching
 		return overlay, nil
 	}
 	result, err := e.evaluateAt(strategy, series, series.LastClosedTime)
-	switch {
-	case errors.Is(err, ErrNotEnoughHistory):
-		overlay.Pending = PendingNotEnoughHistory
+	if pending := pendingFor(err); pending != "" {
+		overlay.Pending = pending
 		return overlay, nil
-	case err != nil:
-		overlay.Pending = PendingNotContinuous
-		return overlay, nil
+	} else if err != nil {
+		return nil, err
 	}
-	overlay.Direction = result.Direction
-	overlay.DisplayProb = result.ProbFull
-	records, err := e.Store.RecentSignals(strategy.ID, series.ID, 1)
+	stored, err := e.Store.RecentSignals(strategy.ID, series.ID, 1)
 	if err != nil {
 		return nil, err
 	}
-	if len(records) > 0 && records[0].OpenTime == series.LastClosedTime {
-		overlay.DisplayProb = records[0].DisplayProb
-		overlay.Calibrated = records[0].Calibrated
+	latest, err := e.currentSignal(strategy, series, result, stored)
+	if err != nil {
+		return nil, err
 	}
+	overlay.Direction, overlay.DisplayProb, overlay.Calibrated = latest.Direction, latest.DisplayProb, latest.Calibrated
 	overlay.Stats, err = e.Store.SignalStats(strategy.ID, series.ID)
 	if err != nil {
 		return nil, err
 	}
-	overlay.Projection = Project(result, overlay.DisplayProb, series.LastClosedTime, step)
+	overlay.Projection = Project(*latest, step)
 	return overlay, nil
 }
 

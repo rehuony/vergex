@@ -9,17 +9,17 @@ import (
 	"testing"
 	"time"
 
+	"vergex/internal/account"
 	"vergex/internal/agent"
+	"vergex/internal/database/testdb"
 	"vergex/internal/market"
-	"vergex/internal/store"
-	"vergex/internal/store/storetest"
 	traderagent "vergex/internal/trader/agent"
-	"vergex/internal/trading"
+	"vergex/internal/trader/kind"
 )
 
 // fakeAccount is an empty account on an imaginary exchange. Embedding the interface
 // makes any other call panic, so a cycle that tried to trade would fail the test.
-type fakeAccount struct{ trading.Trader }
+type fakeAccount struct{ account.Trading }
 
 func (fakeAccount) GetBalance() (map[string]any, error) {
 	return map[string]any{"totalWalletBalance": 1000.0, "availableBalance": 1000.0, "totalEquity": 1000.0}, nil
@@ -62,32 +62,31 @@ func cycleModel(t *testing.T, status int, onCall func()) (agent.Client, *string)
 	return client, &sent
 }
 
-func cycleTrader(t *testing.T, client agent.Client) (*AutoTrader, *store.Store) {
+func cycleTrader(t *testing.T, client agent.Client) (*AutoTrader, *Stores) {
 	t.Helper()
-	st := storetest.New(t)
-	t.Cleanup(func() { _ = st.Close() })
-	trader := storetest.AddTrader(t, st, &store.Trader{Name: "test"})
+	st := NewStores(testdb.Open(t))
+	trader := testdb.AddTrader(t, st.DB, &testdb.Trader{Name: "test"})
 	// No candles and no way to reach an exchange for them: the prompts go out without.
 	market.SetLiveSource(&fakeMarks{marks: map[string]float64{}})
 
-	config := store.GetDefaultStrategyConfig("en")
+	config := kind.DefaultAgent()
 	config.CoinSource.SourceType = "static"
 	config.CoinSource.StaticCoins = []string{"BTCUSDT"}
 	return &AutoTrader{
-		id: trader.ID, name: trader.Name, userID: trader.UserID, isRunning: true, store: st,
+		id: trader.ID, name: trader.Name, userID: trader.UserID, isRunning: true, stores: st,
 		trader: fakeAccount{}, agentClient: client, initialBalance: 1000,
-		strategyEngine:        traderagent.NewStrategyEngine(&config),
+		engine:                traderagent.NewEngine(config),
 		positionFirstSeenTime: map[string]int64{},
 		peakPnLCache:          map[string]float64{},
 	}, st
 }
 
 // waitForMessages polls: messages are stored in the background.
-func waitForMessages(t *testing.T, st *store.Store, conversationID string, want int) []store.AgentMessage {
+func waitForMessages(t *testing.T, st *Stores, conversationID string, want int) []agent.ConversationMessage {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		messages, err := st.AgentConversation().Messages(conversationID)
+		messages, err := st.Conversations.Messages(conversationID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -101,9 +100,9 @@ func waitForMessages(t *testing.T, st *store.Store, conversationID string, want 
 	}
 }
 
-func lastConversation(t *testing.T, st *store.Store, at *AutoTrader) *store.AgentConversation {
+func lastConversation(t *testing.T, st *Stores, at *AutoTrader) *agent.Conversation {
 	t.Helper()
-	conversation, err := st.AgentConversation().Latest(at.userID, store.FeatureTrader, at.id)
+	conversation, err := st.Conversations.Latest(at.userID, agent.FeatureTrader, at.id)
 	if err != nil {
 		t.Fatalf("conversation: %v", err)
 	}
@@ -129,7 +128,7 @@ func TestACycleKeepsWhatWasSaidWithItsThinking(t *testing.T) {
 		t.Fatalf("the call reported conversation %q, want %q", reported, conversation.ID)
 	}
 	messages := waitForMessages(t, st, conversation.ID, 3)
-	if len(messages) != 3 || messages[0].Role != store.RoleSystem || messages[1].Role != store.RoleUser || messages[2].Role != store.RoleAssistant {
+	if len(messages) != 3 || messages[0].Role != agent.RoleSystem || messages[1].Role != agent.RoleUser || messages[2].Role != agent.RoleAssistant {
 		t.Fatalf("messages = %+v", messages)
 	}
 	if messages[0].Content == "" || messages[1].Content == "" {
@@ -148,15 +147,15 @@ func TestACycleWhoseModelFailedKeepsWhatWasSent(t *testing.T) {
 		t.Fatal("a failed model call is still reported")
 	}
 	messages := waitForMessages(t, st, lastConversation(t, st, at).ID, 2)
-	if len(messages) != 2 || messages[1].Role != store.RoleUser {
+	if len(messages) != 2 || messages[1].Role != agent.RoleUser {
 		t.Fatalf("messages = %+v", messages)
 	}
 }
 
 // savedCycle is the cycle's own record, which reaching the end of a cycle leaves.
-func savedCycle(t *testing.T, st *store.Store, at *AutoTrader) *store.DecisionRecord {
+func savedCycle(t *testing.T, st *Stores, at *AutoTrader) *DecisionRecord {
 	t.Helper()
-	records, err := st.Decision().GetSummaries(at.id, 1, 0)
+	records, err := st.Decisions.GetSummaries(at.id, 1, 0)
 	if err != nil || len(records) != 1 {
 		t.Fatalf("records = %d, err %v", len(records), err)
 	}
@@ -166,7 +165,7 @@ func savedCycle(t *testing.T, st *store.Store, at *AutoTrader) *store.DecisionRe
 func TestAConversationThatCannotBeSavedDoesNotStopACycle(t *testing.T) {
 	client, sent := cycleModel(t, http.StatusOK, nil)
 	at, st := cycleTrader(t, client)
-	if err := st.GormDB().Exec(`ALTER TABLE agent.conversations RENAME TO conversations_gone`).Error; err != nil {
+	if err := st.DB.Exec(`ALTER TABLE agent.conversations RENAME TO conversations_gone`).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -184,9 +183,9 @@ func TestAConversationThatCannotBeSavedDoesNotStopACycle(t *testing.T) {
 
 // holdTable keeps a table locked until the returned func runs, as a database stuck on
 // it would.
-func holdTable(t *testing.T, st *store.Store, table string) func() {
+func holdTable(t *testing.T, st *Stores, table string) func() {
 	t.Helper()
-	tx := st.GormDB().Begin()
+	tx := st.DB.Begin()
 	if tx.Error != nil {
 		t.Fatal(tx.Error)
 	}
@@ -218,7 +217,7 @@ func TestAStuckConversationDoesNotHoldACycleUp(t *testing.T) {
 	// Past its wait the write gives up and says so; nothing else comes of it.
 	time.Sleep(conversationWait + 500*time.Millisecond)
 	release()
-	if messages, err := st.AgentConversation().Messages(lastConversation(t, st, at).ID); err != nil || len(messages) != 0 {
+	if messages, err := st.Conversations.Messages(lastConversation(t, st, at).ID); err != nil || len(messages) != 0 {
 		t.Fatalf("messages = %+v, err %v", messages, err)
 	}
 }

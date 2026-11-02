@@ -10,9 +10,9 @@ it('lets a single button override the shared style with Tailwind classes', () =>
     </Button>
   )
   const button = screen.getByRole('button', { name: 'Save' })
-  expect(button).toHaveClass('h-11', 'bg-vergex-danger', 'rounded-lg')
-  expect(button).not.toHaveClass('h-10')
-  expect(button).not.toHaveClass('bg-vergex-brand')
+  expect(button).toHaveClass('h-11', 'bg-vergex-danger', 'rounded-full')
+  expect(button).not.toHaveClass('h-9')
+  expect(button).not.toHaveClass('bg-vergex-ink')
 })
 
 it('styles a router link as a button', () => {
@@ -25,12 +25,12 @@ it('styles a router link as a button', () => {
   )
   const link = screen.getByRole('link', { name: 'Connections' })
   expect(link).toHaveAttribute('href', '/connections')
-  expect(link).toHaveClass('border', 'h-10')
+  expect(link).toHaveClass('border', 'h-9')
 })
 
 it('keeps a text link free of the size box', () => {
   render(<Button variant="link">Manage account</Button>)
   const button = screen.getByRole('button', { name: 'Manage account' })
   expect(button).toHaveClass('h-auto', 'px-0')
-  expect(button).not.toHaveClass('h-10')
+  expect(button).not.toHaveClass('h-9')
 })

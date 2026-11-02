@@ -25,15 +25,3 @@ export function stripLeadingIcons(input: string | undefined | null): string {
 
   return s.trim()
 }
-
-// East Asian wide and full-width ranges: Hangul Jamo, CJK and Yi, Hangul
-// syllables, compatibility ideographs, vertical forms and full-width forms.
-const WIDE =
-  /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/
-
-/** Rough rendered width in half-width units: wide characters count as two. */
-export function displayWidth(text: string): number {
-  let width = 0
-  for (const char of text) width += WIDE.test(char) ? 2 : 1
-  return width
-}

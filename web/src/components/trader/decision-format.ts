@@ -75,8 +75,8 @@ export function tradeActions(record: DecisionRecord) {
   )
 }
 
-// A cycle's aggregate flag can be wrong on older records, so failed orders also
-// count as a fault.
+// A cycle's own flag only says the cycle ran, so failed orders also count as a
+// fault.
 export function cycleFault(record: DecisionRecord) {
   const failed = tradeActions(record).filter((a) => !a.success).length
   return { failed, fault: !record.success || failed > 0 }

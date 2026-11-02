@@ -9,8 +9,7 @@ import (
 	"time"
 	"vergex/internal/agent"
 	"vergex/internal/logger"
-	"vergex/internal/market"
-	"vergex/internal/store"
+	"vergex/internal/trader/kind"
 )
 
 // ============================================================================
@@ -47,21 +46,22 @@ func callModel(client agent.Client, conversationID, systemPrompt, userPrompt str
 	})
 }
 
-// GetFullDecisionWithStrategy uses StrategyEngine to get agent decision (unified prompt
+// GetFullDecision uses the engine to get an agent decision (unified prompt
 // generation). Once the model has been called the decision is returned even with an
 // error, so what was sent stays on record.
-func GetFullDecisionWithStrategy(ctx *Context, agentClient agent.Client, engine *StrategyEngine, variant string, open OpenConversation) (*FullDecision, error) {
+func GetFullDecision(ctx *Context, agentClient agent.Client, engine *Engine, variant string, open OpenConversation) (*FullDecision, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("context is nil")
 	}
 	if engine == nil {
-		defaultConfig := store.GetDefaultStrategyConfig("en")
-		engine = NewStrategyEngine(&defaultConfig)
+		engine = NewEngine(kind.DefaultAgent())
 	}
 
-	// Clamp strategy limits to prevent token overflow
+	// Check the limits to prevent token overflow
 	engineConfig := engine.GetConfig()
-	engineConfig.ClampLimits()
+	if err := engineConfig.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
 
 	// Token estimation check — block if exceeding the specific model's context limit
 	estimate := engineConfig.EstimateTokens()
@@ -72,7 +72,7 @@ func GetFullDecisionWithStrategy(ctx *Context, agentClient agent.Client, engine 
 	if embedder, ok := agentClient.(agent.ClientEmbedder); ok {
 		base := embedder.Base()
 		providerName = base.Provider
-		contextLimit = store.GetContextLimitForClient(base.Provider, base.Model)
+		contextLimit = kind.ContextLimit(base.Provider)
 	}
 
 	if estimate.Total > contextLimit {
@@ -86,9 +86,9 @@ func GetFullDecisionWithStrategy(ctx *Context, agentClient agent.Client, engine 
 			estimate.Total, providerName, contextLimit)
 	}
 
-	// 1. Fetch market data using strategy config
+	// 1. Fetch market data using the config
 	if len(ctx.MarketDataMap) == 0 {
-		if err := fetchMarketDataWithStrategy(ctx, engine); err != nil {
+		if err := fetchMarketData(ctx, engine); err != nil {
 			return nil, fmt.Errorf("failed to fetch market data: %w", err)
 		}
 	}
@@ -97,11 +97,11 @@ func GetFullDecisionWithStrategy(ctx *Context, agentClient agent.Client, engine 
 		ctx.OITopDataMap = engine.RankingContext()
 	}
 
-	// 2. Build System Prompt using strategy engine
+	// 2. Build System Prompt using the engine
 	riskConfig := engine.GetRiskControlConfig()
 	systemPrompt := engine.BuildSystemPrompt(ctx.Account.TotalEquity, variant)
 
-	// 3. Build User Prompt using strategy engine
+	// 3. Build User Prompt using the engine
 	userPrompt := engine.BuildUserPrompt(ctx)
 
 	// 4. Call model API
@@ -152,16 +152,16 @@ func GetFullDecisionWithStrategy(ctx *Context, agentClient agent.Client, engine 
 // Market Data Fetching
 // ============================================================================
 
-// fetchMarketDataWithStrategy fetches market data using strategy config (multiple timeframes)
-func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
+// fetchMarketData fetches market data using the config (multiple timeframes)
+func fetchMarketData(ctx *Context, engine *Engine) error {
 	config := engine.GetConfig()
-	ctx.MarketDataMap = make(map[string]*market.Data)
+	ctx.MarketDataMap = make(map[string]*Data)
 
 	timeframes := config.Indicators.Klines.SelectedTimeframes
 	primaryTimeframe := config.Indicators.Klines.PrimaryTimeframe
 	klineCount := config.Indicators.Klines.PrimaryCount
 
-	// Compatible with old configuration
+	// With nothing selected, use the primary timeframe and the longer one if set.
 	if len(timeframes) == 0 {
 		if primaryTimeframe != "" {
 			timeframes = append(timeframes, primaryTimeframe)
@@ -179,11 +179,11 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 		klineCount = 30
 	}
 
-	logger.Infof("📊 Strategy timeframes: %v, Primary: %s, Kline count: %d", timeframes, primaryTimeframe, klineCount)
+	logger.Infof("📊 Timeframes: %v, Primary: %s, Kline count: %d", timeframes, primaryTimeframe, klineCount)
 
 	// 1. First fetch data for position coins (must fetch)
 	for _, pos := range ctx.Positions {
-		data, err := market.GetWithTimeframes(pos.Symbol, timeframes, primaryTimeframe, klineCount)
+		data, err := GetWithTimeframes(pos.Symbol, timeframes, primaryTimeframe, klineCount)
 		if err != nil {
 			logger.Infof("⚠️  Failed to fetch market data for position %s: %v", pos.Symbol, err)
 			continue
@@ -202,7 +202,7 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 			continue
 		}
 
-		data, err := market.GetWithTimeframes(coin.Symbol, timeframes, primaryTimeframe, klineCount)
+		data, err := GetWithTimeframes(coin.Symbol, timeframes, primaryTimeframe, klineCount)
 		if err != nil {
 			logger.Infof("⚠️  Failed to fetch market data for %s: %v", coin.Symbol, err)
 			continue
@@ -221,7 +221,7 @@ func fetchMarketDataWithStrategy(ctx *Context, engine *StrategyEngine) error {
 
 // Missing OI must not empty the candidate list; a measured zero remains low OI.
 // Existing positions retain their exemption.
-func skipLowOpenInterest(symbol string, data *market.Data, existingPosition bool) bool {
+func skipLowOpenInterest(symbol string, data *Data, existingPosition bool) bool {
 	if existingPosition {
 		return false
 	}
@@ -297,7 +297,7 @@ func extractCoTTrace(response string) string {
 
 	jsonStart := strings.Index(response, "[")
 	if jsonStart > 0 {
-		logger.Infof("⚠️  Extracted reasoning chain using old format ([ character separator)")
+		logger.Infof("✓ Extracted content before the JSON array as reasoning chain")
 		return strings.TrimSpace(response[:jsonStart])
 	}
 

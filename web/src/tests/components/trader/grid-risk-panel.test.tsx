@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { SWRConfig } from 'swr'
+import { QueryWrapper } from '@/tests/query-wrapper'
 import { expect, it, vi } from 'vitest'
+import { api } from '@/api'
 import { GridRiskPanel } from '@/components/trader/grid-risk-panel'
 
 vi.mock('@/api', () => ({
@@ -30,9 +31,9 @@ vi.mock('@/api', () => ({
 
 it('summarises grid risk and expands into the details', async () => {
   render(
-    <SWRConfig value={{ provider: () => new Map() }}>
+    <QueryWrapper>
       <GridRiskPanel traderId="grid-1" language="en" />
-    </SWRConfig>
+    </QueryWrapper>
   )
   const toggle = await screen.findByRole('button', { name: /Grid risk/ })
   expect(toggle).toHaveAttribute('aria-expanded', 'false')
@@ -43,4 +44,17 @@ it('summarises grid risk and expands into the details', async () => {
   expect(toggle).toHaveAttribute('aria-expanded', 'true')
   expect(screen.getByText('Liquidation')).toBeInTheDocument()
   expect(screen.getByText('64,210.50')).toBeInTheDocument()
+})
+
+it('stays calm when a stopped trader has no reading', async () => {
+  vi.mocked(api.getGridRiskInfo).mockResolvedValueOnce(null)
+  render(
+    <QueryWrapper>
+      <GridRiskPanel traderId="grid-1" language="en" />
+    </QueryWrapper>
+  )
+  const state = await screen.findByText(
+    'Grid risk shows while the trader is running'
+  )
+  expect(state).not.toHaveClass('text-vergex-danger')
 })

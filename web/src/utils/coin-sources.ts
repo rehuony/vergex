@@ -33,5 +33,5 @@ export const RANKED_SOURCES: Array<{
 
 export function coinSourceLabel(type: string, language: Language): string {
   if (!COIN_SOURCE_TYPES.includes(type as CoinSourceType)) return type || '—'
-  return t(`strategy.source.${type}`, language)
+  return t(`traderSettings.source.${type}`, language)
 }

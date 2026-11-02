@@ -1,6 +1,6 @@
 # Models
 
-Models are called directly with your own API key. Nothing goes through a gateway. Add them in **Settings → Models**.
+Models are called directly with your own API key. Nothing goes through a gateway. Add them in **Settings → Agent models**.
 
 ## Providers
 
@@ -30,10 +30,10 @@ Use the test button in the model form to check a configuration before saving it.
 
 ## Costs
 
-Every call is stored locally in `agent.calls`, failed attempts included, with its tokens, time and any error (never the API key). Tokens are priced from the public [models.dev](https://models.dev) list, cached in `data/` and refreshed daily. **Settings → Agent costs** shows the estimate per model, for all traders or one. Models without a published price, such as custom model names, are shown as unpriced.
+Every call is stored locally in `agent.calls`, failed attempts included, with its tokens, time and any error (never the API key). Tokens are priced from the public [models.dev](https://models.dev) list, cached in the database and refreshed daily. **Settings → Agent costs** shows the estimate per model, for all traders or one. Models without a published price, such as custom model names, are shown as unpriced.
 
 ## Which models see what
 
 - **Traders** send market data and your account state to the model bound to the trader on every cycle.
-- **Frontier** uses the model you select on the page. Keys never enter prompts or browser responses.
+- **Futures** uses the model you select on the page. Keys never enter prompts or browser responses.
 - **Telegram** uses the model chosen in Settings → Telegram, or picks an enabled one automatically.

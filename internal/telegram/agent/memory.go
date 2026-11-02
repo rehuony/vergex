@@ -79,7 +79,7 @@ func (m *Memory) compact() {
 	systemPrompt := `You are a conversation summarizer. Compress the following trading assistant conversation into a concise summary.
 
 Must preserve:
-- What the user is configuring (strategy/exchange/model/trader)
+- What the user is configuring (account/model/trader)
 - Confirmed parameters (trading pairs, leverage, stop loss, indicators, etc.)
 - Pending or missing parameters
 - User preferences and requirements

@@ -7,35 +7,39 @@ import {
   within,
 } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
-import { SWRConfig } from 'swr'
+import { QueryWrapper } from '@/tests/query-wrapper'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type {
+  ForecastCoin,
   ForecastDetail,
-  ForecastRecord,
   ForecastSignal,
 } from '@/api/forecast'
-import { sortSignals } from '@/components/forecast/coin-list'
+import { sortCoins } from '@/components/forecast/coin-list'
 import { ForecastPage } from '@/pages/forecast-page'
 
 const mocks = vi.hoisted(() => ({
-  signals: vi.fn(),
+  coins: vi.fn(),
   detail: vi.fn(),
   strategies: vi.fn(),
   activate: vi.fn(),
+  market: vi.fn(),
+  saveMarket: vi.fn(),
 }))
 vi.mock('@/contexts/language-context', () => ({
   useLanguage: () => ({ language: 'en' }),
 }))
 vi.mock('@/api', () => ({
   api: {
-    getForecastSignals: mocks.signals,
+    getForecastCoins: mocks.coins,
     getForecastDetail: mocks.detail,
     getForecastStrategies: mocks.strategies,
     activateForecastStrategy: mocks.activate,
+    getMarketDataSettings: mocks.market,
+    saveMarketDataSettings: mocks.saveMarket,
   },
 }))
 vi.mock('@/components/common/notify', () => ({
-  notify: { success: vi.fn(), error: vi.fn() },
+  notify: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }))
 vi.mock('@/components/market-chart/local-market-chart-view', () => ({
   LocalMarketChartView: ({ label }: { label: string }) => (
@@ -43,7 +47,7 @@ vi.mock('@/components/market-chart/local-market-chart-view', () => ({
   ),
 }))
 
-const record = (patch: Partial<ForecastRecord>) =>
+const signal = (patch: Partial<ForecastSignal>) =>
   ({
     id: 1,
     display_prob: 0.5,
@@ -52,19 +56,24 @@ const record = (patch: Partial<ForecastRecord>) =>
     confidence: 10,
     expected_move_pct: 1,
     regime: 'ranging',
+    horizon: 4,
+    interval: '1h',
     open_time: 1,
+    support: 76000,
+    resistance: 78000,
     ...patch,
-  }) as ForecastRecord
+  }) as ForecastSignal
 
-const signal = (
+const coin = (
   symbol: string,
-  patch: Partial<ForecastSignal> = {}
-): ForecastSignal => ({
+  patch: Partial<ForecastCoin> = {}
+): ForecastCoin => ({
   symbol,
   interval: '1h',
   tier: 1,
   price: 100,
-  record: null,
+  change_24h_pct: null,
+  signal: null,
   stale: false,
   ...patch,
 })
@@ -75,6 +84,7 @@ const detail = (patch: Partial<ForecastDetail> = {}) =>
     interval: '1h',
     price: 77000,
     ready: true,
+    stale: false,
     result: {
       close: 77000,
       direction: 'up',
@@ -84,12 +94,23 @@ const detail = (patch: Partial<ForecastDetail> = {}) =>
       resistance: 78000,
       regime: 'trending',
       horizon: 4,
+      adx: 20,
       has_derivatives: true,
+      derivatives: { funding: null, oi_change_pct: null, long_short_z: null },
       factors: [],
+      missing: [],
     },
-    latest: record({ display_prob: 0.68, direction: 'up' }),
-    records: [],
-    stats: { hits: 3, misses: 1, moved: 10, rose: 6 },
+    latest: signal({ display_prob: 0.68, direction: 'up' }),
+    signals: [],
+    stats: {
+      judged: 12,
+      samples: 4,
+      hits: 3,
+      misses: 1,
+      hit_rate: 0.75,
+      chance_rate: 0.6,
+      avg_return_after_fee_pct: 0.2,
+    },
     candles: [{ time: 1, open: 1, high: 1, low: 1, close: 1, volume: 1 }],
     last_closed: 1000,
     forming: null,
@@ -104,29 +125,34 @@ function Where() {
   )
 }
 
-const show = (entry = '/forecast/BTCUSDT?interval=1h') =>
+const show = (entry = '/forecast?symbol=BTCUSDT&interval=1h') =>
   render(
     <MemoryRouter initialEntries={[entry]}>
-      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+      <QueryWrapper>
         <Where />
         <Routes>
           <Route path="/forecast" element={<ForecastPage />} />
-          <Route path="/forecast/:symbol" element={<ForecastPage />} />
         </Routes>
-      </SWRConfig>
+      </QueryWrapper>
     </MemoryRouter>
   )
 
-const signalsOf = (signals: ForecastSignal[]) => ({
+const coinsOf = (coins: ForecastCoin[]) => ({
   strategy_id: 'strategy-1',
   interval: '1h',
-  signals,
+  coins,
 })
 
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
-  mocks.signals.mockResolvedValue(signalsOf([]))
+  mocks.market.mockResolvedValue({
+    enabled: true,
+    watchlist: ['ETHUSDT'],
+    top_n: 200,
+  })
+  mocks.saveMarket.mockImplementation(async (settings) => settings)
+  mocks.coins.mockResolvedValue(coinsOf([]))
   mocks.detail.mockResolvedValue(detail())
   mocks.strategies.mockResolvedValue({
     active_strategy_id: 'strategy-1',
@@ -139,11 +165,11 @@ beforeEach(() => {
 afterEach(cleanup)
 
 it('puts strong calls first in either direction and waiting coins last', () => {
-  const sorted = sortSignals([
-    signal('WAITUSDT', { pending: 'waiting' }),
-    signal('WEAKUSDT', { record: record({ display_prob: 0.52 }) }),
-    signal('DOWNUSDT', { record: record({ display_prob: 0.2 }) }),
-    signal('UPUSDT', { record: record({ display_prob: 0.7 }) }),
+  const sorted = sortCoins([
+    coin('WAITUSDT', { pending: 'waiting' }),
+    coin('WEAKUSDT', { signal: signal({ display_prob: 0.52 }) }),
+    coin('DOWNUSDT', { signal: signal({ display_prob: 0.2 }) }),
+    coin('UPUSDT', { signal: signal({ display_prob: 0.7 }) }),
   ])
   expect(sorted.map((row) => row.symbol)).toEqual([
     'DOWNUSDT',
@@ -153,7 +179,7 @@ it('puts strong calls first in either direction and waiting coins last', () => {
   ])
 })
 
-it('shows the call, and the hit rate against how often price rose anyway', async () => {
+it('shows the call, and the hit rate against what chance would hit', async () => {
   show()
   expect(await screen.findByText('77,000')).toBeVisible()
   expect(screen.getByText('Score 68')).toBeVisible()
@@ -165,13 +191,13 @@ it('shows the call, and the hit rate against how often price rose anyway', async
 })
 
 it('shows a score until a forecast is calibrated, then a probability', async () => {
-  mocks.signals.mockResolvedValue(
-    signalsOf([
-      signal('BTCUSDT', {
-        record: record({ display_prob: 0.68, direction: 'up' }),
+  mocks.coins.mockResolvedValue(
+    coinsOf([
+      coin('BTCUSDT', {
+        signal: signal({ display_prob: 0.68, direction: 'up' }),
       }),
-      signal('ETHUSDT', {
-        record: record({ display_prob: 0.34, calibrated: true }),
+      coin('ETHUSDT', {
+        signal: signal({ display_prob: 0.34, calibrated: true }),
       }),
     ])
   )
@@ -179,6 +205,97 @@ it('shows a score until a forecast is calibrated, then a probability', async () 
   const list = (await screen.findByRole('table')) as HTMLElement
   expect(within(list).getByText('68')).toBeVisible()
   expect(within(list).getByText('34%')).toBeVisible()
+})
+
+it('adds a starred coin to the watchlist and keeps the rest of the settings', async () => {
+  show()
+  await screen.findByText('Score 68')
+  const star = await screen.findByRole('button', {
+    name: 'Add BTC to the watchlist',
+  })
+  await waitFor(() => expect(mocks.market).toHaveBeenCalled())
+  await waitFor(() => {
+    fireEvent.click(star)
+    expect(mocks.saveMarket).toHaveBeenCalledWith({
+      enabled: true,
+      watchlist: ['ETHUSDT', 'BTCUSDT'],
+      top_n: 200,
+    })
+  })
+})
+
+it('shows what the factors read, and those with no reading', async () => {
+  mocks.detail.mockResolvedValue(
+    detail({
+      result: {
+        ...detail().result!,
+        adx: 31,
+        derivatives: {
+          funding: 0.0001,
+          oi_change_pct: 2.5,
+          long_short_z: null,
+        },
+        factors: [
+          { name: 'trend', value: 0.4, weight: 1.5, contribution: 0.6 },
+        ],
+        missing: ['long_short'],
+      },
+    })
+  )
+  show()
+  expect(await screen.findByText('0.0100%')).toBeVisible()
+  expect(screen.getByText('+2.50%')).toBeVisible()
+  expect(screen.getByText('Long/short ratio')).toBeVisible()
+  expect(screen.getAllByText('No reading').length).toBeGreaterThan(0)
+})
+
+it('chooses the strategy in use from a list that leaves out retired ones', async () => {
+  mocks.strategies.mockResolvedValue({
+    active_strategy_id: 'strategy-1',
+    strategies: [
+      { id: 'strategy-1', name: 'Default', created_at: 1, retired: false },
+      { id: 'strategy-2', name: 'Steeper', created_at: 1, retired: false },
+      { id: 'strategy-0', name: 'Old', created_at: 1, retired: true },
+    ],
+  })
+  mocks.activate.mockResolvedValue(undefined)
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: /Strategy/ }))
+  expect(await screen.findByRole('button', { name: /Steeper/ })).toBeVisible()
+  expect(screen.queryByRole('button', { name: /Old/ })).toBeNull()
+  expect(
+    screen.getByRole('link', { name: 'Manage strategies' })
+  ).toHaveAttribute('href', '/forecast/strategies')
+  fireEvent.click(screen.getByRole('button', { name: /Steeper/ }))
+  await waitFor(() => expect(mocks.activate).toHaveBeenCalledWith('strategy-2'))
+})
+
+it('moves through the coin list with the keyboard', async () => {
+  mocks.coins.mockResolvedValue(
+    coinsOf([coin('BTCUSDT'), coin('ETHUSDT'), coin('SOLUSDT')])
+  )
+  show()
+  await screen.findByRole('table')
+  const search = screen.getByLabelText('Search coins')
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+  fireEvent.keyDown(search, { key: 'Enter' })
+  expect(screen.getByLabelText('where')).toHaveTextContent(
+    '/forecast?symbol=ETHUSDT'
+  )
+
+  fireEvent.change(search, { target: { value: 'sol' } })
+  fireEvent.keyDown(search, { key: 'Escape' })
+  expect(search).toHaveValue('')
+})
+
+it('remembers the interval for the next visit', async () => {
+  show('/forecast?symbol=BTCUSDT&interval=4h')
+  await waitFor(() =>
+    expect(localStorage.getItem('vergex.forecast.interval')).toBe('4h')
+  )
+  cleanup()
+  show('/forecast?symbol=BTCUSDT')
+  await waitFor(() => expect(mocks.coins).toHaveBeenLastCalledWith('4h'))
 })
 
 it('says why a coin has no forecast yet', async () => {
@@ -192,7 +309,7 @@ it('says why a coin has no forecast yet', async () => {
 })
 
 it('opens a coin that is not tracked when asked by name', async () => {
-  mocks.signals.mockResolvedValue(signalsOf([signal('BTCUSDT')]))
+  mocks.coins.mockResolvedValue(coinsOf([coin('BTCUSDT')]))
   show()
   await screen.findByRole('table')
   const search = screen.getByLabelText('Search coins')
@@ -200,7 +317,7 @@ it('opens a coin that is not tracked when asked by name', async () => {
   expect(screen.getByText('Press Enter to fetch NEWUSDT.')).toBeVisible()
   fireEvent.keyDown(search, { key: 'Enter' })
   expect(screen.getByLabelText('where')).toHaveTextContent(
-    '/forecast/NEWUSDT?interval=1h'
+    '/forecast?symbol=NEWUSDT&interval=1h'
   )
 })
 
@@ -211,31 +328,45 @@ it('asks for another interval and keeps it in the address', async () => {
   await waitFor(() =>
     expect(mocks.detail).toHaveBeenLastCalledWith('BTCUSDT', '4h', false)
   )
-  expect(mocks.signals).toHaveBeenLastCalledWith('4h')
-  expect(screen.getByLabelText('where')).toHaveTextContent('interval=4h')
+  expect(mocks.coins).toHaveBeenLastCalledWith('4h')
+  expect(screen.getByLabelText('where')).toHaveTextContent(
+    '/forecast?symbol=BTCUSDT&interval=4h'
+  )
 })
 
 it('opens the last coin looked at, or else the strongest call', async () => {
-  mocks.signals.mockResolvedValue(
-    signalsOf([
-      signal('WAITUSDT'),
-      signal('ETHUSDT', { record: record({ display_prob: 0.7 }) }),
+  mocks.coins.mockResolvedValue(
+    coinsOf([
+      coin('WAITUSDT'),
+      coin('ETHUSDT', { signal: signal({ display_prob: 0.7 }) }),
     ])
   )
   const { unmount } = show('/forecast')
   await waitFor(() =>
-    expect(screen.getByLabelText('where')).toHaveTextContent(
-      '/forecast/ETHUSDT'
-    )
+    expect(mocks.detail).toHaveBeenLastCalledWith('ETHUSDT', '1h', false)
   )
+  expect(screen.getByLabelText('where')).toHaveTextContent(/^\/forecast$/)
   unmount()
 
+  vi.clearAllMocks()
+  mocks.coins.mockResolvedValue(coinsOf([coin('BTCUSDT')]))
   show('/forecast')
   await waitFor(() =>
-    expect(screen.getByLabelText('where')).toHaveTextContent(
-      '/forecast/ETHUSDT'
-    )
+    expect(mocks.detail).toHaveBeenLastCalledWith('ETHUSDT', '1h', false)
   )
+})
+
+it('says so when no strategy is in use, and reads no coin', async () => {
+  mocks.coins.mockResolvedValue({
+    strategy_id: '',
+    interval: '1h',
+    coins: [],
+  })
+  show()
+  expect(await screen.findByText(/No strategy is in use/)).toBeVisible()
+  expect(
+    screen.getByRole('link', { name: 'Choose a strategy' })
+  ).toHaveAttribute('href', '/forecast/strategies')
 })
 
 it('says so when no coins are tracked', async () => {

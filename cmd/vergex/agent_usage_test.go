@@ -7,15 +7,15 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
 	"vergex/internal/agent"
 	"vergex/internal/agent/pricing"
-	"vergex/internal/store"
-	"vergex/internal/store/storetest"
+	"vergex/internal/database/testdb"
 )
 
 // callModel records calls through a real client against a server that answers
 // with status and body, and returns the row it stored.
-func callModel(t *testing.T, st *store.Store, status int, body string) (*agent.Response, error, store.AgentCall) {
+func callModel(t *testing.T, db *gorm.DB, status int, body string) (*agent.Response, error, agent.Call) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(5 * time.Millisecond)
@@ -24,7 +24,7 @@ func callModel(t *testing.T, st *store.Store, status int, body string) (*agent.R
 	}))
 	t.Cleanup(server.Close)
 
-	agent.CallCallback = recordAgentCalls(st, pricing.NewService(t.TempDir()))
+	agent.CallCallback = recordAgentCalls(agent.NewCallStore(db), pricing.NewService(db))
 	t.Cleanup(func() { agent.CallCallback = nil })
 
 	client := agent.NewClientByProvider("deepseek", agent.WithMaxRetries(1), agent.WithHTTPClient(server.Client()))
@@ -32,22 +32,21 @@ func callModel(t *testing.T, st *store.Store, status int, body string) (*agent.R
 	agent.TagUsage(client, agent.FeatureTrader, "t1")
 	response, err := client.CallWithRequestFull(&agent.Request{Messages: []agent.Message{agent.NewUserMessage("hi")}})
 
-	var call store.AgentCall
-	if e := st.GormDB().Order("id DESC").First(&call).Error; e != nil {
+	var call agent.Call
+	if e := db.Order("id DESC").First(&call).Error; e != nil {
 		t.Fatalf("read call: %v", e)
 	}
 	return response, err, call
 }
 
 func TestAFailedCallIsRecordedWithItsTimeAndError(t *testing.T) {
-	st := storetest.New(t)
-	t.Cleanup(func() { _ = st.Close() })
+	db := testdb.Open(t)
 
-	_, err, call := callModel(t, st, http.StatusUnauthorized, `{"error":{"message":"bad key sk-secret"}}`)
+	_, err, call := callModel(t, db, http.StatusUnauthorized, `{"error":{"message":"bad key sk-secret"}}`)
 	if err == nil {
 		t.Fatal("the call should fail")
 	}
-	if call.Status != store.CallFailed || call.DurationMs < 5 || call.Unpriced || call.CostUSD != 0 {
+	if call.Status != agent.CallFailed || call.DurationMs < 5 || call.Unpriced || call.CostUSD != 0 {
 		t.Fatalf("call = %+v", call)
 	}
 	if call.Feature != agent.FeatureTrader || call.SourceID != "t1" {
@@ -59,15 +58,14 @@ func TestAFailedCallIsRecordedWithItsTimeAndError(t *testing.T) {
 }
 
 func TestAWorkingCallKeepsItsTokensAndWhyItEnded(t *testing.T) {
-	st := storetest.New(t)
-	t.Cleanup(func() { _ = st.Close() })
+	db := testdb.Open(t)
 
-	response, err, call := callModel(t, st, http.StatusOK, `{"choices":[{"message":{"content":"ok","reasoning_content":"because"},"finish_reason":"stop"}],
+	response, err, call := callModel(t, db, http.StatusOK, `{"choices":[{"message":{"content":"ok","reasoning_content":"because"},"finish_reason":"stop"}],
 		"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"prompt_cache_hit_tokens":4}}`)
 	if err != nil || response.ReasoningContent != "because" {
 		t.Fatalf("response = %+v, err %v", response, err)
 	}
-	if call.Status != store.CallOK || call.Error != "" || call.FinishReason != "stop" {
+	if call.Status != agent.CallOK || call.Error != "" || call.FinishReason != "stop" {
 		t.Fatalf("call = %+v", call)
 	}
 	if call.PromptTokens != 10 || call.CachedPromptTokens != 4 || call.CompletionTokens != 2 {

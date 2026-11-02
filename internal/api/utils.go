@@ -1,7 +1,5 @@
 package api
 
-import "strings"
-
 // MaskSensitiveString Mask sensitive strings, showing only first 4 and last 4 characters
 // Used to mask API Key, Secret Key, Private Key and other sensitive information
 func MaskSensitiveString(s string) string {
@@ -31,44 +29,27 @@ func SanitizeModelConfigForLog(models map[string]ModelConfigUpdate) map[string]i
 	return safe
 }
 
-// SanitizeExchangeConfigForLog Sanitize exchange configuration for log output.
-// Takes the same ExchangeConfigUpdate type used by the request handler so every
+// SanitizeAccountConfigForLog Sanitize exchange configuration for log output.
+// Takes the same AccountConfigUpdate type used by the request handler so every
 // sensitive field is guaranteed to be masked — adding a field to the request
 // type without masking it here would not compile around this helper, but more
 // importantly keeps the masking exhaustive.
-func SanitizeExchangeConfigForLog(exchanges map[string]ExchangeConfigUpdate) map[string]interface{} {
+func SanitizeAccountConfigForLog(accounts map[string]AccountConfigUpdate) map[string]interface{} {
 	safe := make(map[string]interface{})
-	for exchangeID, cfg := range exchanges {
-		safeExchange := map[string]interface{}{}
+	for accountID, cfg := range accounts {
+		safeAccount := map[string]interface{}{}
 
 		// Only add masked sensitive fields when they have values
 		if cfg.APIKey != "" {
-			safeExchange["api_key"] = MaskSensitiveString(cfg.APIKey)
+			safeAccount["api_key"] = MaskSensitiveString(cfg.APIKey)
 		}
 		if cfg.SecretKey != "" {
-			safeExchange["secret_key"] = MaskSensitiveString(cfg.SecretKey)
+			safeAccount["secret_key"] = MaskSensitiveString(cfg.SecretKey)
 		}
 		if cfg.Passphrase != "" {
-			safeExchange["passphrase"] = MaskSensitiveString(cfg.Passphrase)
+			safeAccount["passphrase"] = MaskSensitiveString(cfg.Passphrase)
 		}
-		safe[exchangeID] = safeExchange
+		safe[accountID] = safeAccount
 	}
 	return safe
-}
-
-// MaskEmail Mask email address, keeping first 2 characters and domain part
-func MaskEmail(email string) string {
-	if email == "" {
-		return ""
-	}
-	parts := strings.Split(email, "@")
-	if len(parts) != 2 {
-		return "****" // Incorrect format
-	}
-	username := parts[0]
-	domain := parts[1]
-	if len(username) <= 2 {
-		return "**@" + domain
-	}
-	return username[:2] + "****@" + domain
 }

@@ -35,8 +35,8 @@ const faqIcons: Record<string, LucideIcon> = {
   'getting-started': BookOpen,
   'launch-accounts': Zap,
   trading: TrendingUp,
-  strategies: Layers,
-  frontier: Crosshair,
+  'trader-settings': Layers,
+  futures: Crosshair,
   telegram: Send,
   forecast: LineChart,
   dashboard: Monitor,
@@ -45,7 +45,7 @@ const faqIcons: Record<string, LucideIcon> = {
 }
 
 function lookup(key: string, language: Language): string | undefined {
-  // Nested keys look like 'frontier.account.title'.
+  // Nested keys look like 'futures.account.title'.
   let value: unknown = messages[language]
   for (const part of key.split('.')) {
     value = (value as Record<string, unknown> | undefined)?.[part]

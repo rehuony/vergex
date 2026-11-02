@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import useSWR from 'swr'
+import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api'
 import { t, type Language } from '@/i18n'
 import { Dialog } from '@/components/common/dialog'
@@ -13,7 +13,7 @@ import { baseLabel, fmtPx } from '@/utils/trader-format'
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="pb-4">
-      <h3 className="mb-2 text-[13px] font-medium text-vergex-text">{title}</h3>
+      <h3 className="mb-2 text-[13px] font-medium text-vergex-ink">{title}</h3>
       {children}
     </section>
   )
@@ -37,11 +37,12 @@ export function DecisionDetailDialog({
 }) {
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`traderDetail.${key}`, language, params)
-  const { data: record, error } = useSWR(
-    ['decision', traderId, decisionId],
-    () => api.getDecision(traderId, decisionId, true),
-    { revalidateOnFocus: false, shouldRetryOnError: false }
-  )
+  const { data: record, error } = useQuery({
+    queryKey: ['decision', traderId, decisionId],
+    queryFn: () => api.getDecision(traderId, decisionId, true),
+    refetchOnWindowFocus: false,
+    retry: false,
+  })
   const actions = record?.decisions ?? []
   const logs = record?.execution_log ?? []
   return (
@@ -67,14 +68,14 @@ export function DecisionDetailDialog({
           {record.error_message && (
             <p
               role="alert"
-              className="mb-4 rounded-lg border border-vergex-danger/30 bg-vergex-danger/10 px-3 py-2 text-[13px] break-words text-vergex-danger"
+              className="mb-4 rounded-md border border-vergex-danger/30 bg-vergex-danger/10 px-3 py-2 text-[13px] break-words text-vergex-danger"
             >
               {record.error_message}
             </p>
           )}
           <Section title={label('actions')}>
             {actions.length === 0 ? (
-              <p className="text-[13px] text-vergex-text-muted">
+              <p className="text-[13px] text-vergex-muted">
                 {label('noAction')}
               </p>
             ) : (
@@ -106,7 +107,7 @@ export function DecisionDetailDialog({
                           <td
                             className={cn(
                               cellClass,
-                              'font-medium text-vergex-text'
+                              'font-medium text-vergex-ink'
                             )}
                           >
                             {baseLabel(action.symbol)}
@@ -118,7 +119,7 @@ export function DecisionDetailDialog({
                                 ? 'text-vergex-success'
                                 : side === 'short'
                                   ? 'text-vergex-danger'
-                                  : 'text-vergex-text-muted'
+                                  : 'text-vergex-muted'
                             )}
                           >
                             {action.action.toLowerCase()}

@@ -1,7 +1,5 @@
 interface BrandLogoProps {
   compact?: boolean
-  /** The smaller size, for the page corner on a narrow screen. */
-  small?: boolean
   className?: string
 }
 
@@ -9,14 +7,10 @@ interface BrandLogoProps {
  * The approved Flow identity, with a vector mark for crisp small-size use.
  * It is a mark to click, not text to select or an image to drag.
  */
-export function BrandLogo({
-  compact = false,
-  small = false,
-  className = '',
-}: BrandLogoProps) {
+export function BrandLogo({ compact = false, className = '' }: BrandLogoProps) {
   return (
     <span
-      className={`vergex-brand select-none ${small ? 'is-small' : ''} ${className}`}
+      className={`vergex-brand select-none ${className}`}
       aria-label="Vergex"
     >
       <img

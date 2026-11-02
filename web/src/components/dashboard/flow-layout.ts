@@ -1,204 +1,108 @@
-import type { ActivityBlock, ActivityEvent, ActivityKind } from '@/api/activity'
+import type {
+  ActivityBlock,
+  ActivityEvent,
+  ActivityKind,
+} from '@/api/dashboard'
 
-// Everything in the scene sits on one grid, so routes and members read as one lattice.
-const SMALL_PITCH = 8
-const LARGE_PITCH = 12
-/** From here the scene has the room for the larger grid. */
-const LARGE_WIDTH = 860
-const LARGE_HEIGHT = 520
-/** The smallest scene the layout keeps clear of its own labels. */
-export const MIN_WIDTH = 640
-export const MIN_HEIGHT = 360
-
-export type SceneBlock = Exclude<ActivityBlock, 'agent_cost' | 'fees' | 'other'>
+export type SceneBlock = Exclude<ActivityBlock, 'other'>
 
 export type LineKey =
+  | 'exchange>market'
   | 'market>traders'
   | 'market>forecast'
   | 'telegram>models'
   | 'traders>models'
-  | 'frontier>models'
+  | 'futures>models'
   | 'traders>accounts'
-  | 'frontier>accounts'
+  | 'futures>accounts'
   | 'accounts>positions'
   | 'models>agent_cost'
   | 'accounts>fees'
 
 export const LINE_KIND: Record<LineKey, ActivityKind> = {
+  'exchange>market': 'market',
   'market>traders': 'market',
   'market>forecast': 'market',
   'telegram>models': 'agent',
   'traders>models': 'agent',
-  'frontier>models': 'agent',
+  'futures>models': 'agent',
   'traders>accounts': 'orders',
-  'frontier>accounts': 'orders',
+  'futures>accounts': 'orders',
   'accounts>positions': 'funds',
   'models>agent_cost': 'funds',
   'accounts>fees': 'funds',
 }
 
+// The stage is laid out so the flow reads at a glance. Everything runs left to right, one
+// column at a time: where data comes from, the engines, where they send things, what comes
+// of it. Calls to a model run on an upper deck and orders and money on the ground, so the
+// two lines no arrangement can keep apart pass over each other instead of crossing.
+export const DECK_Y = [0.06, 1.5] as const
+
 export interface BlockPlace {
   x: number
-  y: number
-  cols: number
-  rows: number
+  z: number
+  /** Its gate reaches the upper deck. */
+  tall: boolean
+  /** Holds a whole market's worth of coins. */
+  large?: boolean
 }
 
-export interface FlowLine {
-  key: LineKey
-  points: [number, number][]
-  dots: { x: number; y: number }[]
+export const BLOCKS: Record<SceneBlock, BlockPlace> = {
+  exchange: { x: -19, z: 0, tall: false },
+  market: { x: -12, z: 0, tall: false, large: true },
+  telegram: { x: -3, z: -9, tall: true },
+  traders: { x: -3, z: -4.4, tall: true },
+  futures: { x: -3, z: 0.4, tall: true },
+  forecast: { x: -3, z: 6.4, tall: false, large: true },
+  models: { x: 6.5, z: -5.2, tall: true },
+  accounts: { x: 6.5, z: 2, tall: false },
+  agent_cost: { x: 15, z: -5.2, tall: true },
+  positions: { x: 15, z: 0.4, tall: false },
+  fees: { x: 15, z: 5.8, tall: false },
 }
 
-export interface FlowLayout {
-  width: number
-  height: number
-  pitch: number
-  blocks: Record<SceneBlock, BlockPlace>
-  lines: FlowLine[]
-  /** Where the cost and fee lines end, and their figures go. */
-  costLabel: { x: number; y: number }
-  feesLabel: { x: number; y: number }
-  /** Below the positions, for today's result. */
-  todayLabel: { x: number; y: number }
+export interface LinePlace {
+  from: SceneBlock
+  to: SceneBlock
+  /** 0 on the ground, 1 on the upper deck. */
+  deck: 0 | 1
+  /** Where it leaves its block and reaches the next, across the block's depth. */
+  leave: number
+  reach: number
 }
 
-function dotsAlong(points: [number, number][], pitch: number) {
-  const dots: FlowLine['dots'] = []
-  points.slice(1).forEach(([x2, y2], index) => {
-    const [x1, y1] = points[index]
-    const steps = (Math.abs(x2 - x1) + Math.abs(y2 - y1)) / pitch
-    for (let step = index === 0 ? 0 : 1; step <= steps; step++) {
-      dots.push({
-        x: x1 + ((x2 - x1) * step) / steps,
-        y: y1 + ((y2 - y1) * step) / steps,
-      })
-    }
-  })
-  return dots
+const line = (
+  from: SceneBlock,
+  to: SceneBlock,
+  deck: 0 | 1,
+  leave = 0,
+  reach = 0
+): LinePlace => ({ from, to, deck, leave, reach })
+
+export const LINES: Record<LineKey, LinePlace> = {
+  'exchange>market': line('exchange', 'market', 0),
+  'market>traders': line('market', 'traders', 0, -0.8),
+  'market>forecast': line('market', 'forecast', 0, 0.8),
+  'telegram>models': line('telegram', 'models', 1, 0, -0.7),
+  'traders>models': line('traders', 'models', 1),
+  'futures>models': line('futures', 'models', 1, 0, 0.7),
+  'traders>accounts': line('traders', 'accounts', 0, 0, -0.6),
+  'futures>accounts': line('futures', 'accounts', 0, 0, 0.6),
+  'models>agent_cost': line('models', 'agent_cost', 1),
+  'accounts>positions': line('accounts', 'positions', 0, -0.6),
+  'accounts>fees': line('accounts', 'fees', 0, 0.6),
 }
 
-// Lays the scene out left to right: what feeds the engines, the engines, then where
-// they send things. Lines may cross only where one trader order line must pass a
-// Frontier model line, which no arrangement of these blocks avoids.
-export function layoutFlow(rawWidth: number, rawHeight: number): FlowLayout {
-  const width = Math.max(rawWidth, MIN_WIDTH)
-  const height = Math.max(rawHeight, MIN_HEIGHT)
-  const p =
-    width >= LARGE_WIDTH && height >= LARGE_HEIGHT ? LARGE_PITCH : SMALL_PITCH
-  const snap = (value: number) => Math.round(value / p) * p
+/** The stages of the flow, named along the front of the floor. */
+export const STAGES = [
+  { key: 'data', x: -13 },
+  { key: 'engines', x: -3 },
+  { key: 'out', x: 6.5 },
+  { key: 'result', x: 13.5 },
+] as const
 
-  const blockWidth = 6 * p
-  const engineX = snap(width * 0.24)
-  const rightX = snap(width * 0.62)
-  const positionsX = snap(Math.min(width * 0.83, width - 112))
-
-  const top = snap(48)
-  const step = Math.floor((height - 16 - 2 * p - top) / 3 / p) * p
-  const telegramY = top
-  const tradersY = top + step
-  const frontierY = top + step * 2
-  const forecastY = top + step * 3
-  const modelsY = snap(top + step / 2)
-  const accountsY = snap(top + step * 2.5)
-  const marketY = frontierY - 2 * p
-  const marketX = 3 * p
-
-  const blocks: FlowLayout['blocks'] = {
-    market: { x: marketX, y: marketY, cols: 6, rows: 6 },
-    telegram: { x: engineX, y: telegramY, cols: 6, rows: 3 },
-    traders: { x: engineX, y: tradersY, cols: 6, rows: 3 },
-    frontier: { x: engineX, y: frontierY, cols: 6, rows: 3 },
-    forecast: { x: engineX, y: forecastY, cols: 6, rows: 3 },
-    models: { x: rightX, y: modelsY, cols: 6, rows: 3 },
-    accounts: { x: rightX, y: accountsY, cols: 6, rows: 3 },
-    positions: { x: positionsX, y: accountsY, cols: 6, rows: 4 },
-  }
-
-  const marketOut = marketX + blockWidth
-  const engineIn = engineX - p
-  const engineOut = engineX + blockWidth
-  const rightIn = rightX - p
-  const rightOut = rightX + blockWidth
-  const marketBus = snap((marketOut + engineIn) / 2)
-  const bus = (share: number) => snap(engineOut + (rightIn - engineOut) * share)
-
-  const route = (key: LineKey, points: [number, number][]): FlowLine => ({
-    key,
-    points,
-    dots: dotsAlong(points, p),
-  })
-
-  const lines: FlowLine[] = [
-    route('market>traders', [
-      [marketOut, marketY + p],
-      [marketBus, marketY + p],
-      [marketBus, tradersY + p],
-      [engineIn, tradersY + p],
-    ]),
-    route('market>forecast', [
-      [marketOut, marketY + 4 * p],
-      [marketBus, marketY + 4 * p],
-      [marketBus, forecastY + p],
-      [engineIn, forecastY + p],
-    ]),
-    route('frontier>accounts', [
-      [engineOut, frontierY + 2 * p],
-      [bus(0.2), frontierY + 2 * p],
-      [bus(0.2), accountsY + p],
-      [rightIn, accountsY + p],
-    ]),
-    route('traders>accounts', [
-      [engineOut, tradersY + 2 * p],
-      [bus(0.4), tradersY + 2 * p],
-      [bus(0.4), accountsY],
-      [rightIn, accountsY],
-    ]),
-    route('traders>models', [
-      [engineOut, tradersY],
-      [bus(0.6), tradersY],
-      [bus(0.6), modelsY + p],
-      [rightIn, modelsY + p],
-    ]),
-    route('frontier>models', [
-      [engineOut, frontierY],
-      [bus(0.75), frontierY],
-      [bus(0.75), modelsY + 2 * p],
-      [rightIn, modelsY + 2 * p],
-    ]),
-    route('telegram>models', [
-      [engineOut, telegramY + p],
-      [bus(0.9), telegramY + p],
-      [bus(0.9), modelsY],
-      [rightIn, modelsY],
-    ]),
-    route('accounts>positions', [
-      [rightOut, accountsY + p],
-      [positionsX - p, accountsY + p],
-    ]),
-    route('models>agent_cost', [
-      [rightOut, modelsY + p],
-      [positionsX - p, modelsY + p],
-    ]),
-    route('accounts>fees', [
-      [rightX + 2 * p, accountsY + 3 * p],
-      [rightX + 2 * p, accountsY + 5 * p],
-    ]),
-  ]
-
-  return {
-    width,
-    height,
-    pitch: p,
-    blocks,
-    lines,
-    costLabel: { x: positionsX, y: modelsY + p },
-    feesLabel: { x: rightX, y: accountsY + 5 * p + 20 },
-    todayLabel: { x: positionsX, y: accountsY + 3 * p + 22 },
-  }
-}
-
-const LINE_KEYS = new Set<string>(Object.keys(LINE_KIND))
+const LINE_KEYS = new Set<string>(Object.keys(LINES))
 
 // The line an event runs along, and whether it runs against the line's direction.
 // An event outside the scene, such as a model test, has none.

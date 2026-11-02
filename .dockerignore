@@ -6,7 +6,6 @@
 .codegraph
 .env
 .env.*
-data/
 docs/
 scripts/
 **/*_test.go

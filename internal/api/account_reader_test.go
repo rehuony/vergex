@@ -2,23 +2,23 @@ package api
 
 import (
 	"testing"
-	"vergex/internal/store"
-	"vergex/internal/store/storetest"
+	"vergex/internal/account"
+	"vergex/internal/database/testdb"
 )
 
 func TestAccountInspectionDoesNotNeedAutopilotOrModel(t *testing.T) {
-	st := storetest.New(t)
-	db := st.GormDB()
-	alice, bob := storetest.Account(t, st), storetest.OtherAccount(t, st)
+	st := NewStores(testdb.Open(t))
+	db := st.DB
+	alice, bob := testdb.AddUser(t, st.DB), testdb.AddOtherUser(t, st.DB)
 	const (
 		aliceAccount      = "00000000-0000-4000-8000-0000000000b1"
 		bobAccount        = "00000000-0000-4000-8000-0000000000b2"
 		standaloneAccount = "00000000-0000-4000-8000-0000000000b3"
 	)
 	for _, value := range []any{
-		&store.Exchange{ID: aliceAccount, UserID: alice, ExchangeType: "binance"},
-		&store.Exchange{ID: bobAccount, UserID: bob, ExchangeType: "binance"},
-		&store.Exchange{ID: standaloneAccount, UserID: alice, ExchangeType: "binance"},
+		&account.Account{ID: aliceAccount, UserID: alice, Venue: "binance"},
+		&account.Account{ID: bobAccount, UserID: bob, Venue: "binance"},
+		&account.Account{ID: standaloneAccount, UserID: alice, Venue: "binance"},
 	} {
 		if err := db.Create(value).Error; err != nil {
 			t.Fatal(err)
@@ -29,11 +29,11 @@ func TestAccountInspectionDoesNotNeedAutopilotOrModel(t *testing.T) {
 		bobTrader    = "00000000-0000-4000-8000-0000000000a2"
 		badReference = "00000000-0000-4000-8000-0000000000a3"
 	)
-	storetest.AddTrader(t, st, &store.Trader{ID: aliceTrader, UserID: alice, ExchangeID: aliceAccount})
-	storetest.AddTrader(t, st, &store.Trader{ID: bobTrader, UserID: bob, ExchangeID: bobAccount})
+	testdb.AddTrader(t, st.DB, &testdb.Trader{ID: aliceTrader, UserID: alice, AccountID: aliceAccount})
+	testdb.AddTrader(t, st.DB, &testdb.Trader{ID: bobTrader, UserID: bob, AccountID: bobAccount})
 	// Even a corrupt cross-user exchange reference cannot grant access.
-	storetest.AddTrader(t, st, &store.Trader{ID: badReference, UserID: alice, ExchangeID: bobAccount})
-	s := &Server{store: st} // No autonomous trader manager, model or strategy.
+	testdb.AddTrader(t, st.DB, &testdb.Trader{ID: badReference, UserID: alice, AccountID: bobAccount})
+	s := &Server{stores: st} // No autonomous trader manager, model or strategy.
 	standalone, err := s.accountReadConfig(alice, "", standaloneAccount)
 	if err != nil || standalone.ID != standaloneAccount {
 		t.Fatalf("saved account required an Autopilot: %v %v", standalone, err)

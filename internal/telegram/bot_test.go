@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"vergex/internal/config"
-	"vergex/internal/store/storetest"
+	"vergex/internal/database/testdb"
 )
 
 // fakeBotAPI answers getMe for tokens starting with "good" and reports every
@@ -60,12 +60,11 @@ func expectGetMe(t *testing.T, calls <-chan string, want string) {
 
 func TestStartReloadsWithSavedTokenAndRecoversFromBadToken(t *testing.T) {
 	calls := fakeBotAPI(t)
-	st := storetest.New(t)
-	t.Cleanup(func() { _ = st.Close() })
+	st := NewStores(testdb.Open(t))
 
 	reload := make(chan struct{}, 1)
 	save := func(token string) {
-		if err := st.TelegramConfig().Save(token, ""); err != nil {
+		if err := st.Telegram.Save(token, ""); err != nil {
 			t.Fatalf("save token: %v", err)
 		}
 		reload <- struct{}{}

@@ -6,7 +6,7 @@ import {
   waitFor,
 } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { SWRConfig } from 'swr'
+import { QueryWrapper } from '@/tests/query-wrapper'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/http-client'
 import { StartTraderDialog } from '@/components/trader/start-trader-dialog'
@@ -23,11 +23,11 @@ const open = () => {
   const onStarted = vi.fn()
   render(
     <MemoryRouter>
-      <SWRConfig value={{ provider: () => new Map() }}>
+      <QueryWrapper>
         <StartTraderDialog
           traderId="t1"
           traderName="Alpha"
-          strategy="Trend"
+          kind="agent"
           model="DeepSeek"
           account="Main"
           scanMinutes={15}
@@ -35,7 +35,7 @@ const open = () => {
           onStarted={onStarted}
           onClose={vi.fn()}
         />
-      </SWRConfig>
+      </QueryWrapper>
     </MemoryRouter>
   )
   return onStarted
@@ -67,7 +67,7 @@ it('names what failed and offers no way to start', async () => {
     min_trading_usdc: 12,
     checks: [
       {
-        id: 'exchange_funds',
+        id: 'account_funds',
         status: 'failed',
         message: 'Deposit more USDT.',
         required: 12,

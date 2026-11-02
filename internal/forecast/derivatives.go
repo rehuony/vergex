@@ -25,6 +25,8 @@ const (
 	longShortMinPoints = 12
 	// oiLookbackBars is the span of the open interest change, in bars.
 	oiLookbackBars = 12
+	// slowestReading is how often a tracked coin's readings are collected, at the slowest.
+	slowestReading = time.Hour
 )
 
 // latestAt returns the index of the newest reading at or before t, or -1.
@@ -32,16 +34,37 @@ func latestAt(readings []Reading, t int64) int {
 	return sort.Search(len(readings), func(i int) bool { return readings[i].Time > t }) - 1
 }
 
-// DerivativesAt says what the readings showed at time t, using nothing later. It
-// serves live forecasts and backtests alike, so both see the same thing.
-func DerivativesAt(readings Readings, t, step int64) Derivatives {
+// readingAge is how old an open interest or long/short reading may be at a bar length.
+func readingAge(step int64) int64 {
+	return max(2*step, 2*time.Hour.Milliseconds())
+}
+
+// readingsSpan is how far before a moment DerivativesAt looks at a bar length. Whoever
+// reads the store must hold at least this much, or the factor quietly goes missing.
+func readingsSpan(step int64) int64 {
+	return max(longShortWindow.Milliseconds(), oiLookbackBars*step+readingAge(step), fundingMaxAge.Milliseconds())
+}
+
+// readingTime is the moment a forecast of the candle opened at openTime reads
+// derivatives as of. It is the candle's close less one collection period: readings
+// from then are always there when the candle closes, live as in a backtest, and a
+// reading from the close itself would only arrive after it.
+func readingTime(openTime, step int64) int64 {
+	return max(openTime, openTime+step-slowestReading.Milliseconds())
+}
+
+// DerivativesAt says what the readings showed for the candle opened at openTime, using
+// nothing later. It serves live forecasts and backtests alike, so both see the same
+// thing, as long as the readings reach back readingsSpan.
+func DerivativesAt(readings Readings, openTime, step int64) Derivatives {
 	var out Derivatives
+	t := readingTime(openTime, step)
 	if i := latestAt(readings.Funding, t); i >= 0 && t-readings.Funding[i].Time <= fundingMaxAge.Milliseconds() {
 		value := readings.Funding[i].Value
 		out.Funding = &value
 	}
 
-	maxAge := max(2*step, time.Hour.Milliseconds()*2)
+	maxAge := readingAge(step)
 	if i := latestAt(readings.OpenValue, t); i >= 0 && t-readings.OpenValue[i].Time <= maxAge {
 		earlier := latestAt(readings.OpenValue, t-oiLookbackBars*step)
 		if earlier >= 0 && t-oiLookbackBars*step-readings.OpenValue[earlier].Time <= maxAge && readings.OpenValue[earlier].Value > 0 {

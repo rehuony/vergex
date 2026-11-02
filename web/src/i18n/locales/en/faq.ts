@@ -11,11 +11,11 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Vergex is an open-source, self-hosted agent trading terminal. A trader runs an agent on a schedule: it reads the candidate coins from your strategy, market data and your account state, then decides and executes on your connected exchange — all on your own machine, with your keys never leaving your server.',
+            text: 'Vergex is an open-source, self-hosted agent trading terminal. A trader runs an agent on a schedule: it reads the candidate coins from its settings, market data and your account state, then decides and executes on your connected exchange — all on your own machine, with your keys never leaving your server.',
           },
           {
             type: 'p',
-            text: 'You can build custom strategies on the Strategies page and run several traders side by side.',
+            text: 'You can set each trader up in its Settings section and run several side by side.',
           },
         ],
       },
@@ -30,8 +30,8 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'A model provider API key (DeepSeek, OpenAI, Claude, …) under Settings → Models.',
-              'A Binance or OKX futures API key with trading permission (withdrawals disabled) under Settings → Exchanges, and at least `12 USDT` available as margin.',
+              'A model provider API key (DeepSeek, OpenAI, Claude, …) under Settings → Agent models.',
+              'A Binance or OKX futures API key with trading permission (withdrawals disabled) under Settings → Trading accounts, and at least `12 USDT` available as margin.',
             ],
           },
           {
@@ -46,7 +46,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Vergex trades USDT-margined crypto perpetuals on Binance and OKX. Candidate coins come from your strategy: a static list, or free Binance rankings (open interest, volume, gainers and losers).',
+            text: 'Vergex trades USDT-margined crypto perpetuals on Binance and OKX. Candidate coins come from the trader’s settings: a static list, or free Binance rankings (open interest, volume, gainers and losers).',
           },
         ],
       },
@@ -74,7 +74,7 @@ export const faq: FAQContent = [
           },
           {
             type: 'p',
-            text: 'Each trader’s page is deliberately honest about performance: it separates realized from unrealized P/L and shows fees, profit factor and max drawdown from your real starting balance. Watch those numbers, start small, and only trade money you can afford to lose.',
+            text: 'Each trader is deliberately honest about performance: it separates realized from unrealized P/L and shows fees, profit factor and max drawdown from your real starting balance. Watch those numbers, start small, and only trade money you can afford to lose.',
           },
           {
             type: 'note',
@@ -89,7 +89,7 @@ export const faq: FAQContent = [
     title: 'Launch & accounts',
     items: [
       {
-        id: 'exchange-api-keys',
+        id: 'account-api-keys',
         question: 'How should I create the exchange API key? Is it safe?',
         blocks: [
           {
@@ -146,10 +146,10 @@ export const faq: FAQContent = [
           {
             type: 'steps',
             items: [
-              'Build the universe — collect candidate coins from the strategy coin source (a static list or a ranking-based source), minus excluded coins.',
-              'Read market context — multi-timeframe OHLCV candles plus the indicators enabled in the strategy (EMA, MACD, RSI, ATR, Bollinger, volume, open interest, funding rate).',
+              'Build the universe — collect candidate coins from the trader’s coin source (a static list or a ranking-based source), minus excluded coins.',
+              'Read market context — multi-timeframe OHLCV candles plus the indicators enabled in the trader’s settings (EMA, MACD, RSI, ATR, Bollinger, volume, open interest, funding rate).',
               'Add account context — equity, available margin, open positions and the trader’s own recent performance.',
-              'Decide and size — only setups clearing the strategy’s confidence threshold and minimum risk/reward get positions; closes always execute before opens.',
+              'Decide and size — only setups clearing the trader’s confidence threshold and minimum risk/reward get positions; closes always execute before opens.',
             ],
           },
           {
@@ -190,14 +190,14 @@ export const faq: FAQContent = [
             type: 'list',
             items: [
               'Your account: equity, available margin, open positions with PnL.',
-              'Candidate coins from the strategy coin source.',
+              'Candidate coins from the trader’s coin source.',
               'Multi-timeframe candles and the enabled indicators per candidate.',
               'Its own track record: win rate, profit factor, drawdown, recent trades.',
             ],
           },
           {
             type: 'p',
-            text: 'Every cycle is stored as a decision record. The Decisions tab on the trader’s page shows the reasoning, actions and any blocked orders.',
+            text: 'Every cycle is stored as a decision record. A trader’s Decisions tab shows the reasoning, actions and any blocked orders.',
           },
         ],
       },
@@ -207,12 +207,12 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Leverage comes from the strategy risk settings (default 5x). Hard risk controls run outside the agent and cannot be overridden by it:',
+            text: 'Leverage comes from the trader’s risk settings (default 5x). Hard risk controls run outside the agent and cannot be overridden by it:',
           },
           {
             type: 'list',
             items: [
-              'Position-count cap from the strategy config — new opens are rejected at the cap.',
+              'Position-count cap from the trader’s settings — new opens are rejected at the cap.',
               'Leverage limits per asset class (BTC/ETH vs altcoins).',
               'A trade throttle blocks churn, e.g. closing a barely-moved position minutes after opening it.',
               'Safe mode (below) protects the book when the model itself is failing.',
@@ -230,7 +230,7 @@ export const faq: FAQContent = [
           },
           {
             type: 'p',
-            text: 'Safe mode shows as a banner on the trader’s page and under Needs attention on the Dashboard, so it never happens silently.',
+            text: 'Safe mode shows on the trader in Auto trading and under Needs attention on the Dashboard, so it never happens silently.',
           },
         ],
       },
@@ -247,7 +247,7 @@ export const faq: FAQContent = [
           },
           {
             type: 'p',
-            text: 'Fees are the silent killer of high-frequency strategies. The Performance tab on the trader’s page shows fees beside realized P/L, split by hold time and side, so you can see whether they are eating the edge.',
+            text: 'Fees are the silent killer of high-frequency strategies. A trader’s Performance tab shows fees beside realized P/L, split by hold time and side, so you can see whether they are eating the edge.',
           },
         ],
       },
@@ -258,8 +258,8 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Stop: use Stop on the trader’s page, or Stop all on the Traders page. Stopping halts the decision loop; open positions remain open and are yours to manage.',
-              'Manual close: close a position from the Positions tab on its trader’s page, or from Positions and orders on Frontier. Manual closes sync back into the position history.',
+              'Stop: use Stop on a trader in Auto trading, or Stop all there. Stopping halts the decision loop; open positions remain open and are yours to manage.',
+              'Manual close: close a position from its trader’s Positions tab, or from Positions and orders on Futures. Manual closes sync back into the position history.',
               'Emergencies: you can always manage positions directly on the exchange; Vergex never locks you out of your own account.',
             ],
           },
@@ -268,16 +268,16 @@ export const faq: FAQContent = [
     ],
   },
   {
-    id: 'strategies',
-    title: 'Strategies & grid',
+    id: 'trader-settings',
+    title: 'Trader settings & grid',
     items: [
       {
-        id: 'strategy-editor',
-        question: 'What can I change in a strategy?',
+        id: 'trader-settings-editor',
+        question: 'What can I change in a trader’s settings?',
         blocks: [
           {
             type: 'p',
-            text: 'The Strategies page edits everything. An agent strategy has four sections:',
+            text: 'A trader’s Settings tab edits everything. An agent trader has four parts:',
           },
           {
             type: 'list',
@@ -290,17 +290,17 @@ export const faq: FAQContent = [
           },
           {
             type: 'p',
-            text: 'A strategy’s type, agent or grid, is set when you create it and cannot change. The bar at the bottom estimates how many tokens each cycle will use.',
+            text: 'A trader’s kind, agent or grid, is set when you create it and cannot change. A new trader starts from a preset or a copy of another trader. The bar at the bottom estimates how many tokens each cycle will use.',
           },
         ],
       },
       {
-        id: 'strategy-test',
-        question: 'What does Test do, and does it cost money?',
+        id: 'trader-dry-run',
+        question: 'What does Dry run do, and does it cost money?',
         blocks: [
           {
             type: 'p',
-            text: 'Test tries the strategy as it stands in the form, saved or not, on live public market data and a 1000 USDT account that does not exist.',
+            text: 'Dry run tries the settings as they stand in the form, saved or not, on live public market data and a 1000 USDT account that does not exist.',
           },
           {
             type: 'list',
@@ -316,18 +316,18 @@ export const faq: FAQContent = [
         ],
       },
       {
-        id: 'strategy-running',
+        id: 'trader-settings-running',
         question: 'Do saved changes affect traders already running?',
         blocks: [
           {
             type: 'p',
-            text: 'Yes. A running trader reloads its strategy at the start of each cycle, so saved changes apply from its next cycle, including to coins and risk limits.',
+            text: 'Yes. A running agent trader reads its settings at the start of each cycle, so saved changes apply from its next cycle, including to coins and risk limits. A running grid trader restarts with the new settings.',
           },
         ],
       },
       {
         id: 'grid-how',
-        question: 'How does a grid strategy work?',
+        question: 'How does a grid trader work?',
         blocks: [
           {
             type: 'p',
@@ -346,21 +346,21 @@ export const faq: FAQContent = [
     ],
   },
   {
-    id: 'frontier',
-    title: 'Frontier',
+    id: 'futures',
+    title: 'Futures',
     items: [
       {
-        id: 'frontier-what',
-        question: 'What is Frontier, and how does it differ from a trader?',
+        id: 'futures-what',
+        question: 'What is Futures, and how does it differ from Auto trading?',
         blocks: [
           {
             type: 'p',
-            text: 'Frontier plans one trade at a time with you. You discuss a market with the agent on a live chart, compare entry plans and approve one. It is not a running strategy, which is what a trader is, and it is not a backtester.',
+            text: 'Futures plans one trade at a time with you. You discuss a market with the agent on a live chart, compare entry plans and approve one. It is not a running strategy, which is what a trader is, and it is not a backtester.',
           },
         ],
       },
       {
-        id: 'frontier-workflow',
+        id: 'futures-workflow',
         question: 'How do I plan and place a trade?',
         blocks: [
           {
@@ -375,7 +375,7 @@ export const faq: FAQContent = [
         ],
       },
       {
-        id: 'frontier-entries',
+        id: 'futures-entries',
         question: 'What kinds of entry can a plan use?',
         blocks: [
           {
@@ -394,7 +394,7 @@ export const faq: FAQContent = [
         ],
       },
       {
-        id: 'frontier-protection',
+        id: 'futures-protection',
         question: 'Is a plan’s stop-loss guaranteed?',
         blocks: [
           {
@@ -408,7 +408,7 @@ export const faq: FAQContent = [
         ],
       },
       {
-        id: 'frontier-restart',
+        id: 'futures-restart',
         question: 'What happens to a running plan if the server restarts?',
         blocks: [
           {
@@ -444,7 +444,7 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Create, update, start, stop and delete traders and strategies.',
+              'Create, update, start, stop and delete traders, and change their settings.',
               'Answer questions about balances, positions, orders, decisions, statistics and agent costs.',
               'Close a position.',
               'Diagnose why a trader will not start, a model or account fails, or an order did not go through.',
@@ -452,7 +452,7 @@ export const faq: FAQContent = [
           },
           {
             type: 'p',
-            text: 'It uses the same server checks and risk limits as the web pages. Keys and endpoints for models and exchanges can only be changed in the web UI.',
+            text: 'It uses the same server checks and risk limits as the web pages. Keys and endpoints for models and accounts can only be changed in the web UI.',
           },
         ],
       },
@@ -462,7 +462,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Risky actions wait for you: starting, stopping or deleting a trader, updating a running trader, closing a position, deleting a strategy, and changing a strategy’s risk or grid settings. Your next message must be an explicit confirmation such as “confirm” or “yes”; anything else cancels it, and it expires after 5 minutes.',
+            text: 'Risky actions wait for you: starting, stopping or deleting a trader, updating a running trader, closing a position, and changing a trader’s risk or grid settings. Your next message must be an explicit confirmation such as “confirm” or “yes”; anything else cancels it, and it expires after 5 minutes.',
           },
           {
             type: 'p',
@@ -566,10 +566,10 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              'Needs attention: problems such as safe mode, an account that cannot be read or a Frontier plan that needs reconciling.',
+              'Needs attention: problems such as safe mode, an account that cannot be read or a Futures plan that needs reconciling.',
               'The scene: every part of the system, and each real event travelling between them as it happens.',
               'Events: what happened in the last 24 hours, which you can filter and open.',
-              'Positions across every trader and Frontier plan.',
+              'Positions across every trader and Futures plan.',
             ],
           },
           {
@@ -580,7 +580,7 @@ export const faq: FAQContent = [
       },
       {
         id: 'trader-metrics',
-        question: 'What do the numbers on a trader’s page mean?',
+        question: 'What do the numbers on Auto trading mean?',
         blocks: [
           {
             type: 'list',
@@ -610,7 +610,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'The Decisions tab on the trader’s page lists every cycle with the actions taken, the model call duration and any blocked orders with the guard that fired (throttle, position cap, risk control). Open a cycle to read its prompts, reasoning and the model’s raw response.',
+            text: 'A trader’s Decisions tab lists every cycle with the actions taken, the model call duration and any blocked orders with the guard that fired (throttle, position cap, risk control). Open a cycle to read its prompts, reasoning and the model’s raw response.',
           },
         ],
       },
@@ -703,14 +703,13 @@ export const faq: FAQContent = [
         ],
       },
       {
-        id: 'exchange-unreachable',
-        question:
-          'The exchange account shows "invalid credentials" or "unavailable".',
+        id: 'account-unreachable',
+        question: 'The account shows "invalid credentials" or "unavailable".',
         blocks: [
           {
             type: 'list',
             items: [
-              'Invalid credentials: the saved API key was revoked, expired or mistyped — create a new key and update the exchange account.',
+              'Invalid credentials: the saved API key was revoked, expired or mistyped — create a new key and update the account.',
               'Unavailable: the exchange API did not respond; the account state is cached for 30 seconds, so wait and refresh.',
               'CEX keys: verify trading permission, IP whitelist, and that futures/perp access is enabled.',
             ],
@@ -725,7 +724,7 @@ export const faq: FAQContent = [
             type: 'list',
             items: [
               'Backend: `docker logs vergex-backend` (or the terminal running `make run-backend`).',
-              'Per-cycle agent reasoning and errors: the Decisions tab on the trader’s page.',
+              'Per-cycle agent reasoning and errors: a trader’s Decisions tab.',
               'Frontend build/runtime issues: browser devtools console.',
             ],
           },

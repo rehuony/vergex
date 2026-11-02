@@ -5,9 +5,9 @@ import (
 	"sort"
 	"time"
 
-	"vergex/internal/exchange/binance"
 	"vergex/internal/logger"
-	"vergex/internal/market/wsfeed"
+	"vergex/internal/market/ws"
+	"vergex/internal/venue/binance"
 )
 
 const (
@@ -21,14 +21,14 @@ const (
 // is there. A lost connection or a full queue needs no other handling.
 type Writer struct {
 	store   *Store
-	in      <-chan wsfeed.Candle
+	in      <-chan ws.Candle
 	now     func() time.Time
 	onHole  func() // Told when a series needs the hydrator now.
 	written func() // Told after candles were stored.
 }
 
 // NewWriter creates a writer. Either callback may be nil.
-func NewWriter(store *Store, in <-chan wsfeed.Candle, onHole, written func()) *Writer {
+func NewWriter(store *Store, in <-chan ws.Candle, onHole, written func()) *Writer {
 	return &Writer{store: store, in: in, now: time.Now, onHole: onHole, written: written}
 }
 
@@ -36,7 +36,7 @@ func NewWriter(store *Store, in <-chan wsfeed.Candle, onHole, written func()) *W
 func (w *Writer) Run(ctx context.Context) {
 	ticker := time.NewTicker(writerFlushEvery)
 	defer ticker.Stop()
-	var pending []wsfeed.Candle
+	var pending []ws.Candle
 	flush := func() {
 		if len(pending) > 0 {
 			w.flush(pending)
@@ -59,9 +59,9 @@ func (w *Writer) Run(ctx context.Context) {
 	}
 }
 
-func (w *Writer) flush(batch []wsfeed.Candle) {
+func (w *Writer) flush(batch []ws.Candle) {
 	type seriesName struct{ symbol, interval string }
-	groups := map[seriesName][]wsfeed.Candle{}
+	groups := map[seriesName][]ws.Candle{}
 	for _, candle := range batch {
 		name := seriesName{candle.Symbol, candle.Interval}
 		groups[name] = append(groups[name], candle)
@@ -86,7 +86,7 @@ func (w *Writer) flush(batch []wsfeed.Candle) {
 
 // extend adds to a series what follows on from its water mark. Candles for a series
 // nobody tracks, such as one only open on a chart, are not stored.
-func (w *Writer) extend(symbol, interval string, candles []wsfeed.Candle) (wrote, hole bool, err error) {
+func (w *Writer) extend(symbol, interval string, candles []ws.Candle) (wrote, hole bool, err error) {
 	step := IntervalMillis(interval)
 	if step == 0 {
 		return false, false, nil
@@ -129,7 +129,7 @@ func (w *Writer) extend(symbol, interval string, candles []wsfeed.Candle) (wrote
 	return len(keep) > 0, hole, nil
 }
 
-func toBinanceCandle(c wsfeed.Candle) binance.Candle {
+func toBinanceCandle(c ws.Candle) binance.Candle {
 	return binance.Candle{
 		OpenTime: c.OpenTime, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close, Volume: c.Volume,
 		QuoteVolume: c.QuoteVolume, Trades: c.Trades, TakerBuyVolume: c.TakerBuyVolume, TakerBuyQuote: c.TakerBuyQuote,

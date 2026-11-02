@@ -12,15 +12,15 @@ import (
 	"sync"
 	"time"
 
-	"vergex/internal/exchange/binance"
+	"vergex/internal/database"
 	"vergex/internal/market/instrument"
-	"vergex/internal/store/database"
+	"vergex/internal/venue/binance"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-const ExchangeBinance = "binance"
+const VenueBinance = "binance"
 
 // Series tiers: which list keeps a series up to date.
 const (
@@ -182,7 +182,7 @@ func (s *Store) instrumentID(symbol string) (int64, error) {
 	if id, ok := s.instruments.Load(symbol); ok {
 		return id.(int64), nil
 	}
-	id, err := instrument.Ensure(s.db, ExchangeBinance, instrument.KindPerpetual, symbol, symbol)
+	id, err := instrument.Ensure(s.db, VenueBinance, instrument.KindPerpetual, symbol, symbol)
 	if err != nil {
 		return 0, err
 	}
@@ -245,7 +245,7 @@ func (s *Store) seriesQuery() *gorm.DB {
 // FindSeries returns one series, or nil if it does not exist yet.
 func (s *Store) FindSeries(symbol, interval string) (*Series, error) {
 	var series []*Series
-	err := s.seriesQuery().Where("i.venue = ? AND i.kind = ? AND i.symbol = ? AND s.timeframe = ?", ExchangeBinance, instrument.KindPerpetual, symbol, interval).
+	err := s.seriesQuery().Where("i.venue = ? AND i.kind = ? AND i.symbol = ? AND s.timeframe = ?", VenueBinance, instrument.KindPerpetual, symbol, interval).
 		Limit(1).Find(&series).Error
 	if err != nil || len(series) == 0 {
 		return nil, err

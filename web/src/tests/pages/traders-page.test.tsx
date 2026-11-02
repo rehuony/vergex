@@ -14,13 +14,14 @@ vi.mock('@/contexts/auth-context', () => ({
 vi.mock('@/contexts/language-context', () => ({
   useLanguage: () => ({ language: 'en' }),
 }))
-vi.mock('swr', () => ({
-  default: () => ({ data: [], mutate: vi.fn(), isLoading: false }),
+vi.mock('@tanstack/react-query', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@tanstack/react-query')>()),
+  useQuery: () => ({ data: [], refetch: vi.fn() }),
 }))
 vi.mock('@/hooks/use-connections', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/hooks/use-connections')>()),
-  useModelConfigs: () => ({ ...mocks.models, mutate: vi.fn() }),
-  useExchangeConfigs: () => ({ ...mocks.accounts, mutate: vi.fn() }),
+  useModelConfigs: () => ({ ...mocks.models, refetch: vi.fn() }),
+  useAccounts: () => ({ ...mocks.accounts, refetch: vi.fn() }),
 }))
 vi.mock('@/api', () => ({
   api: { createTrader: mocks.update, getTraders: async () => [] },
@@ -47,7 +48,7 @@ beforeEach(() => {
       {
         id: 'exchange',
         name: 'My account',
-        exchange_type: 'binance',
+        venue: 'binance',
         has_api_key: true,
       },
     ],
@@ -66,10 +67,11 @@ it('offers creation once connections are saved', () => {
   expect(screen.getByRole('button', { name: 'Create trader' })).toBeEnabled()
   expect(mocks.update).not.toHaveBeenCalled()
 })
-it('holds creation until a model is connected', () => {
+it('leads to the missing model instead of offering creation', () => {
   mocks.models.data = []
   open()
-  expect(screen.getByRole('button', { name: 'Create trader' })).toBeDisabled()
+  expect(screen.queryByRole('button', { name: 'Create trader' })).toBeNull()
+  expect(screen.getByRole('link', { name: 'Add model' })).toBeVisible()
 })
 it('shows a read failure instead of inventing an empty configuration', () => {
   mocks.models = { data: undefined as never, error: new Error('fixture') }
@@ -77,5 +79,4 @@ it('shows a read failure instead of inventing an empty configuration', () => {
   expect(screen.getByRole('alert')).toHaveTextContent(
     'Connections could not be loaded'
   )
-  expect(screen.getByRole('button', { name: 'Create trader' })).toBeDisabled()
 })

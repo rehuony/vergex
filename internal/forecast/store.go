@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
-	"vergex/internal/store/database"
+	"vergex/internal/database"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -29,27 +32,23 @@ const (
 	OutcomeNeutral = "neutral" // No direction was called, or price did not move.
 )
 
-// What a forecast strategy is in strategy.strategies.
-const (
-	strategyDomain = "forecast"
-	strategyType   = "signal"
-)
-
-// Strategy is a saved forecast strategy. It cannot change: another idea is saved as
-// a new strategy, so its signals always describe one set of rules.
+// Strategy is a saved forecast strategy. Its rules cannot change: another idea is saved
+// as a new strategy, so its signals always describe one set of rules. Its name can.
 type Strategy struct {
 	ID            string `gorm:"primaryKey" json:"id"`
-	Domain        string `json:"-"`
-	Type          string `json:"-"`
 	Name          string `json:"name"`
-	EngineVersion int    `json:"engine_version"`
+	EngineVersion int    `json:"-"`
 	ConfigJSON    string `gorm:"column:config" json:"-"`
 	Config        Config `gorm:"-" json:"config"`
 	IsActive      bool   `json:"-"`
 	CreatedAt     int64  `gorm:"serializer:unixms;autoCreateTime:false" json:"created_at"`
+	// Retired means the forecast code changed after this was saved. It keeps its
+	// records, but its rules would no longer give the same forecasts, so it cannot be
+	// backtested, and it can only go back to use by giving those records up: see Revive.
+	Retired bool `gorm:"-" json:"retired"`
 }
 
-func (Strategy) TableName() string { return "strategy.strategies" }
+func (Strategy) TableName() string { return "forecast.strategies" }
 
 // settingsModule is the row in core.settings holding the alert threshold.
 const settingsModule = "forecast"
@@ -130,10 +129,21 @@ const (
 	BacktestFailed   = "failed"
 )
 
+// BacktestCanceled is the error of a failed run that was stopped on request.
+const BacktestCanceled = "canceled"
+
+// Refusals when naming or deleting a backtest.
+var (
+	ErrBacktestName   = errors.New("a backtest's name can be at most 80 characters")
+	ErrBacktestAbsent = errors.New("backtest not found")
+)
+
 // Backtest is one run.
 type Backtest struct {
-	ID          int64           `gorm:"primaryKey;autoIncrement" json:"id"`
-	StrategyID  string          `json:"strategy_id"`
+	ID         int64  `gorm:"primaryKey;autoIncrement" json:"id"`
+	StrategyID string `json:"strategy_id"`
+	// Name is what the user calls the run. Empty shows its strategy's name.
+	Name        string          `json:"name"`
 	OptionsJSON string          `gorm:"column:options" json:"-"`
 	Options     BacktestOptions `gorm:"-" json:"options"`
 	Status      string          `json:"status"`
@@ -141,12 +151,15 @@ type Backtest struct {
 	Total       int             `json:"total"`
 	ReportJSON  string          `gorm:"column:report;default:null" json:"-"`
 	Report      *Report         `gorm:"-" json:"report,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	CreatedAt   int64           `gorm:"serializer:unixms;autoCreateTime:false" json:"created_at"`
-	FinishedAt  int64           `gorm:"serializer:unixms" json:"finished_at,omitempty"`
+	// Summary is the report's overall line, for a list of runs.
+	SummaryJSON string   `gorm:"column:summary;->" json:"-"`
+	Summary     *Metrics `gorm:"-" json:"summary,omitempty"`
+	Error       string   `json:"error,omitempty"`
+	CreatedAt   int64    `gorm:"serializer:unixms;autoCreateTime:false" json:"created_at"`
+	FinishedAt  int64    `gorm:"serializer:unixms" json:"finished_at,omitempty"`
 }
 
-func (Backtest) TableName() string { return "strategy.backtests" }
+func (Backtest) TableName() string { return "forecast.backtests" }
 
 // Store keeps forecasts beside the candles.
 type Store struct {
@@ -161,8 +174,9 @@ func NewStore(db *gorm.DB) *Store {
 // at is a time in Unix milliseconds as a query argument.
 func at(millis int64) time.Time { return time.UnixMilli(millis).UTC() }
 
-func (v *Strategy) decode() error {
-	return json.Unmarshal([]byte(v.ConfigJSON), &v.Config)
+func (strategy *Strategy) decode() error {
+	strategy.Retired = strategy.EngineVersion != EngineVersion
+	return json.Unmarshal([]byte(strategy.ConfigJSON), &strategy.Config)
 }
 
 // CreateStrategy saves a new strategy under a name of its own.
@@ -170,10 +184,22 @@ func (s *Store) CreateStrategy(config Config, name string, now time.Time) (*Stra
 	return s.createStrategy(s.db, config, name, false, now)
 }
 
-func (s *Store) createStrategy(db *gorm.DB, config Config, name string, active bool, now time.Time) (*Strategy, error) {
+// maxNameLength is the longest name a strategy or backtest can have.
+const maxNameLength = 80
+
+// strategyName tidies a name a strategy is to have, or refuses it.
+func strategyName(name string) (string, error) {
 	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil, errors.New("a strategy needs a name")
+	if name == "" || utf8.RuneCountInString(name) > maxNameLength {
+		return "", ErrStrategyName
+	}
+	return name, nil
+}
+
+func (s *Store) createStrategy(db *gorm.DB, config Config, name string, active bool, now time.Time) (*Strategy, error) {
+	name, err := strategyName(name)
+	if err != nil {
+		return nil, err
 	}
 	if err := config.Validate(); err != nil {
 		return nil, err
@@ -183,33 +209,59 @@ func (s *Store) createStrategy(db *gorm.DB, config Config, name string, active b
 		return nil, err
 	}
 	strategy := &Strategy{
-		ID: uuid.NewString(), Domain: strategyDomain, Type: strategyType, Name: name, EngineVersion: EngineVersion,
+		ID: uuid.NewString(), Name: name, EngineVersion: EngineVersion,
 		ConfigJSON: string(body), Config: config, IsActive: active, CreatedAt: now.UnixMilli(),
 	}
 	if err := db.Create(strategy).Error; err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
-			return nil, errors.New("a strategy with this name already exists")
+			return nil, ErrStrategyNameTaken
 		}
 		return nil, err
 	}
 	return strategy, nil
 }
 
-// Refusals when deleting a strategy.
+// RenameStrategy gives a strategy another name. What its signals describe is its rules,
+// so a name can change when they cannot.
+func (s *Store) RenameStrategy(id, name string) error {
+	name, err := strategyName(name)
+	if err != nil {
+		return err
+	}
+	if uuid.Validate(id) != nil {
+		return ErrStrategyAbsent
+	}
+	result := s.db.Model(&Strategy{}).Where("id = ?", id).Update("name", name)
+	switch {
+	case errors.Is(result.Error, gorm.ErrDuplicatedKey):
+		return ErrStrategyNameTaken
+	case result.Error != nil:
+		return result.Error
+	case result.RowsAffected == 0:
+		return ErrStrategyAbsent
+	}
+	return nil
+}
+
+// Refusals when using or deleting a strategy.
 var (
-	ErrStrategyInUse  = errors.New("the strategy in use cannot be deleted")
-	ErrStrategyBusy   = errors.New("a backtest of this strategy is running")
-	ErrStrategyAbsent = errors.New("strategy not found")
+	ErrStrategyInUse     = errors.New("the strategy in use cannot be deleted")
+	ErrStrategyBusy      = errors.New("a backtest of this strategy is running")
+	ErrStrategyAbsent    = errors.New("strategy not found")
+	ErrStrategyRetired   = errors.New("this strategy was saved under older forecast code: start a new one from it")
+	ErrNoStrategyInUse   = errors.New("no forecast strategy is in use")
+	ErrStrategyName      = errors.New("a strategy needs a name of at most 80 characters")
+	ErrStrategyNameTaken = errors.New("a strategy with this name already exists")
 )
 
 // DeleteStrategy removes a strategy not in use. Its signals, statistics, curves and
 // backtests go with it.
 func (s *Store) DeleteStrategy(id string, now time.Time) error {
 	active, err := s.ActiveStrategy(now)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrNoStrategyInUse) {
 		return err
 	}
-	if active.ID == id {
+	if active != nil && active.ID == id {
 		return ErrStrategyInUse
 	}
 	if uuid.Validate(id) != nil {
@@ -223,7 +275,7 @@ func (s *Store) DeleteStrategy(id string, now time.Time) error {
 		if running > 0 {
 			return ErrStrategyBusy
 		}
-		result := tx.Where("id = ? AND domain = ?", id, strategyDomain).Delete(&Strategy{})
+		result := tx.Where("id = ?", id).Delete(&Strategy{})
 		if result.Error == nil && result.RowsAffected == 0 {
 			return ErrStrategyAbsent
 		}
@@ -234,7 +286,7 @@ func (s *Store) DeleteStrategy(id string, now time.Time) error {
 // Strategies lists every strategy, newest first.
 func (s *Store) Strategies() ([]*Strategy, error) {
 	var strategies []*Strategy
-	if err := s.db.Where("domain = ?", strategyDomain).Order("created_at DESC, id").Find(&strategies).Error; err != nil {
+	if err := s.db.Order("created_at DESC, id").Find(&strategies).Error; err != nil {
 		return nil, err
 	}
 	for _, strategy := range strategies {
@@ -251,7 +303,7 @@ func (s *Store) StrategyByID(id string) (*Strategy, error) {
 		return nil, gorm.ErrRecordNotFound
 	}
 	var strategy Strategy
-	if err := s.db.Where("id = ? AND domain = ?", id, strategyDomain).First(&strategy).Error; err != nil {
+	if err := s.db.Where("id = ?", id).First(&strategy).Error; err != nil {
 		return nil, err
 	}
 	return &strategy, strategy.decode()
@@ -260,10 +312,13 @@ func (s *Store) StrategyByID(id string) (*Strategy, error) {
 // LoadSettings returns the settings, creating the first strategy when there is none.
 func (s *Store) LoadSettings(now time.Time) (Settings, error) {
 	active, err := s.ActiveStrategy(now)
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrNoStrategyInUse) {
 		return Settings{}, err
 	}
-	settings := Settings{ActiveStrategyID: active.ID, AlertThreshold: DefaultAlertThreshold}
+	settings := Settings{AlertThreshold: DefaultAlertThreshold}
+	if active != nil {
+		settings.ActiveStrategyID = active.ID
+	}
 	found, err := database.LoadSetting(s.db, settingsModule, &settings)
 	if err != nil || found {
 		return settings, err
@@ -271,29 +326,145 @@ func (s *Store) LoadSettings(now time.Time) (Settings, error) {
 	return settings, s.SetAlertThreshold(DefaultAlertThreshold)
 }
 
-// ActiveStrategy returns the strategy in use, creating the first one when there is none.
+// ActiveStrategy returns the strategy in use, creating the first one when there are none
+// at all. With strategies saved and every one stopped, it returns ErrNoStrategyInUse.
 func (s *Store) ActiveStrategy(now time.Time) (*Strategy, error) {
 	var strategies []Strategy
-	if err := s.db.Where("domain = ? AND is_active", strategyDomain).Limit(1).Find(&strategies).Error; err != nil {
+	if err := s.db.Where("is_active").Limit(1).Find(&strategies).Error; err != nil {
 		return nil, err
 	}
 	if len(strategies) == 1 {
 		return &strategies[0], strategies[0].decode()
+	}
+	var saved int64
+	if err := s.db.Model(&Strategy{}).Count(&saved).Error; err != nil {
+		return nil, err
+	}
+	if saved > 0 {
+		return nil, ErrNoStrategyInUse
 	}
 	return s.createStrategy(s.db, DefaultConfig(), "Default", true, now)
 }
 
 // Activate makes a strategy the one in use. Signals stay with their own strategies.
 func (s *Store) Activate(id string) error {
-	if _, err := s.StrategyByID(id); err != nil {
+	strategy, err := s.usableStrategy(id)
+	if err != nil {
 		return err
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&Strategy{}).Where("domain = ? AND is_active", strategyDomain).Update("is_active", false).Error; err != nil {
+		if err := tx.Model(&Strategy{}).Where("is_active").Update("is_active", false).Error; err != nil {
 			return err
 		}
-		return tx.Model(&Strategy{}).Where("id = ?", id).Update("is_active", true).Error
+		return tx.Model(&Strategy{}).Where("id = ?", strategy.ID).Update("is_active", true).Error
 	})
+}
+
+// Deactivate stops a strategy being used. Nothing forecasts until one is put to use again.
+// Its signals and statistics stay.
+func (s *Store) Deactivate(id string) error {
+	if uuid.Validate(id) != nil {
+		return ErrStrategyAbsent
+	}
+	result := s.db.Model(&Strategy{}).Where("id = ?", id).Update("is_active", false)
+	if result.Error == nil && result.RowsAffected == 0 {
+		return ErrStrategyAbsent
+	}
+	return result.Error
+}
+
+// Revive puts a retired strategy back to use under this version of the code. What it
+// recorded came from the old code and would be added up as if it were the same, so its
+// signals, statistics, curves and backtests go, and its record starts again.
+func (s *Store) Revive(id string) error {
+	strategy, err := s.StrategyByID(id)
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return ErrStrategyAbsent
+	case err != nil:
+		return err
+	case !strategy.Retired:
+		return s.Activate(id)
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		var running int64
+		if err := tx.Model(&Backtest{}).Where("strategy_id = ? AND status = ?", id, BacktestRunning).Count(&running).Error; err != nil {
+			return err
+		}
+		if running > 0 {
+			return ErrStrategyBusy
+		}
+		for _, table := range []string{"forecast.signals", "forecast.outcome_stats", "forecast.calibrations", "forecast.backtests"} {
+			if err := tx.Exec("DELETE FROM "+table+" WHERE strategy_id = ?", id).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&Strategy{}).Where("is_active").Update("is_active", false).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Strategy{}).Where("id = ?", id).Updates(map[string]any{"engine_version": EngineVersion, "is_active": true}).Error
+	})
+}
+
+// usableStrategy returns a strategy whose rules still mean what they meant when saved.
+func (s *Store) usableStrategy(id string) (*Strategy, error) {
+	strategy, err := s.StrategyByID(id)
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return nil, ErrStrategyAbsent
+	case err != nil:
+		return nil, err
+	case strategy.Retired:
+		return nil, ErrStrategyRetired
+	}
+	return strategy, nil
+}
+
+// carriedSuffix is the " (2)" a strategy's name gains when it is carried forward.
+var carriedSuffix = regexp.MustCompile(` \(\d+\)$`)
+
+// carryForward keeps one strategy's records to one engine. When the forecast code has
+// changed since the strategy in use was saved, a copy of its rules under a new name
+// takes over, and the old one stays as it was with what it recorded.
+func (s *Store) carryForward(now time.Time) error {
+	var current []Strategy
+	if err := s.db.Where("is_active").Limit(1).Find(&current).Error; err != nil {
+		return err
+	}
+	if len(current) == 0 || current[0].EngineVersion == EngineVersion {
+		return nil
+	}
+	old := &current[0]
+	if err := old.decode(); err != nil {
+		return err
+	}
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		name, err := carriedName(tx, old.Name)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&Strategy{}).Where("id = ?", old.ID).Update("is_active", false).Error; err != nil {
+			return err
+		}
+		_, err = s.createStrategy(tx, old.Config, name, true, now)
+		return err
+	})
+}
+
+// carriedName names a copy after the engine it runs under, past any name already taken.
+func carriedName(tx *gorm.DB, name string) (string, error) {
+	base := carriedSuffix.ReplaceAllString(name, "")
+	candidate := fmt.Sprintf("%s (%d)", base, EngineVersion)
+	for tries := 2; ; tries++ {
+		var taken int64
+		if err := tx.Model(&Strategy{}).Where("name = ?", candidate).Count(&taken).Error; err != nil {
+			return "", err
+		}
+		if taken == 0 {
+			return candidate, nil
+		}
+		candidate = fmt.Sprintf("%s (%d.%d)", base, EngineVersion, tries)
+	}
 }
 
 // SetAlertThreshold stores the alert threshold.
@@ -316,13 +487,20 @@ func (s *Store) SaveSignal(signal *Signal) (bool, error) {
 }
 
 // LatestOpenTimes returns the newest recorded candle of each series for a strategy.
+// These run often, so each looks up one row per series instead of walking every signal.
 func (s *Store) LatestOpenTimes(strategyID string) (map[int64]int64, error) {
 	var rows []struct {
 		SeriesID int64
 		Latest   time.Time
 	}
-	err := s.db.Model(&Signal{}).Select("series_id, MAX(open_at) AS latest").
-		Where("strategy_id = ?", strategyID).Group("series_id").Scan(&rows).Error
+	err := s.db.Raw(`
+		SELECT m.id AS series_id, newest.open_at AS latest
+		FROM market.series AS m
+		CROSS JOIN LATERAL (
+			SELECT open_at FROM forecast.signals
+			WHERE strategy_id = ? AND series_id = m.id
+			ORDER BY open_at DESC LIMIT 1
+		) AS newest`, strategyID).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -336,21 +514,27 @@ func (s *Store) LatestOpenTimes(strategyID string) (map[int64]int64, error) {
 // LatestSignals returns each series' newest signal for a strategy and interval.
 func (s *Store) LatestSignals(strategyID, interval string) ([]Signal, error) {
 	var signals []Signal
-	latest := s.db.Table("forecast.signals AS l").Select("l.series_id, MAX(l.open_at) AS latest").
-		Joins("JOIN market.series AS lm ON lm.id = l.series_id").
-		Where("l.strategy_id = ? AND lm.timeframe = ?", strategyID, interval).Group("l.series_id")
-	err := s.signalQuery().
-		Joins("JOIN (?) AS newest ON r.series_id = newest.series_id AND r.open_at = newest.latest", latest).
-		Where("r.strategy_id = ?", strategyID).Find(&signals).Error
+	err := s.db.Raw(`
+		SELECT r.*, i.symbol, m.timeframe
+		FROM market.series AS m
+		JOIN market.instruments AS i ON i.id = m.instrument_id
+		CROSS JOIN LATERAL (
+			SELECT * FROM forecast.signals
+			WHERE strategy_id = ? AND series_id = m.id
+			ORDER BY open_at DESC LIMIT 1
+		) AS r
+		WHERE m.timeframe = ?`, strategyID, interval).Scan(&signals).Error
 	return signals, err
 }
 
-// CoinCount returns how many coins a strategy has forecast.
-func (s *Store) CoinCount(strategyID string) (int64, error) {
-	var coins int64
-	err := s.db.Table("forecast.signals AS r").
-		Joins("JOIN market.series AS m ON m.id = r.series_id").
-		Where("r.strategy_id = ?", strategyID).Distinct("m.instrument_id").Count(&coins).Error
+// Coins lists the coins a strategy has forecast.
+func (s *Store) Coins(strategyID string) ([]string, error) {
+	var coins []string
+	err := s.db.Raw(`
+		SELECT DISTINCT i.symbol FROM market.series AS m
+		JOIN market.instruments AS i ON i.id = m.instrument_id
+		WHERE EXISTS (SELECT 1 FROM forecast.signals WHERE strategy_id = ? AND series_id = m.id)
+		ORDER BY i.symbol`, strategyID).Scan(&coins).Error
 	return coins, err
 }
 
@@ -370,10 +554,11 @@ func (s *Store) RecentSignals(strategyID string, seriesID int64, limit int) ([]S
 	return signals, err
 }
 
-// DueSignals returns open signals whose target candle should have closed by now.
-func (s *Store) DueSignals(before int64, limit int) ([]Signal, error) {
+// DueSignals returns open signals whose target candle has closed, oldest first. One on
+// a series that stopped moving forward waits without taking up room in the batch.
+func (s *Store) DueSignals(limit int) ([]Signal, error) {
 	var signals []Signal
-	err := s.signalQuery().Where("r.status = ? AND r.target_at <= ?", StatusOpen, at(before)).
+	err := s.signalQuery().Where("r.status = ? AND r.target_at <= m.last_closed_at", StatusOpen).
 		Order("r.target_at ASC").Limit(limit).Find(&signals).Error
 	return signals, err
 }
@@ -429,14 +614,18 @@ func addToStats(tx *gorm.DB, signal *Signal) error {
 		return 0
 	}
 	moved, rose := signal.TargetClose != signal.Close, signal.TargetClose > signal.Close
-	hit := signal.Outcome == OutcomeHit
+	hit, miss := signal.Outcome == OutcomeHit, signal.Outcome == OutcomeMiss
+	independentMove := 0.0
+	if signal.Independent {
+		independentMove = signal.ActualMovePct
+	}
 	opened := at(signal.OpenTime)
 	return tx.Exec(`
 		INSERT INTO forecast.outcome_stats (
 			strategy_id, series_id, month, direction, regime, confidence_band,
 			judged, hits, misses, moved, rose, move_sum,
-			independent_moved, independent_hits, independent_rose
-		) VALUES (?, ?, ?::date, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+			independent_moved, independent_hits, independent_misses, independent_rose, independent_move_sum
+		) VALUES (?, ?, ?::date, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (strategy_id, series_id, month, direction, regime, confidence_band) DO UPDATE SET
 			judged = forecast.outcome_stats.judged + 1,
 			hits = forecast.outcome_stats.hits + EXCLUDED.hits,
@@ -446,11 +635,13 @@ func addToStats(tx *gorm.DB, signal *Signal) error {
 			move_sum = forecast.outcome_stats.move_sum + EXCLUDED.move_sum,
 			independent_moved = forecast.outcome_stats.independent_moved + EXCLUDED.independent_moved,
 			independent_hits = forecast.outcome_stats.independent_hits + EXCLUDED.independent_hits,
-			independent_rose = forecast.outcome_stats.independent_rose + EXCLUDED.independent_rose`,
+			independent_misses = forecast.outcome_stats.independent_misses + EXCLUDED.independent_misses,
+			independent_rose = forecast.outcome_stats.independent_rose + EXCLUDED.independent_rose,
+			independent_move_sum = forecast.outcome_stats.independent_move_sum + EXCLUDED.independent_move_sum`,
 		signal.StrategyID, signal.SeriesID, fmt.Sprintf("%04d-%02d-01", opened.Year(), opened.Month()),
 		signal.Direction, signal.Regime, confidenceBand(signal.Confidence),
-		count(hit), count(signal.Outcome == OutcomeMiss), count(moved), count(rose), signal.ActualMovePct,
-		count(signal.Independent), count(signal.Independent && hit), count(signal.Independent && rose),
+		count(hit), count(miss), count(moved), count(rose), signal.ActualMovePct,
+		count(signal.Independent), count(signal.Independent && hit), count(signal.Independent && miss), count(signal.Independent && rose), independentMove,
 	).Error
 }
 
@@ -460,17 +651,20 @@ func (s *Store) IndependentPoints(strategyID, interval string) ([]CalibrationPoi
 	var rows []struct {
 		ProbFull float64
 		Up       bool
+		OpenAt   time.Time
+		Horizon  int64
 	}
-	err := s.db.Table("forecast.signals AS r").Select("r.prob_full, r.target_close > r.close AS up").
+	err := s.db.Table("forecast.signals AS r").Select("r.prob_full, r.target_close > r.close AS up, r.open_at, r.horizon").
 		Joins("JOIN market.series AS m ON m.id = r.series_id").
 		Where("r.strategy_id = ? AND m.timeframe = ? AND r.independent", strategyID, interval).
 		Order("r.series_id, r.open_at").Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
+	step := intervalMillis(interval)
 	points := make([]CalibrationPoint, len(rows))
 	for i, row := range rows {
-		points[i] = CalibrationPoint{Prob: row.ProbFull, Up: row.Up}
+		points[i] = CalibrationPoint{Prob: row.ProbFull, Up: row.Up, Moment: row.OpenAt.UnixMilli() / (max(row.Horizon, 1) * step)}
 	}
 	return points, nil
 }
@@ -492,6 +686,10 @@ func (s *Store) saveCalibration(calibration Calibration) error {
 	return s.db.Save(&calibration).Error
 }
 
+func (s *Store) removeCalibration(strategyID, interval string) error {
+	return s.db.Where("strategy_id = ? AND timeframe = ?", strategyID, interval).Delete(&Calibration{}).Error
+}
+
 func (s *Store) alertArm(seriesID int64) bool {
 	var arm AlertArm
 	if err := s.db.First(&arm, "series_id = ?", seriesID).Error; err != nil {
@@ -504,14 +702,56 @@ func (s *Store) setAlertArm(seriesID int64, alerted bool) error {
 	return s.db.Save(&AlertArm{SeriesID: seriesID, Alerted: alerted}).Error
 }
 
+// backtestName tidies what a run is to be called, or refuses it. Empty is fine: the run
+// then goes by its strategy's name.
+func backtestName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if utf8.RuneCountInString(name) > maxNameLength {
+		return "", ErrBacktestName
+	}
+	return name, nil
+}
+
 // CreateBacktest records a run about to start.
-func (s *Store) CreateBacktest(strategyID string, options BacktestOptions, now time.Time) (*Backtest, error) {
+func (s *Store) CreateBacktest(strategyID, name string, options BacktestOptions, now time.Time) (*Backtest, error) {
+	name, err := backtestName(name)
+	if err != nil {
+		return nil, err
+	}
 	body, err := json.Marshal(options)
 	if err != nil {
 		return nil, err
 	}
-	run := &Backtest{StrategyID: strategyID, OptionsJSON: string(body), Options: options, Status: BacktestRunning, Total: len(options.Symbols) * len(options.Intervals), CreatedAt: now.UnixMilli()}
+	run := &Backtest{StrategyID: strategyID, Name: name, OptionsJSON: string(body), Options: options, Status: BacktestRunning, Total: len(options.Symbols) * len(options.Intervals), CreatedAt: now.UnixMilli()}
 	return run, s.db.Create(run).Error
+}
+
+// RenameBacktest gives a run another name, or with an empty one, its strategy's again.
+func (s *Store) RenameBacktest(id int64, name string) error {
+	name, err := backtestName(name)
+	if err != nil {
+		return err
+	}
+	result := s.db.Model(&Backtest{}).Where("id = ?", id).Update("name", name)
+	if result.Error == nil && result.RowsAffected == 0 {
+		return ErrBacktestAbsent
+	}
+	return result.Error
+}
+
+// DeleteBacktest removes a run that is not going.
+func (s *Store) DeleteBacktest(id int64) error {
+	var run Backtest
+	err := s.db.Select("id, status").First(&run, id).Error
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return ErrBacktestAbsent
+	case err != nil:
+		return err
+	case run.Status == BacktestRunning:
+		return ErrBacktestRunning
+	}
+	return s.db.Delete(&Backtest{}, id).Error
 }
 
 func (s *Store) updateBacktestProgress(id int64, done int) error {
@@ -545,6 +785,12 @@ func (b *Backtest) decode() error {
 	if err := json.Unmarshal([]byte(b.OptionsJSON), &b.Options); err != nil {
 		return err
 	}
+	if b.SummaryJSON != "" {
+		b.Summary = &Metrics{}
+		if err := json.Unmarshal([]byte(b.SummaryJSON), b.Summary); err != nil {
+			return err
+		}
+	}
 	if b.ReportJSON != "" {
 		b.Report = &Report{}
 		return json.Unmarshal([]byte(b.ReportJSON), b.Report)
@@ -552,10 +798,12 @@ func (b *Backtest) decode() error {
 	return nil
 }
 
-// Backtests lists runs newest first. Reports are included, for comparing runs.
+// Backtests lists runs newest first, with each report's overall line for comparing them.
 func (s *Store) Backtests(limit int) ([]*Backtest, error) {
 	var runs []*Backtest
-	if err := s.db.Order("id DESC").Limit(limit).Find(&runs).Error; err != nil {
+	err := s.db.Select("id, strategy_id, name, options, status, done, total, error, created_at, finished_at, report->'overall' AS summary").
+		Order("id DESC").Limit(limit).Find(&runs).Error
+	if err != nil {
 		return nil, err
 	}
 	for _, run := range runs {
@@ -575,22 +823,178 @@ func (s *Store) BacktestByID(id int64) (*Backtest, error) {
 	return &run, run.decode()
 }
 
-// SignalStats is how a strategy's calls on a series have turned out.
+// SignalStats is how calls have turned out. Apart from Judged it counts only independent
+// signals, whose windows do not overlap, so it can be set beside a backtest. The rates
+// are nil until there is something to work them out from.
 type SignalStats struct {
-	Hits   int64 `json:"hits"`
-	Misses int64 `json:"misses"`
-	// Moved counts every judged signal where price moved, called or not, and Rose how
-	// many of them rose. A hit rate has to beat this share to mean anything.
-	Moved int64 `json:"moved"`
-	Rose  int64 `json:"rose"`
+	// Judged counts every judged signal, overlapping ones too.
+	Judged int64 `json:"judged"`
+	// Samples counts calls that moved: Hits and Misses.
+	Samples int64    `json:"samples"`
+	Hits    int64    `json:"hits"`
+	Misses  int64    `json:"misses"`
+	HitRate *float64 `json:"hit_rate"`
+	// ChanceRate is what the same mix of up and down calls would hit with no skill. A
+	// hit rate has to beat this to mean anything.
+	ChanceRate *float64 `json:"chance_rate"`
+	// AvgReturnAfterFee is the average return of acting on each call.
+	AvgReturnAfterFee *float64 `json:"avg_return_after_fee_pct"`
+}
+
+// outcomeRow is one line of outcome_stats, or several added up.
+type outcomeRow struct {
+	Timeframe      string
+	Regime         string
+	Direction      string
+	ConfidenceBand int
+	Judged         int64
+	Moved          int64
+	Rose           int64
+	Hits           int64
+	Misses         int64
+	MoveSum        float64
+}
+
+const outcomeColumns = `COALESCE(SUM(o.judged), 0) AS judged, COALESCE(SUM(o.independent_moved), 0) AS moved,
+	COALESCE(SUM(o.independent_rose), 0) AS rose, COALESCE(SUM(o.independent_hits), 0) AS hits,
+	COALESCE(SUM(o.independent_misses), 0) AS misses, COALESCE(SUM(o.independent_move_sum), 0) AS move_sum`
+
+// outcomeTotals adds rows up, keeping up and down calls apart for the chance rate and
+// the sign of their returns.
+type outcomeTotals struct {
+	judged, moved, rose, upCalls, downCalls, hits, misses int64
+	signedMove                                            float64
+}
+
+func (t *outcomeTotals) add(row outcomeRow) {
+	t.judged += row.Judged
+	t.moved += row.Moved
+	t.rose += row.Rose
+	t.hits += row.Hits
+	t.misses += row.Misses
+	switch row.Direction {
+	case DirectionUp:
+		t.upCalls += row.Hits + row.Misses
+		t.signedMove += row.MoveSum
+	case DirectionDown:
+		t.downCalls += row.Hits + row.Misses
+		t.signedMove -= row.MoveSum
+	}
+}
+
+func (t *outcomeTotals) stats() SignalStats {
+	stats := SignalStats{Judged: t.judged, Samples: t.hits + t.misses, Hits: t.hits, Misses: t.misses}
+	stats.ChanceRate = chanceRate(t.upCalls, t.downCalls, t.rose, t.moved)
+	if stats.Samples > 0 {
+		rate := float64(t.hits) / float64(stats.Samples)
+		stats.HitRate = &rate
+	}
+	if calls := t.upCalls + t.downCalls; calls > 0 {
+		average := t.signedMove/float64(calls) - RoundTripFeePct
+		stats.AvgReturnAfterFee = &average
+	}
+	return stats
 }
 
 // SignalStats adds up a series' judged forecasts for a strategy.
 func (s *Store) SignalStats(strategyID string, seriesID int64) (SignalStats, error) {
-	var stats SignalStats
-	err := s.db.Table("forecast.outcome_stats").Select(`
-		COALESCE(SUM(hits), 0) AS hits, COALESCE(SUM(misses), 0) AS misses,
-		COALESCE(SUM(moved), 0) AS moved, COALESCE(SUM(rose), 0) AS rose`).
-		Where("strategy_id = ? AND series_id = ?", strategyID, seriesID).Scan(&stats).Error
-	return stats, err
+	var rows []outcomeRow
+	err := s.db.Table("forecast.outcome_stats AS o").Select("o.direction, "+outcomeColumns).
+		Where("o.strategy_id = ? AND o.series_id = ?", strategyID, seriesID).Group("o.direction").Scan(&rows).Error
+	if err != nil {
+		return SignalStats{}, err
+	}
+	var totals outcomeTotals
+	for _, row := range rows {
+		totals.add(row)
+	}
+	return totals.stats(), nil
+}
+
+// Performance is how a strategy has done live, overall and by what might explain it.
+type Performance struct {
+	Overall      SignalStats            `json:"overall"`
+	ByInterval   map[string]SignalStats `json:"by_interval"`
+	ByRegime     map[string]SignalStats `json:"by_regime"`
+	ByDirection  map[string]SignalStats `json:"by_direction"`
+	ByConfidence map[string]SignalStats `json:"by_confidence"`
+	// Calibration says, per interval, how far its scores are from showing as probabilities.
+	Calibration []CalibrationStatus `json:"calibration"`
+}
+
+// CalibrationStatus is where one interval stands on earning a curve.
+type CalibrationStatus struct {
+	Interval string `json:"interval"`
+	Moments  int    `json:"moments"`
+	Needed   int    `json:"needed"`
+	Active   bool   `json:"active"`
+	BuiltAt  int64  `json:"built_at,omitempty"`
+}
+
+// Performance adds up everything a strategy has been judged on.
+func (s *Store) Performance(strategyID string) (*Performance, error) {
+	var rows []outcomeRow
+	err := s.db.Table("forecast.outcome_stats AS o").
+		Select("m.timeframe, o.regime, o.direction, o.confidence_band, "+outcomeColumns).
+		Joins("JOIN market.series AS m ON m.id = o.series_id").
+		Where("o.strategy_id = ?", strategyID).
+		Group("m.timeframe, o.regime, o.direction, o.confidence_band").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	var overall outcomeTotals
+	performance := &Performance{}
+	groups := []struct {
+		dest *map[string]SignalStats
+		key  func(outcomeRow) string
+		// Whether a call was up or down is the very thing being compared, so chance goes
+		// by how often price rose overall. Within the group it would equal the hit rate.
+		overallBase bool
+	}{
+		{dest: &performance.ByInterval, key: func(row outcomeRow) string { return row.Timeframe }},
+		{dest: &performance.ByRegime, key: func(row outcomeRow) string { return row.Regime }},
+		{dest: &performance.ByDirection, key: func(row outcomeRow) string { return row.Direction }, overallBase: true},
+		{dest: &performance.ByConfidence, key: func(row outcomeRow) string { return strconv.Itoa(row.ConfidenceBand) }},
+	}
+	for _, row := range rows {
+		overall.add(row)
+	}
+	performance.Overall = overall.stats()
+	for _, group := range groups {
+		totals := map[string]*outcomeTotals{}
+		for _, row := range rows {
+			key := group.key(row)
+			if totals[key] == nil {
+				totals[key] = &outcomeTotals{}
+			}
+			totals[key].add(row)
+		}
+		*group.dest = make(map[string]SignalStats, len(totals))
+		for key, total := range totals {
+			if group.overallBase {
+				total.rose, total.moved = overall.rose, overall.moved
+			}
+			(*group.dest)[key] = total.stats()
+		}
+	}
+
+	var curves []Calibration
+	if err := s.db.Where("strategy_id = ?", strategyID).Find(&curves).Error; err != nil {
+		return nil, err
+	}
+	built := make(map[string]int64, len(curves))
+	for _, curve := range curves {
+		built[curve.Interval] = curve.BuiltAt
+	}
+	for _, interval := range Intervals {
+		points, err := s.IndependentPoints(strategyID, interval)
+		if err != nil {
+			return nil, err
+		}
+		_, active := built[interval]
+		performance.Calibration = append(performance.Calibration, CalibrationStatus{
+			Interval: interval, Moments: countMoments(points), Needed: MinCalibrationMoments, Active: active, BuiltAt: built[interval],
+		})
+	}
+	return performance, nil
 }

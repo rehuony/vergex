@@ -2,12 +2,10 @@ package logger
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -35,7 +33,7 @@ func (f *compactFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 		}
 		// Skip logrus internal and our logger.go
 		if !strings.Contains(file, "logrus") && !strings.HasSuffix(file, "logger/logger.go") {
-			// Get package name from path (e.g., "vergex/internal/trader/manager/trader_manager.go" -> "manager")
+			// Get package name from path (e.g., "vergex/internal/trader/auto_trader.go" -> "trader")
 			dir := filepath.Dir(file)
 			pkg := filepath.Base(dir)
 			caller = fmt.Sprintf("%s/%s:%d", pkg, filepath.Base(file), line)
@@ -82,20 +80,7 @@ func Init(cfg *Config) error {
 	// Set compact formatter
 	Log.SetFormatter(&compactFormatter{})
 
-	// Setup log file output (write to both stdout and file)
-	logDir := "data"
-	if err := os.MkdirAll(logDir, 0755); err == nil {
-		logFileName := filepath.Join(logDir, fmt.Sprintf("vergex_%s.log", time.Now().Format("2006-01-02")))
-		f, err := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err == nil {
-			// Write to both stdout and file
-			Log.SetOutput(io.MultiWriter(os.Stdout, f))
-		} else {
-			Log.SetOutput(os.Stdout)
-		}
-	} else {
-		Log.SetOutput(os.Stdout)
-	}
+	Log.SetOutput(os.Stdout)
 
 	Log.SetReportCaller(true)
 

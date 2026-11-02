@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"vergex/internal/exchange/binance"
-	"vergex/internal/store"
+	"vergex/internal/trader/kind"
+	"vergex/internal/venue/binance"
 )
 
 type fakeRanking struct {
@@ -43,11 +43,13 @@ func oiChange(symbol string, pct, volume float64) binance.OIChange {
 	}
 }
 
-func engineWith(source store.CoinSourceConfig, ranking RankingSource) *StrategyEngine {
-	cfg := store.GetDefaultStrategyConfig("en")
+func engineWith(source kind.CoinSource, ranking RankingSource) *Engine {
+	cfg := kind.DefaultAgent()
 	cfg.CoinSource = source
-	cfg.NormalizeProductSchema()
-	e := NewStrategyEngine(&cfg)
+	if err := cfg.Validate(); err != nil {
+		panic(err)
+	}
+	e := NewEngine(cfg)
 	e.ranking = ranking
 	return e
 }
@@ -70,7 +72,7 @@ func TestOITopAndLowUseDirectionAndExclusions(t *testing.T) {
 		oiChange("FUSDT", -15, 9e8),
 	}}
 
-	top := engineWith(store.CoinSourceConfig{
+	top := engineWith(kind.CoinSource{
 		SourceType: "oi_top", OITopLimit: 2, ExcludedCoins: []string{"CUSDT"},
 		MinQuoteVolume: 1e6, OIWindow: "24h", OIPoolSize: 30,
 	}, ranking)
@@ -88,7 +90,7 @@ func TestOITopAndLowUseDirectionAndExclusions(t *testing.T) {
 		t.Fatalf("ranking context = %+v", data)
 	}
 
-	low := engineWith(store.CoinSourceConfig{SourceType: "oi_low", OILowLimit: 5}, ranking)
+	low := engineWith(kind.CoinSource{SourceType: "oi_low", OILowLimit: 5}, ranking)
 	coins, _ = low.GetCandidateCoins()
 	if got := symbols(coins); got != "FUSDT,EUSDT" {
 		t.Fatalf("oi_low must only take falling OI, got %s", got)
@@ -101,15 +103,15 @@ func TestPriceMoverSourcesStopAtTheSignChange(t *testing.T) {
 		{Symbol: "FLATUSDT", PriceChangePercent: 0, QuoteVolume: 9e8},
 		{Symbol: "DOWNUSDT", PriceChangePercent: -7, QuoteVolume: 9e8},
 	}}
-	gainers, _ := engineWith(store.CoinSourceConfig{SourceType: "gainers", GainersLimit: 3}, ranking).GetCandidateCoins()
+	gainers, _ := engineWith(kind.CoinSource{SourceType: "gainers", GainersLimit: 3}, ranking).GetCandidateCoins()
 	if got := symbols(gainers); got != "UPUSDT" {
 		t.Fatalf("gainers = %s", got)
 	}
-	losers, _ := engineWith(store.CoinSourceConfig{SourceType: "losers", LosersLimit: 3}, ranking).GetCandidateCoins()
+	losers, _ := engineWith(kind.CoinSource{SourceType: "losers", LosersLimit: 3}, ranking).GetCandidateCoins()
 	if got := symbols(losers); got != "DOWNUSDT" {
 		t.Fatalf("losers = %s", got)
 	}
-	volume, _ := engineWith(store.CoinSourceConfig{SourceType: "volume_top", VolumeTopLimit: 2}, ranking).GetCandidateCoins()
+	volume, _ := engineWith(kind.CoinSource{SourceType: "volume_top", VolumeTopLimit: 2}, ranking).GetCandidateCoins()
 	if got := symbols(volume); got != "UPUSDT,FLATUSDT" {
 		t.Fatalf("volume_top = %s", got)
 	}
@@ -120,7 +122,7 @@ func TestMixedSourcesMergeInOrderWithStatic(t *testing.T) {
 		tickers: []binance.Ticker{{Symbol: "BTCUSDT", PriceChangePercent: 2, QuoteVolume: 9e9}},
 		oi:      []binance.OIChange{oiChange("SOLUSDT", 12, 9e8), oiChange("BTCUSDT", 3, 9e9)},
 	}
-	e := engineWith(store.CoinSourceConfig{
+	e := engineWith(kind.CoinSource{
 		SourceType: "mixed", UseOITop: true, OITopLimit: 2, UseVolumeTop: true, VolumeTopLimit: 1,
 		StaticCoins: []string{"ETHUSDT", "BTCUSDT"},
 	}, ranking)
@@ -152,7 +154,7 @@ func TestOKXVenueSkipsCoinsNotListedOnOKX(t *testing.T) {
 		{Symbol: "ETHUSDT", QuoteVolume: 7e9},
 		{Symbol: "SOLUSDT", QuoteVolume: 6e9},
 	}}
-	e := engineWith(store.CoinSourceConfig{SourceType: "volume_top", VolumeTopLimit: 2}, ranking).WithVenue("okx")
+	e := engineWith(kind.CoinSource{SourceType: "volume_top", VolumeTopLimit: 2}, ranking).WithVenue("okx")
 	e.listing = func(context.Context) (map[string]bool, error) {
 		return map[string]bool{"BTCUSDT": true, "ETHUSDT": true, "SOLUSDT": true}, nil
 	}
@@ -169,7 +171,7 @@ func TestOKXVenueSkipsCoinsNotListedOnOKX(t *testing.T) {
 		t.Fatal("expected an error when the OKX listing is unavailable")
 	}
 
-	binanceEngine := engineWith(store.CoinSourceConfig{SourceType: "volume_top", VolumeTopLimit: 2}, ranking).WithVenue("binance")
+	binanceEngine := engineWith(kind.CoinSource{SourceType: "volume_top", VolumeTopLimit: 2}, ranking).WithVenue("binance")
 	coins, _ = binanceEngine.GetCandidateCoins()
 	if got := symbols(coins); got != "BTCUSDT,1000PEPEUSDT" {
 		t.Fatalf("binance volume_top = %s", got)

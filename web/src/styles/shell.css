@@ -1,0 +1,491 @@
+/* The app shell: brand mark, top bar, page frame and tabs, toasts, and the
+   sign-in family. Page-specific CSS sits beside its page. */
+
+.vergex-shell {
+  background: var(--canvas);
+}
+/* Toasts (sonner). Sonner adds its own unlayered CSS at runtime, after this
+   file, so these rules need !important. Colours follow the theme tokens. */
+.vergex-toast {
+  align-items: flex-start !important;
+  gap: 10px !important;
+  /* The right padding keeps text clear of the close button. */
+  padding: 14px 44px 14px 16px !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 16px !important;
+  background: var(--surface) !important;
+  box-shadow: var(--shadow-overlay) !important;
+  color: var(--ink) !important;
+  font-family: var(--font-sans) !important;
+  font-size: 13px !important;
+}
+.vergex-toast [data-title] {
+  color: var(--ink) !important;
+  font-weight: 600 !important;
+  line-height: 20px !important;
+}
+.vergex-toast [data-description] {
+  color: var(--ink-soft) !important;
+  line-height: 18px !important;
+}
+/* The icon carries the type, centred on the first line of the title. */
+.vergex-toast [data-icon] {
+  margin-top: 2px !important;
+}
+.vergex-toast[data-type='success'] [data-icon] {
+  color: var(--success);
+}
+.vergex-toast[data-type='error'] [data-icon] {
+  color: var(--danger);
+}
+.vergex-toast[data-type='warning'] [data-icon] {
+  color: var(--warning);
+}
+.vergex-toast[data-type='info'] [data-icon] {
+  color: var(--ink);
+}
+/* Close sits inside the top-right corner, level with the title. */
+.vergex-toast [data-close-button] {
+  top: 12px !important;
+  right: 12px !important;
+  left: auto !important;
+  width: 24px !important;
+  height: 24px !important;
+  transform: none !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  background: transparent !important;
+  color: var(--muted) !important;
+}
+.vergex-toast [data-close-button]:hover {
+  background: color-mix(in srgb, var(--ink) 8%, transparent) !important;
+  color: var(--ink) !important;
+}
+.vergex-toast [data-close-button]:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ink) 40%, transparent) !important;
+}
+.vergex-toast [data-close-button] svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* The mark and wordmark have independent optical sizing. */
+.vergex-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+  color: var(--ink);
+  line-height: 1;
+}
+.vergex-brand img {
+  width: 38px;
+  height: 33px;
+  /* The file is square with the mark across its width; this crops only padding. */
+  object-fit: cover;
+  display: block;
+}
+.vergex-wordmark {
+  font-family: var(--font-sans);
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.055em;
+  padding-bottom: 1px;
+}
+.vergex-navigation {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 50;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: none;
+}
+.vergex-navigation-inner {
+  height: 72px;
+  padding: 0 var(--page-gutter);
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+.vergex-home {
+  display: inline-flex;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.vergex-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.vergex-nav-link {
+  position: relative;
+  border: 0;
+  padding: 10px 13px;
+  border-radius: 9999px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  background: transparent;
+  cursor: pointer;
+}
+.vergex-nav-link:hover {
+  background: var(--surface-muted);
+  color: var(--ink);
+}
+.vergex-nav-link[aria-current='page'] {
+  background: var(--ink-tint);
+  color: var(--ink);
+}
+.vergex-navigation-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+/* Flex, so the wrapper is as tall as the avatar button: the menu then opens
+   right under it and the avatar stays centred in the bar. */
+.vergex-user {
+  position: relative;
+  display: flex;
+}
+.vergex-sign-in {
+  padding: 9px 20px;
+  background: var(--ink);
+  border: 0;
+  border-radius: 9999px;
+  color: var(--on-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+.vergex-nav-menu {
+  display: contents;
+}
+.vergex-nav-current,
+.vergex-nav-toggle,
+.vergex-nav-account {
+  display: none;
+}
+@media (max-width: 1450px) {
+  .vergex-navigation-inner {
+    gap: 22px;
+  }
+  .vergex-nav-link {
+    padding: 9px;
+  }
+}
+@media (max-width: 700px) {
+  .vergex-navigation-inner {
+    gap: 12px;
+  }
+  .vergex-navigation-actions {
+    gap: 8px;
+  }
+}
+/* A phone's bar is the logo, the page you are on and one toggle. The pages and
+   the account move into a solid sheet that unfolds from the bar and fills the
+   screen, while the logo and the toggle stay where they are. */
+@media (max-width: 639px) {
+  .vergex-home .vergex-brand {
+    gap: 6px;
+  }
+  .vergex-home .vergex-brand img {
+    width: 28px;
+    height: 24px;
+  }
+  .vergex-home .vergex-wordmark {
+    font-size: 22px;
+  }
+  .vergex-nav-current {
+    display: block;
+    padding-left: 12px;
+    border-left: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+    white-space: nowrap;
+  }
+  .vergex-user {
+    display: none;
+  }
+  .vergex-nav-toggle {
+    position: relative;
+    display: block;
+    order: 1;
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    /* The strokes, not the touch target, line up with the page's edge. */
+    margin-right: -8px;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+  }
+  .vergex-nav-toggle span {
+    position: absolute;
+    left: 8px;
+    width: 24px;
+    height: 1.5px;
+    background: currentColor;
+    transition: transform var(--dur-state) var(--ease-move);
+  }
+  .vergex-nav-toggle span:first-child {
+    top: 15.25px;
+  }
+  .vergex-nav-toggle span:last-child {
+    top: 23.25px;
+  }
+  .vergex-nav-toggle[aria-expanded='true'] span:first-child {
+    transform: translateY(4px) rotate(45deg);
+  }
+  .vergex-nav-toggle[aria-expanded='true'] span:last-child {
+    transform: translateY(-4px) rotate(-45deg);
+  }
+  .vergex-nav-menu {
+    position: fixed;
+    inset: 72px 0 0;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 8px calc(var(--page-gutter) - 12px)
+      calc(16px + env(safe-area-inset-bottom));
+    background: var(--surface);
+    clip-path: inset(0 0 100% 0);
+    visibility: hidden;
+    transition:
+      clip-path var(--dur-panel) var(--ease-move),
+      visibility 0s var(--dur-panel);
+  }
+  .vergex-navigation.is-open .vergex-nav-menu {
+    clip-path: inset(0);
+    visibility: visible;
+    transition: clip-path var(--dur-panel) var(--ease-move);
+  }
+  .vergex-nav-links {
+    flex-direction: column;
+    flex-shrink: 0;
+    align-items: stretch;
+  }
+  .vergex-nav-link {
+    height: 56px;
+    padding: 0 12px;
+    border-radius: 6px;
+    font-size: 20px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    text-align: left;
+  }
+  .vergex-nav-link[aria-current='page'] {
+    font-weight: 500;
+  }
+  .vergex-nav-account {
+    display: block;
+    flex-shrink: 0;
+    margin-top: auto;
+    /* With the rows' own 10px, the text lines up with the pages above. */
+    padding: 24px 2px 0;
+  }
+}
+
+/* Page frame: every app page fills the width inside the shared gutter. */
+.vergex-page {
+  padding: 24px var(--page-gutter) 48px;
+  min-width: 0;
+}
+/* A list page's only header: section tabs on the left, controls on the right. */
+.vergex-page-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 8px 24px;
+  margin-bottom: 16px;
+}
+.vergex-page-bar:has(.vergex-page-tabs) {
+  border-bottom: 1px solid var(--line);
+}
+.vergex-page-bar .vergex-page-tabs {
+  flex: 1 1 auto;
+  margin-bottom: -1px;
+  border-bottom: 0;
+}
+.vergex-page-bar .vergex-page-tabs a,
+.vergex-page-bar .vergex-page-tabs button {
+  margin-bottom: 0;
+}
+.vergex-page-bar:has(.vergex-page-tabs) .vergex-page-actions {
+  margin-bottom: 8px;
+}
+.vergex-page-leading {
+  margin-right: auto;
+  max-width: 100%;
+}
+/* A detail page's first row: back, name, state, what it is made of, controls. */
+.vergex-page-identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  min-height: 40px;
+}
+.vergex-page-identity h1 {
+  min-width: 0;
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 28px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vergex-page-meta {
+  min-width: 0;
+  overflow: hidden;
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vergex-page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.vergex-page-identity .vergex-page-actions {
+  margin-left: auto;
+}
+.vergex-page-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+  /* The active underline overlaps the border by 1px; clip it vertically. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Scrolls sideways when it must, with no scrollbar under the tabs. */
+  scrollbar-width: none;
+}
+.vergex-page-tabs a,
+.vergex-page-tabs button {
+  padding: 10px 12px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.vergex-page-tabs a:hover,
+.vergex-page-tabs button:hover {
+  color: var(--ink);
+}
+.vergex-page-tabs a[aria-current='page'],
+.vergex-page-tabs button[aria-selected='true'] {
+  border-bottom-color: var(--ink);
+  color: var(--ink);
+}
+@media (max-width: 700px) {
+  .vergex-page-tabs {
+    gap: 0;
+  }
+  .vergex-page-tabs a,
+  .vergex-page-tabs button {
+    padding: 10px;
+  }
+  .vergex-page {
+    padding-top: 16px;
+  }
+  .vergex-page-leading {
+    width: 100%;
+  }
+  .vergex-page-bar .vergex-page-actions {
+    flex: 1 1 100%;
+    justify-content: flex-end;
+  }
+  .vergex-page-meta {
+    order: 3;
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+/* The sign-in family: one scene on the canvas, a large title over a 400px form. */
+.vergex-auth {
+  position: relative;
+  display: flex;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 16px;
+  background: var(--canvas);
+  color: var(--ink);
+}
+/* A ledger's ruled lines, gone before they reach the page's edges. */
+.vergex-auth::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line) 1px, transparent 1px);
+  background-position: center;
+  background-size: 80px 80px;
+  mask-image: radial-gradient(ellipse at center, #000 25%, transparent 70%);
+}
+.vergex-auth-column {
+  position: relative;
+  width: 100%;
+  max-width: 400px;
+}
+.vergex-auth h1 {
+  margin: 32px 0 0;
+  font-size: clamp(32px, 10vw, 48px);
+  font-weight: 500;
+  letter-spacing: -0.03em;
+  line-height: 1.05;
+  text-align: center;
+  text-wrap: balance;
+}
+
+/* A page of screens that fill the window. From the width its panels stand side by side,
+   the tabs stay put under the top bar, so what is below them never moves. The bar's padding fills the page's own gap
+   above it, which keeps what scrolls from showing through. */
+@media (min-width: 1024px) {
+  .vergex-screen > .vergex-page-bar {
+    position: sticky;
+    top: 73px;
+    z-index: 20;
+    margin-top: -23px;
+    padding-top: 23px;
+    background: var(--canvas);
+  }
+}
+
+/* Its screens fill the window to this gap, and the page ends at the same place, so the
+   end of a scroll pushes nothing up. */
+@media (min-width: 768px) {
+  .vergex-page.vergex-screen {
+    padding-bottom: 24px;
+  }
+}
+
+/* The tab row keeps the height of a row with controls beside its tabs, so what is below
+   them stays put going from one tab to another. */
+@media (min-width: 640px) {
+  .vergex-screen .vergex-page-bar .vergex-page-tabs {
+    align-items: flex-end;
+    min-height: 45px;
+  }
+}

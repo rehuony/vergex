@@ -4,26 +4,26 @@ import (
 	"testing"
 	"time"
 
+	"vergex/internal/account"
+	"vergex/internal/account/accounttest"
+	"vergex/internal/database/testdb"
 	"vergex/internal/market/instrument"
-	"vergex/internal/store"
-	"vergex/internal/store/storetest"
 
 	"github.com/shopspring/decimal"
 )
 
-func ledgerTrader(t *testing.T) (*AutoTrader, *store.Store, *storetest.Ledger) {
+func ledgerTrader(t *testing.T) (*AutoTrader, *Stores, *accounttest.Ledger) {
 	t.Helper()
-	st := storetest.New(t)
-	t.Cleanup(func() { _ = st.Close() })
-	ledger := storetest.NewLedger(t, st)
-	return &AutoTrader{store: st, id: "t1", exchange: "binance", exchangeID: ledger.Account, config: AutoTraderConfig{IsCrossMargin: true}}, st, ledger
+	st := NewStores(testdb.Open(t))
+	ledger := accounttest.NewLedger(t, st.DB)
+	return &AutoTrader{stores: st, id: "t1", venue: "binance", accountID: ledger.Account, config: AutoTraderConfig{IsCrossMargin: true}}, st, ledger
 }
 
 func TestAPlacedOrderIsRecordedAndItsFillsJoinIt(t *testing.T) {
 	at, st, ledger := ledgerTrader(t)
 	recorded := at.recordOrder(map[string]interface{}{"orderId": int64(77), "clientOrderId": "vergex-1"}, "BTCUSDT", "open_long", 0.5, 10)
 
-	orders, err := st.Order().GetTraderOrders("t1", 10)
+	orders, err := st.Orders.GetTraderOrders("t1", 10)
 	if err != nil || len(orders) != 1 {
 		t.Fatalf("orders = %d, err %v", len(orders), err)
 	}
@@ -31,7 +31,7 @@ func TestAPlacedOrderIsRecordedAndItsFillsJoinIt(t *testing.T) {
 	if recorded == 0 || order.ID != recorded {
 		t.Fatalf("recorded as %d, order is %d", recorded, order.ID)
 	}
-	if order.ExchangeOrderID != "77" || order.ClientOrderID != "vergex-1" || order.Status != store.OrderNew || order.OrderAction != "open_long" || order.Leverage != 10 || order.Quantity != 0.5 {
+	if order.ExchangeOrderID != "77" || order.ClientOrderID != "vergex-1" || order.Status != account.OrderNew || order.OrderAction != "open_long" || order.Leverage != 10 || order.Quantity != 0.5 {
 		t.Fatalf("order = %+v", order)
 	}
 
@@ -41,23 +41,23 @@ func TestAPlacedOrderIsRecordedAndItsFillsJoinIt(t *testing.T) {
 	}
 
 	// The account's sync reports the fill, and it joins the order rather than making one.
-	btc, err := instrument.Ensure(st.GormDB(), "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = st.Ledger().RecordTrade(store.Trade{
-		AccountID: ledger.Account, InstrumentID: btc, ExchangeTradeID: "t-1", ExchangeOrderID: "77", Side: store.SideBuy, PositionSide: store.SideLong,
+	_, err = st.Ledger.RecordTrade(account.Trade{
+		AccountID: ledger.Account, InstrumentID: btc, ExchangeTradeID: "t-1", ExchangeOrderID: "77", Side: account.SideBuy, PositionSide: account.SideLong,
 		Price: decimal.NewFromInt(100), Quantity: decimal.RequireFromString("0.5"), QuoteQuantity: decimal.NewFromInt(50), ExecutedAt: time.Now(),
-	}, store.Owner{})
+	}, account.Owner{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	orders, err = st.Order().GetTraderOrders("t1", 10)
-	if err != nil || len(orders) != 1 || orders[0].Status != store.OrderFilled {
+	orders, err = st.Orders.GetTraderOrders("t1", 10)
+	if err != nil || len(orders) != 1 || orders[0].Status != account.OrderFilled {
 		t.Fatalf("orders = %+v, err %v", orders, err)
 	}
 	// The real leverage reaches the position, and with it what the model sees.
-	position, err := st.Position().GetOpenPositionBySymbol("t1", "BTCUSDT", "long")
+	position, err := st.Positions.GetOpenPositionBySymbol("t1", "BTCUSDT", "long")
 	if err != nil || position == nil || position.Leverage != 10 {
 		t.Fatalf("position = %+v, err %v", position, err)
 	}
@@ -68,7 +68,7 @@ func TestEachActionIsRecordedAsWhatItDoes(t *testing.T) {
 	for i, action := range []string{"open_long", "open_short", "close_long", "close_short"} {
 		at.recordOrder(map[string]interface{}{"orderId": float64(i + 1)}, "BTCUSDT", action, 1, 0)
 	}
-	orders, err := st.Order().GetTraderOrders("t1", 10)
+	orders, err := st.Orders.GetTraderOrders("t1", 10)
 	if err != nil || len(orders) != 4 {
 		t.Fatalf("orders = %d, err %v", len(orders), err)
 	}
@@ -94,7 +94,7 @@ func TestAnOrderWithNoIDIsNotRecorded(t *testing.T) {
 	for _, result := range []map[string]interface{}{{}, {"orderId": ""}, {"orderId": int64(0)}} {
 		at.recordOrder(result, "BTCUSDT", "open_long", 1, 5)
 	}
-	if orders, err := st.Order().GetTraderOrders("t1", 10); err != nil || len(orders) != 0 {
+	if orders, err := st.Orders.GetTraderOrders("t1", 10); err != nil || len(orders) != 0 {
 		t.Fatalf("orders = %+v, err %v", orders, err)
 	}
 }
@@ -102,15 +102,15 @@ func TestAnOrderWithNoIDIsNotRecorded(t *testing.T) {
 func TestAGridOrderIsRecordedWithItsPrice(t *testing.T) {
 	at, st, _ := ledgerTrader(t)
 	at.recordGridOrder(
-		&LimitOrderRequest{Symbol: "BTCUSDT", Side: "BUY", Price: 95, Quantity: 0.1, Leverage: 3, PostOnly: true},
-		&LimitOrderResult{OrderID: "grid-1", ClientID: "c-1", PositionSide: "BOTH"},
+		&account.LimitOrderRequest{Symbol: "BTCUSDT", Side: "BUY", Price: 95, Quantity: 0.1, Leverage: 3, PostOnly: true},
+		&account.LimitOrderResult{OrderID: "grid-1", ClientID: "c-1", PositionSide: "BOTH"},
 	)
-	orders, err := st.Order().GetTraderOrders("t1", 10)
+	orders, err := st.Orders.GetTraderOrders("t1", 10)
 	if err != nil || len(orders) != 1 {
 		t.Fatalf("orders = %d, err %v", len(orders), err)
 	}
 	order := orders[0]
-	if order.Role != store.RoleGrid || order.Type != "LIMIT" || order.Price != 95 || order.Side != "BUY" || order.PositionSide != "" || order.Leverage != 3 {
+	if order.Role != account.RoleGrid || order.Type != "LIMIT" || order.Price != 95 || order.Side != "BUY" || order.PositionSide != "" || order.Leverage != 3 {
 		t.Fatalf("order = %+v", order)
 	}
 }
@@ -124,7 +124,7 @@ func TestThrottleSeesRealOrdersAndFiredStops(t *testing.T) {
 		t.Fatalf("no close yet, got %+v", got)
 	}
 
-	ledger.Open("t1", "BTCUSDT", store.SideLong, 1, 100, now.Add(-10*time.Minute))
+	ledger.Open("t1", "BTCUSDT", account.SideLong, 1, 100, now.Add(-10*time.Minute))
 	if got := at.findRecentOpenOrder("BTCUSDT", "long", since); got == nil {
 		t.Fatal("the open was not seen")
 	}
@@ -136,7 +136,7 @@ func TestThrottleSeesRealOrdersAndFiredStops(t *testing.T) {
 	}
 
 	// Nothing recorded this order: it is known only through its fill.
-	ledger.Close("someone-else", "BTCUSDT", store.SideLong, 1, 90, -10, now.Add(-time.Minute))
+	ledger.Close("someone-else", "BTCUSDT", account.SideLong, 1, 90, -10, now.Add(-time.Minute))
 	if got := at.findRecentCloseOrder("BTCUSDT", since); got == nil {
 		t.Fatal("the fired stop was not seen as a close")
 	}

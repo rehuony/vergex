@@ -12,9 +12,10 @@ import (
 	"sort"
 )
 
-// EngineVersion goes up whenever factor code changes what a strategy computes,
-// so results from different code are not compared as if they were the same.
-const EngineVersion = 1
+// EngineVersion goes up whenever factor code changes what a strategy computes. A
+// strategy saved under another version is retired and a copy takes over, so records
+// from different code are never added up as if they were the same.
+const EngineVersion = 2
 
 // ScorerWeighted combines factors by weight, the only scorer so far. Strategies
 // carry the field so other ways of scoring can use the same strategies, records,

@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"vergex/internal/account"
 	"vergex/internal/logger"
-	"vergex/internal/servicestate"
-	"vergex/internal/store"
+	"vergex/internal/service"
+	"vergex/internal/trader"
 )
 
 // Alert kinds the user can turn on or off in Settings.
@@ -40,7 +41,7 @@ const (
 	markPlan      = "plan:"
 )
 
-// PlanRun is a Frontier run as the alert watcher needs it.
+// PlanRun is a Futures run as the alert watcher needs it.
 type PlanRun struct {
 	ID     string
 	Symbol string
@@ -52,12 +53,12 @@ type PlanRun struct {
 type AlertSources struct {
 	// TraderStatus returns a loaded trader's status, or nil.
 	TraderStatus func(traderID string) map[string]any
-	// PlanRuns returns the user's Frontier runs.
+	// PlanRuns returns the user's Futures runs.
 	PlanRuns func(ctx context.Context, user string) ([]PlanRun, error)
 }
 
 type alertWatcher struct {
-	st      *store.Store
+	stores  *Stores
 	sources AlertSources
 	send    func(ctx context.Context, text string) error
 	now     func() time.Time
@@ -66,11 +67,11 @@ type alertWatcher struct {
 // StartAlerts watches for events worth telling the user about until ctx ends.
 // It only reads: it never touches the trading loop and makes no exchange calls.
 // Must be called as a goroutine.
-func StartAlerts(ctx context.Context, st *store.Store, sources AlertSources) {
+func StartAlerts(ctx context.Context, st *Stores, sources AlertSources) {
 	w := &alertWatcher{
-		st:      st,
+		stores:  st,
 		sources: sources,
-		send:    func(ctx context.Context, text string) error { return Notify(ctx, st, text) },
+		send:    func(ctx context.Context, text string) error { return Notify(ctx, st.Telegram, text) },
 		now:     time.Now,
 	}
 	ticker := time.NewTicker(alertInterval)
@@ -87,7 +88,7 @@ func StartAlerts(ctx context.Context, st *store.Store, sources AlertSources) {
 
 // pending is one check's messages and the marks to save once they are delivered.
 type pending struct {
-	cfg     *store.TelegramConfig
+	cfg     *Config
 	lang    string
 	lines   []string
 	set     map[string]int64
@@ -103,17 +104,17 @@ func (p *pending) add(kind, line string) {
 }
 
 func (w *alertWatcher) check(ctx context.Context) {
-	cfg, err := w.st.TelegramConfig().Get()
+	cfg, err := w.stores.Telegram.Get()
 	if err != nil || cfg.BotToken == "" || cfg.ChatID == 0 {
-		servicestate.Set(servicestate.TelegramAlerts, servicestate.Off, "")
+		service.Report(service.TelegramAlerts, service.Off, "")
 		return
 	}
-	users, err := w.st.User().GetAll()
+	users, err := w.stores.Users.GetAll()
 	if err != nil || len(users) == 0 {
 		return
 	}
 	user := users[0].ID
-	traders, err := w.st.Trader().List(user)
+	traders, err := w.stores.Traders.List(user)
 	if err != nil {
 		logger.Warnf("Telegram alerts: read traders: %v", err)
 		return
@@ -125,7 +126,7 @@ func (w *alertWatcher) check(ctx context.Context) {
 		names[trader.ID] = trader.Name
 	}
 
-	p := &pending{cfg: cfg, lang: w.st.TelegramConfig().GetLanguage(), set: map[string]int64{}}
+	p := &pending{cfg: cfg, lang: w.stores.Telegram.GetLanguage(), set: map[string]int64{}}
 	now := w.now().UnixMilli()
 	w.checkOrders(ids, names, now, p)
 	w.checkActions(ids, names, now, p)
@@ -137,12 +138,12 @@ func (w *alertWatcher) check(ctx context.Context) {
 		if err := w.send(ctx, strings.Join(p.lines, "\n")); err != nil {
 			// Marks stay where they are, so the same events go out next time.
 			logger.Warnf("Telegram alerts: send: %v", err)
-			servicestate.Set(servicestate.TelegramAlerts, servicestate.Degraded, err.Error())
+			service.Report(service.TelegramAlerts, service.Degraded, err.Error())
 			return
 		}
 	}
-	servicestate.Set(servicestate.TelegramAlerts, servicestate.Running, "")
-	marks := w.st.TelegramConfig()
+	service.Report(service.TelegramAlerts, service.Running, "")
+	marks := w.stores.Telegram
 	for key, at := range p.set {
 		if err := marks.SetAlertMark(key, at); err != nil {
 			logger.Warnf("Telegram alerts: save mark: %v", err)
@@ -158,7 +159,7 @@ func (w *alertWatcher) check(ctx context.Context) {
 // since returns where a stream continues from. A stream seen for the first time
 // starts now, so connecting the bot does not replay history.
 func (w *alertWatcher) since(key string, now int64, p *pending) (int64, bool) {
-	mark, ok := w.st.TelegramConfig().AlertMark(key)
+	mark, ok := w.stores.Telegram.AlertMark(key)
 	if !ok {
 		p.set[key] = now
 		return 0, false
@@ -174,7 +175,7 @@ func (w *alertWatcher) checkOrders(ids []string, names map[string]string, now in
 	if !ok {
 		return
 	}
-	orders, err := w.st.Order().RejectedSince(ids, since, alertBatch)
+	orders, err := w.stores.Orders.RejectedSince(ids, since, alertBatch)
 	if err != nil {
 		logger.Warnf("Telegram alerts: %v", err)
 		return
@@ -190,7 +191,7 @@ func (w *alertWatcher) checkActions(ids []string, names map[string]string, now i
 	if !ok {
 		return
 	}
-	actions, err := w.st.Decision().FailedActionsSince(ids, since, alertBatch)
+	actions, err := w.stores.Decisions.FailedActionsSince(ids, since, alertBatch)
 	if err != nil {
 		logger.Warnf("Telegram alerts: %v", err)
 		return
@@ -206,7 +207,7 @@ func (w *alertWatcher) checkPositions(ids []string, names map[string]string, now
 	if !ok {
 		return
 	}
-	positions, err := w.st.Position().ClosedSince(ids, since, alertBatch)
+	positions, err := w.stores.Positions.ClosedSince(ids, since, alertBatch)
 	if err != nil {
 		logger.Warnf("Telegram alerts: %v", err)
 		return
@@ -219,7 +220,7 @@ func (w *alertWatcher) checkPositions(ids []string, names map[string]string, now
 
 // checkTraderState reports safe mode and blocked trading once each time they
 // begin; a mark that clears re-arms the alert.
-func (w *alertWatcher) checkTraderState(traders []*store.Trader, now int64, p *pending) {
+func (w *alertWatcher) checkTraderState(traders []*trader.Trader, now int64, p *pending) {
 	if w.sources.TraderStatus == nil {
 		return
 	}
@@ -240,7 +241,7 @@ func (w *alertWatcher) checkPlans(ctx context.Context, user string, now int64, p
 	}
 	runs, err := w.sources.PlanRuns(ctx, user)
 	if err != nil {
-		logger.Warnf("Telegram alerts: read Frontier runs: %v", err)
+		logger.Warnf("Telegram alerts: read Futures runs: %v", err)
 		return
 	}
 	active := make(map[string]bool, len(runs))
@@ -248,13 +249,13 @@ func (w *alertWatcher) checkPlans(ctx context.Context, user string, now int64, p
 		if run.State == "needs_attention" {
 			key := markPlan + run.ID
 			active[key] = true
-			if _, seen := w.st.TelegramConfig().AlertMark(key); !seen {
+			if _, seen := w.stores.Telegram.AlertMark(key); !seen {
 				p.set[key] = now
 				p.add(AlertPlanAttention, planAttentionLine(p.lang, run))
 			}
 		}
 	}
-	keys, err := w.st.TelegramConfig().AlertMarkKeys(markPlan)
+	keys, err := w.stores.Telegram.AlertMarkKeys(markPlan)
 	if err != nil {
 		logger.Warnf("Telegram alerts: %v", err)
 		return
@@ -267,7 +268,7 @@ func (w *alertWatcher) checkPlans(ctx context.Context, user string, now int64, p
 }
 
 func (w *alertWatcher) standing(key string, active bool, now int64, p *pending, line string) {
-	_, seen := w.st.TelegramConfig().AlertMark(key)
+	_, seen := w.stores.Telegram.AlertMark(key)
 	switch {
 	case active && !seen:
 		p.set[key] = now
@@ -291,16 +292,16 @@ func withDetail(line, detail string) string {
 	return line + ": " + detail
 }
 
-func orderRejectedLine(lang string, order *store.TraderOrder, trader string) string {
+func orderRejectedLine(lang string, order *account.TraderOrder, trader string) string {
 	return fmt.Sprintf(pick(lang, "Order rejected: %s %s, %s", "订单被拒：%s %s，%s"), order.Symbol, order.Side, trader)
 }
 
-func actionFailedLine(lang string, action store.FailedAction, trader string) string {
+func actionFailedLine(lang string, action trader.FailedAction, trader string) string {
 	line := fmt.Sprintf(pick(lang, "Order failed: %s %s, %s", "下单失败：%s %s，%s"), action.Symbol, action.Action, trader)
 	return withDetail(line, action.Error)
 }
 
-func positionClosedLine(lang string, position *store.TraderPosition, trader string) string {
+func positionClosedLine(lang string, position *account.TraderPosition, trader string) string {
 	pnl := strconv.FormatFloat(position.RealizedPnL, 'f', 2, 64)
 	if position.RealizedPnL >= 0 {
 		pnl = "+" + pnl
@@ -317,7 +318,7 @@ func tradingBlockedLine(lang, trader, reason string) string {
 }
 
 func planAttentionLine(lang string, run PlanRun) string {
-	return withDetail(fmt.Sprintf(pick(lang, "Frontier plan needs attention: %s", "Frontier 计划需要处理：%s"), run.Symbol), run.Error)
+	return withDetail(fmt.Sprintf(pick(lang, "Futures plan needs attention: %s", "合约交易计划需要处理：%s"), run.Symbol), run.Error)
 }
 
 // TestAlertText is the message Settings sends to check that alerts arrive.

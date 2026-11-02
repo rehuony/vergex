@@ -1,16 +1,21 @@
 import { useState } from 'react'
-import { mutate } from 'swr'
+import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api'
 import { t, type Language } from '@/i18n'
 import type { Position } from '@/types'
 import { cn } from '@/utils/cn'
+import {
+  cellClass,
+  EmptyLine,
+  gainTone,
+  headClass,
+  numberClass,
+  wideTableClass,
+} from '@/components/common/figures'
 import { confirmToast, notify } from '@/components/common/notify'
-import { Panel, PanelState } from '@/components/common/panel'
+import { PanelState } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
 import { baseLabel, fmtPx, fmtUsd } from '@/utils/trader-format'
-
-const headClass = 'px-2 py-2 text-xs font-medium whitespace-nowrap'
-const cellClass = 'px-2 py-2 whitespace-nowrap'
 
 function sideOf(position: Position): 'LONG' | 'SHORT' {
   return /long|buy/i.test(position.side) ? 'LONG' : 'SHORT'
@@ -29,14 +34,15 @@ export function OpenPositions({
   failed?: boolean
   language: Language
 }) {
+  const client = useQueryClient()
   const [closing, setClosing] = useState<string | null>(null)
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`traderDetail.${key}`, language, params)
 
   async function refresh() {
     await Promise.all([
-      mutate(`positions-${traderId}`),
-      mutate(`account-${traderId}`),
+      client.invalidateQueries({ queryKey: ['trader-positions', traderId] }),
+      client.invalidateQueries({ queryKey: ['trader-account', traderId] }),
     ])
   }
 
@@ -92,125 +98,124 @@ export function OpenPositions({
     setClosing(null)
   }
 
+  if (!positions) {
+    return (
+      <PanelState role={failed ? 'alert' : 'status'}>
+        {failed ? label('positionsFailed') : t('loading', language)}
+      </PanelState>
+    )
+  }
+
   return (
-    <Panel
-      title={label('openPositions')}
-      meta={
-        positions ? label('openCount', { count: positions.length }) : undefined
-      }
-      actions={
-        positions && positions.length > 0 ? (
-          <Button
-            type="button"
-            variant="danger"
-            size="sm"
-            className="max-sm:h-10"
-            disabled={closing !== null}
-            onClick={() => void closeAll(positions)}
-          >
-            {closing === '__all__' ? label('closing') : label('closeAll')}
-          </Button>
-        ) : undefined
-      }
-    >
-      {!positions ? (
-        failed ? (
-          <PanelState role="alert">{label('positionsFailed')}</PanelState>
-        ) : (
-          <PanelState role="status">{t('loading', language)}</PanelState>
-        )
-      ) : positions.length === 0 ? (
-        <PanelState role="status">{label('noPositions')}</PanelState>
-      ) : (
-        <div className="px-2 pb-2">
-          <table className="w-full text-left text-[13px] tabular-nums">
-            <thead>
-              <tr>
-                <th className={headClass}>{label('symbol')}</th>
-                <th className={cn(headClass, 'text-right max-sm:hidden')}>
-                  {label('entry')}
-                </th>
-                <th className={cn(headClass, 'text-right max-sm:hidden')}>
-                  {label('mark')}
-                </th>
-                <th className={cn(headClass, 'text-right max-sm:hidden')}>
-                  {label('size')}
-                </th>
-                <th className={cn(headClass, 'text-right')}>{label('pnl')}</th>
-                <th className={headClass}>
-                  <span className="sr-only">{label('close')}</span>
-                </th>
+    <>
+      <table className={wideTableClass}>
+        <thead className="sticky top-0 z-10">
+          <tr>
+            <th className={headClass}>
+              {label('openPositionsCount', { count: positions.length })}
+            </th>
+            <th className={cn(headClass, 'w-20')}>{label('side')}</th>
+            <th className={cn(headClass, 'w-24 text-right max-sm:hidden')}>
+              {label('entry')}
+            </th>
+            <th className={cn(headClass, 'w-24 text-right max-sm:hidden')}>
+              {label('mark')}
+            </th>
+            <th className={cn(headClass, 'w-24 text-right max-sm:hidden')}>
+              {label('size')}
+            </th>
+            <th className={cn(headClass, 'w-28 text-right')}>{label('pnl')}</th>
+            <th className={cn(headClass, 'w-24 text-right')}>
+              {positions.length > 0 ? (
+                <Button
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  className="h-6 px-2 text-[11px]"
+                  disabled={closing !== null}
+                  onClick={() => void closeAll(positions)}
+                >
+                  {closing === '__all__' ? label('closing') : label('closeAll')}
+                </Button>
+              ) : (
+                <span className="sr-only">{label('close')}</span>
+              )}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {positions.map((position) => {
+            const side = sideOf(position)
+            const notional =
+              Math.abs(position.quantity ?? 0) *
+              (position.mark_price || position.entry_price || 0)
+            return (
+              <tr key={`${position.symbol}-${side}`}>
+                <td
+                  className={cn(
+                    cellClass,
+                    'truncate font-medium text-vergex-ink'
+                  )}
+                  title={position.symbol}
+                >
+                  {baseLabel(position.symbol)}
+                </td>
+                <td
+                  className={cn(
+                    cellClass,
+                    'text-xs',
+                    side === 'LONG'
+                      ? 'text-vergex-success'
+                      : 'text-vergex-danger'
+                  )}
+                >
+                  {side === 'LONG' ? label('longSide') : label('shortSide')}{' '}
+                  <span className="mono">{position.leverage}×</span>
+                </td>
+                <td className={cn(cellClass, numberClass, 'max-sm:hidden')}>
+                  {fmtPx(position.entry_price)}
+                </td>
+                <td className={cn(cellClass, numberClass, 'max-sm:hidden')}>
+                  {fmtPx(position.mark_price)}
+                </td>
+                <td className={cn(cellClass, numberClass, 'max-sm:hidden')}>
+                  {fmtUsd(notional)}
+                </td>
+                <td
+                  className={cn(
+                    cellClass,
+                    numberClass,
+                    gainTone(position.unrealized_pnl)
+                  )}
+                  title={`${(position.unrealized_pnl_pct ?? 0).toFixed(2)}%`}
+                >
+                  {fmtUsd(position.unrealized_pnl, true)}
+                </td>
+                <td className={cn(cellClass, 'text-right')}>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    size="sm"
+                    className="h-7 px-2.5 text-xs max-sm:h-10"
+                    disabled={closing !== null}
+                    aria-label={label('closeSymbol', {
+                      symbol: position.symbol,
+                    })}
+                    onClick={() => void closeOne(position.symbol, side)}
+                  >
+                    {closing === position.symbol
+                      ? label('closing')
+                      : label('close')}
+                  </Button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {positions.map((position) => {
-                const side = sideOf(position)
-                const win = (position.unrealized_pnl ?? 0) >= 0
-                const tone = win ? 'text-vergex-success' : 'text-vergex-danger'
-                const notional =
-                  Math.abs(position.quantity ?? 0) *
-                  (position.mark_price || position.entry_price || 0)
-                return (
-                  <tr key={`${position.symbol}-${side}`}>
-                    <td className={cellClass}>
-                      <div className="font-medium text-vergex-text">
-                        {baseLabel(position.symbol)}
-                      </div>
-                      <div
-                        className={cn(
-                          'text-xs',
-                          side === 'LONG'
-                            ? 'text-vergex-success'
-                            : 'text-vergex-danger'
-                        )}
-                      >
-                        {side === 'LONG'
-                          ? label('longSide')
-                          : label('shortSide')}{' '}
-                        {position.leverage}×
-                      </div>
-                    </td>
-                    <td className={cn(cellClass, 'text-right max-sm:hidden')}>
-                      {fmtPx(position.entry_price)}
-                    </td>
-                    <td className={cn(cellClass, 'text-right max-sm:hidden')}>
-                      {fmtPx(position.mark_price)}
-                    </td>
-                    <td className={cn(cellClass, 'text-right max-sm:hidden')}>
-                      {fmtUsd(notional)}
-                    </td>
-                    <td className={cn(cellClass, 'text-right', tone)}>
-                      <div className="font-medium">
-                        {fmtUsd(position.unrealized_pnl, true)}
-                      </div>
-                      <div className="text-xs">
-                        {(position.unrealized_pnl_pct ?? 0).toFixed(2)}%
-                      </div>
-                    </td>
-                    <td className={cn(cellClass, 'w-px text-right')}>
-                      <Button
-                        type="button"
-                        variant="danger"
-                        size="sm"
-                        className="max-sm:h-10"
-                        disabled={closing !== null}
-                        aria-label={label('closeSymbol', {
-                          symbol: position.symbol,
-                        })}
-                        onClick={() => void closeOne(position.symbol, side)}
-                      >
-                        {closing === position.symbol
-                          ? label('closing')
-                          : label('close')}
-                      </Button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+            )
+          })}
+        </tbody>
+      </table>
+      {positions.length === 0 && (
+        <EmptyLine role="status">{label('noPositions')}</EmptyLine>
       )}
-    </Panel>
+    </>
   )
 }

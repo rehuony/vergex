@@ -9,7 +9,7 @@ const trader = (name: string, running = false) =>
     trader_id: name,
     trader_name: name,
     agent_model: 'deepseek',
-    exchange_id: 'binance',
+    account_id: 'binance',
     is_running: running,
   }) as TraderInfo
 
@@ -22,7 +22,7 @@ const show = (props: {
   traders: TraderInfo[]
   search?: string
   modelCount?: number
-  exchangeCount?: number
+  accountCount?: number
 }) =>
   render(
     <MemoryRouter>
@@ -30,9 +30,9 @@ const show = (props: {
         metrics={metrics}
         failed={false}
         models={[]}
-        exchanges={[]}
+        accounts={[]}
         modelCount={1}
-        exchangeCount={1}
+        accountCount={1}
         search=""
         language="en"
         {...props}
@@ -70,9 +70,9 @@ it('filters by the search and says when nothing matches', () => {
 })
 
 it('points a first trader at what is still missing', () => {
-  show({ traders: [], modelCount: 0, exchangeCount: 0 })
+  show({ traders: [], modelCount: 0, accountCount: 0 })
   expect(
-    screen.getByText('A trader needs a model and an exchange account.')
+    screen.getByText('A trader needs a model and an account.')
   ).toBeInTheDocument()
   expect(screen.getByRole('link', { name: 'Add model' })).toHaveAttribute(
     'href',

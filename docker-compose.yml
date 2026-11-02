@@ -34,7 +34,6 @@ services:
     #   - "${VERGEX_BIND_ADDRESS:-127.0.0.1}:${VERGEX_BACKEND_PORT:-3000}:3000"
     volumes:
       # Configuration comes from env_file only; .env is not mounted.
-      - ./data:/app/data
       - /etc/localtime:/etc/localtime:ro
     env_file:
       - .env

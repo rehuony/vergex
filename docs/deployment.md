@@ -6,7 +6,7 @@ For remote access, add nginx on the host. It has three jobs:
 
 1. Terminate TLS and forward public port 443 to `127.0.0.1:8000`.
 2. Add access control on top of the application login: basic auth, an IP allowlist, or both.
-3. Avoid buffering streams: Frontier's agent chat and market feed use SSE.
+3. Avoid buffering streams: the Futures agent chat and market feed use SSE.
 
 Vergex has no setup script for this. Adapt the config below and place it at `/etc/nginx/conf.d/vergex.conf`.
 
@@ -80,10 +80,10 @@ curl -I https://trade.example.com/                 # 401 without credentials
 curl -u <user> https://trade.example.com/api/health
 ```
 
-In the browser, pass basic auth, sign in, then open Frontier and confirm that candles update live and the agent's reply streams.
+In the browser, pass basic auth, sign in, then open Futures and confirm that candles update live and the agent's reply streams.
 
 ## Notes
 
-- Bind your exchange API keys to the server's outgoing IP: `GET /api/server-ip` after signing in, or `curl -4 ifconfig.me` on the server.
+- Bind your account API keys to the server's outgoing IP: `GET /api/system/ip` after signing in, or `curl -4 ifconfig.me` on the server.
 - The container's nginx sees the host nginx as the client, so backend rate limiting may see one source address. On a single-user instance this rarely matters.
 - To reach the backend directly for debugging, uncomment its port mapping in `docker-compose.yml` and keep it bound to `127.0.0.1`.

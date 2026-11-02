@@ -22,19 +22,17 @@ export function Panel({
   return (
     <section
       className={cn(
-        'min-w-0 rounded-xl border border-[var(--line)] bg-[var(--surface)]',
+        'min-w-0 rounded-2xl border border-vergex-line bg-vergex-surface',
         className
       )}
     >
       {(title || actions) && (
-        <header className="flex min-h-14 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2">
+        <header className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2">
           {title && (
-            <h2 className="text-sm font-semibold text-vergex-text">{title}</h2>
+            <h2 className="text-sm font-semibold text-vergex-ink">{title}</h2>
           )}
           {meta && (
-            <span className="truncate text-xs text-vergex-text-muted">
-              {meta}
-            </span>
+            <span className="truncate text-xs text-vergex-muted">{meta}</span>
           )}
           {actions && (
             <div className="ml-auto flex items-center gap-2">{actions}</div>
@@ -61,7 +59,7 @@ export function PanelState({
       role={role}
       className={cn(
         'flex min-h-32 flex-col items-center justify-center gap-2 px-4 py-8 text-center text-sm',
-        role === 'alert' ? 'text-vergex-danger' : 'text-vergex-text-muted',
+        role === 'alert' ? 'text-vergex-danger' : 'text-vergex-muted',
         className
       )}
     >

@@ -7,43 +7,44 @@ import (
 	"testing"
 	"time"
 
-	"vergex/internal/store"
-	"vergex/internal/store/storetest"
+	"vergex/internal/account"
+	"vergex/internal/account/accounttest"
+	"vergex/internal/database/testdb"
+	"vergex/internal/user"
 )
 
 // trendTrader is the trader every alert test starts with.
 const trendTrader = "00000000-0000-4000-8000-0000000000a1"
 
-func alertFixture(t *testing.T) (*alertWatcher, *store.Store, *[]string, *time.Time) {
+func alertFixture(t *testing.T) (*alertWatcher, *Stores, *[]string, *time.Time) {
 	t.Helper()
-	st := storetest.New(t)
-	t.Cleanup(func() { st.Close() })
-	if err := st.User().Create(&store.User{ID: storetest.UserID, Email: "alice@example.com", PasswordHash: "x"}); err != nil {
+	st := NewStores(testdb.Open(t))
+	if err := st.Users.Create(&user.User{ID: testdb.UserID, Email: "alice@example.com", PasswordHash: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	storetest.AddTrader(t, st, &store.Trader{ID: trendTrader, Name: "Trend"})
-	if err := st.TelegramConfig().Save("token", ""); err != nil {
+	testdb.AddTrader(t, st.DB, &testdb.Trader{ID: trendTrader, Name: "Trend"})
+	if err := st.Telegram.Save("token", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.TelegramConfig().BindUser(42, "alice"); err != nil {
+	if err := st.Telegram.BindUser(42, "alice"); err != nil {
 		t.Fatal(err)
 	}
 	sent := &[]string{}
 	now := time.Now()
 	clock := &now
 	w := &alertWatcher{
-		st:   st,
-		send: func(_ context.Context, text string) error { *sent = append(*sent, text); return nil },
-		now:  func() time.Time { return *clock },
+		stores: st,
+		send:   func(_ context.Context, text string) error { *sent = append(*sent, text); return nil },
+		now:    func() time.Time { return *clock },
 	}
 	return w, st, sent, clock
 }
 
-func closePosition(t *testing.T, st *store.Store, exit time.Time) {
+func closePosition(t *testing.T, st *Stores, exit time.Time) {
 	t.Helper()
-	ledger := storetest.NewLedger(t, st)
-	ledger.Open(trendTrader, "BTCUSDT", store.SideLong, 1, 100, exit.Add(-time.Minute))
-	ledger.Close(trendTrader, "BTCUSDT", store.SideLong, 1, 112.5, 12.5, exit)
+	ledger := accounttest.NewLedger(t, st.DB)
+	ledger.Open(trendTrader, "BTCUSDT", account.SideLong, 1, 100, exit.Add(-time.Minute))
+	ledger.Close(trendTrader, "BTCUSDT", account.SideLong, 1, 112.5, 12.5, exit)
 }
 
 func TestAlertsSkipHistoryAndReportOnce(t *testing.T) {
@@ -112,7 +113,7 @@ func TestStandingProblemsAlertOnceAndReArm(t *testing.T) {
 func TestMutedKindsStaySilentWithoutBuildingABacklog(t *testing.T) {
 	w, st, sent, clock := alertFixture(t)
 	w.check(context.Background())
-	if err := st.TelegramConfig().SetMutedAlerts([]string{AlertPositionClosed}); err != nil {
+	if err := st.Telegram.SetMutedAlerts([]string{AlertPositionClosed}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -123,7 +124,7 @@ func TestMutedKindsStaySilentWithoutBuildingABacklog(t *testing.T) {
 		t.Fatalf("muted kind was sent: %v", *sent)
 	}
 
-	if err := st.TelegramConfig().SetMutedAlerts(nil); err != nil {
+	if err := st.Telegram.SetMutedAlerts(nil); err != nil {
 		t.Fatal(err)
 	}
 	*clock = clock.Add(time.Minute)
@@ -139,7 +140,7 @@ func TestPlansNeedingAttentionAlertOncePerRun(t *testing.T) {
 	w.sources.PlanRuns = func(context.Context, string) ([]PlanRun, error) { return runs, nil }
 	w.check(context.Background())
 	w.check(context.Background())
-	if len(*sent) != 1 || !strings.Contains((*sent)[0], "Frontier plan needs attention: ETHUSDT") {
+	if len(*sent) != 1 || !strings.Contains((*sent)[0], "Futures plan needs attention: ETHUSDT") {
 		t.Fatalf("sent = %v", *sent)
 	}
 }

@@ -46,11 +46,12 @@ describe('locales', () => {
 
 describe('t', () => {
   it('fills in every use of a parameter', () => {
-    expect(t('frontier.structures.netRR', 'en', { ratio: 2 })).toBe(
-      'Net R:R 2 : 1'
+    const params = { seconds: 2, count: 3 }
+    expect(t('futures.activity.thought', 'en', params)).toBe(
+      'Thought for 2s · 3 steps'
     )
-    expect(t('frontier.structures.netRR', 'zh-CN', { ratio: 2 })).toBe(
-      '净盈亏比 2 : 1'
+    expect(t('futures.activity.thought', 'zh-CN', params)).toBe(
+      '思考了 2 秒 · 3 步'
     )
   })
 

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"vergex/internal/exchange/binance"
+	"vergex/internal/venue/binance"
 )
 
 func zipped(t *testing.T, name, content string) []byte {

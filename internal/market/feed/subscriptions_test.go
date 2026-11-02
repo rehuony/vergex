@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"vergex/internal/exchange/binance"
-	"vergex/internal/exchange/okx"
-	"vergex/internal/store/database/testdb"
+	"vergex/internal/database/testdb"
+	"vergex/internal/venue/binance"
+	"vergex/internal/venue/okx"
 )
 
 func subscriptionFixture(t *testing.T) (*subscriptions, *Store, *time.Time) {

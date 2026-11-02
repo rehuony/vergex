@@ -4,8 +4,7 @@ import { auth } from './auth'
 import { settings } from './settings'
 import { traders } from './traders'
 import { dashboard } from './dashboard'
-import { strategies } from './strategies'
-import { frontier } from './frontier'
+import { futures } from './futures'
 import { forecast } from './forecast'
 
 export const zhCN: typeof en = {
@@ -14,7 +13,6 @@ export const zhCN: typeof en = {
   ...settings,
   ...traders,
   ...dashboard,
-  ...strategies,
-  ...frontier,
+  ...futures,
   ...forecast,
 }

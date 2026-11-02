@@ -68,22 +68,52 @@ it('keeps desktop navigation labels on one line', () => {
     </MemoryRouter>
   )
 
-  expect(screen.getByRole('button', { name: 'Traders' }).className).toContain(
-    'whitespace-nowrap'
-  )
+  expect(
+    screen.getByRole('button', { name: 'Auto trading' }).className
+  ).toContain('whitespace-nowrap')
 })
 
-it('keeps the full navigation visible in the desktop header', () => {
+it('holds the pages and the account in one sheet on a phone', () => {
+  const onOpenSettings = vi.fn()
+  renderHeader({ onOpenSettings })
+  const toggle = screen.getByRole('button', { name: 'Open navigation' })
+  expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull()
+
+  fireEvent.click(toggle)
+  expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  expect(toggle).toHaveAccessibleName('Close navigation')
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+
+  expect(onOpenSettings).toHaveBeenCalledOnce()
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+})
+
+it('closes the sheet when the page you are on is chosen again', () => {
   render(
     <MemoryRouter initialEntries={['/traders']}>
-      <HeaderBar />
+      <HeaderBar isLoggedIn user={{ email: 'trader@vergex.test' }} />
     </MemoryRouter>
   )
+  const toggle = screen.getByRole('button', { name: 'Open navigation' })
 
-  expect(
-    screen.getByRole('button', { name: 'Traders' }).parentElement?.className
-  ).toContain('lg:flex')
-  expect(
-    screen.getByRole('button', { name: 'Open navigation' }).className
-  ).toContain('lg:hidden')
+  fireEvent.click(toggle)
+  fireEvent.click(screen.getByRole('button', { name: 'Auto trading' }))
+
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+})
+
+it('releases the page when the sheet closes with Escape', () => {
+  renderHeader()
+  const page = document.createElement('main')
+  document.body.append(page)
+  const toggle = screen.getByRole('button', { name: 'Open navigation' })
+
+  fireEvent.click(toggle)
+  expect(page).toHaveAttribute('inert')
+  fireEvent.keyDown(document, { key: 'Escape' })
+
+  expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  expect(toggle).toHaveFocus()
+  expect(page).not.toHaveAttribute('inert')
+  page.remove()
 })

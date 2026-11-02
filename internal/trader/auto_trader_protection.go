@@ -3,8 +3,8 @@ package trader
 import (
 	"fmt"
 	"strings"
+	"vergex/internal/account"
 	"vergex/internal/logger"
-	"vergex/internal/trading"
 )
 
 type positionCacheInvalidator interface {
@@ -89,7 +89,7 @@ func (at *AutoTrader) emergencyClosePositionAndVerify(symbol, side string, quant
 	return lastErr
 }
 
-func getFreshPositions(tr trading.Trader) ([]map[string]interface{}, error) {
+func getFreshPositions(tr account.Trading) ([]map[string]interface{}, error) {
 	if invalidator, ok := tr.(positionCacheInvalidator); ok {
 		invalidator.InvalidatePositionCache()
 	}

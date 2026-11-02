@@ -23,7 +23,7 @@ export function Segmented<T extends string>({
       role="group"
       aria-label={ariaLabel}
       className={cn(
-        'inline-flex rounded-lg border border-[var(--line)] p-0.5',
+        'inline-flex rounded-full border border-vergex-line p-0.5',
         className
       )}
     >
@@ -34,7 +34,7 @@ export function Segmented<T extends string>({
           variant="segment"
           aria-pressed={value === option.value}
           onClick={() => onChange(option.value)}
-          className="h-8 rounded-md px-2.5 text-xs max-sm:h-9"
+          className="h-8 rounded-full px-2.5 text-xs max-sm:h-9"
         >
           {option.label}
         </Button>

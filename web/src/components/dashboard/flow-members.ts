@@ -1,7 +1,6 @@
-import type { ActivityTotals } from '@/api/activity'
-import type { Overview } from '@/api/overview'
-import { fmtUsd } from '@/utils/trader-format'
-import type { SceneBlock } from './flow-layout'
+import type { ActivityStream, ActivityTotals, Overview } from '@/api/dashboard'
+import { baseLabel, fmtUsd } from '@/utils/trader-format'
+import type { LineKey, SceneBlock } from './flow-layout'
 
 export type MemberTone = 'on' | 'off' | 'up' | 'down' | 'alert'
 
@@ -46,7 +45,9 @@ export function totalEquity(overview: Overview) {
 // groups and the scene read the same list.
 export function blockViews(
   overview: Overview,
-  label: Label
+  label: Label,
+  totals: ActivityTotals = {},
+  stream: ActivityStream | null = null
 ): Record<SceneBlock, BlockView> {
   const running = overview.traders.filter((row) => row.is_running)
   const stopped = overview.traders.filter((row) => !row.is_running)
@@ -58,7 +59,7 @@ export function blockViews(
   })
 
   const position = (row: Overview['positions'][number]): Member => ({
-    id: `${row.exchange_id}:${row.symbol}:${row.side}`,
+    id: `${row.account_id}:${row.symbol}:${row.side}`,
     tone: row.unrealized_pnl >= 0 ? 'up' : 'down',
     title: `${row.symbol} ${row.side} ${fmtUsd(row.unrealized_pnl, true)}`,
   })
@@ -68,8 +69,37 @@ export function blockViews(
 
   const coins = overview.market?.coins ?? 0
   const forecastCoins = overview.forecast?.coins ?? 0
+  const coin = (symbol: string): Member => ({
+    id: symbol,
+    tone: 'on',
+    title: baseLabel(symbol),
+  })
+  const arrived = routeTotal(totals, ['exchange>market'], 'h1').items
+  const cost = routeTotal(totals, ['models>agent_cost'], 'h24').amount
+  const fees = routeTotal(totals, ['accounts>fees'], 'h24').amount
 
   return {
+    exchange: {
+      sub: !overview.market
+        ? label('flow.unavailable')
+        : !(stream?.connected ?? overview.market.live)
+          ? label('flow.streamDown')
+          : label('flow.arrivedHour', {
+              count: arrived.toLocaleString('en-US'),
+            }),
+      warn:
+        Boolean(overview.market) &&
+        !(stream?.connected ?? overview.market?.live),
+      members: overview.market
+        ? [
+            {
+              id: 'binance',
+              tone: (stream?.connected ?? overview.market.live) ? 'on' : 'off',
+              title: 'Binance',
+            },
+          ]
+        : [],
+    },
     market: {
       sub: !overview.market
         ? label('flow.unavailable')
@@ -77,11 +107,7 @@ export function blockViews(
           ? label('flow.streamDown')
           : counted(label, 'coin', coins),
       warn: coins > 0 && overview.market?.live === false,
-      members: Array.from({ length: coins }, (_, index) => ({
-        id: String(index),
-        tone: 'on' as const,
-        title: '',
-      })),
+      members: (overview.market?.symbols ?? []).map(coin),
     },
     telegram: {
       sub: label(overview.telegram_bound ? 'flow.bound' : 'flow.notBound'),
@@ -110,7 +136,7 @@ export function blockViews(
         })),
       ],
     },
-    frontier: {
+    futures: {
       sub: overview.runs.length
         ? counted(label, 'plan', overview.runs.length)
         : label('flow.noPlans'),
@@ -124,11 +150,7 @@ export function blockViews(
       sub: overview.forecast
         ? counted(label, 'coin', forecastCoins)
         : label('flow.unavailable'),
-      members: Array.from({ length: forecastCoins }, (_, index) => ({
-        id: String(index),
-        tone: 'on' as const,
-        title: overview.forecast?.name ?? '',
-      })),
+      members: (overview.forecast?.symbols ?? []).map(coin),
     },
     models: {
       sub: hosts.size ? counted(label, 'host', hosts.size) : label('flow.none'),
@@ -161,7 +183,28 @@ export function blockViews(
       members: longs.map(position),
       shortMembers: shorts.map(position),
     },
+    agent_cost: {
+      sub: label('flow.estimatedDay', { amount: usdSmall(cost) }),
+      members: [],
+    },
+    fees: {
+      sub: label('flow.day', { amount: usdSmall(fees) }),
+      members: [],
+    },
   }
+}
+
+/** Fees and agent costs can be fractions of a cent, which fmtUsd would round away. */
+export function usdSmall(value: number) {
+  if (value === 0 || value >= 1) return fmtUsd(value)
+  return `$${value.toFixed(value >= 0.01 ? 2 : 4)}`
+}
+
+// How busy a line has been over the last day, which is how tall its curtain stands. A line
+// that carries many things at once counts them rather than its events.
+export function routeVolume(totals: ActivityTotals, key: LineKey) {
+  const total = totals[key]?.h24
+  return total?.items || total?.count || 0
 }
 
 export function routeTotal(

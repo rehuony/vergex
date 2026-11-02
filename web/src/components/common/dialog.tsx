@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 // surface, one header/body/footer rhythm, Escape and backdrop to close.
 
 export const dialogInputClass =
-  'h-10 w-full rounded-lg border border-[var(--line)] bg-[var(--surface)] px-3 text-sm text-vergex-text placeholder:text-vergex-text-muted/80 transition-colors hover:border-[var(--line-strong)] hover:duration-0 focus:border-vergex-brand focus:bg-[var(--surface)] focus:shadow-none focus:outline-none disabled:bg-vergex-bg disabled:text-vergex-text-muted'
+  'h-9 w-full rounded-md border border-vergex-line bg-vergex-surface px-3 text-sm text-vergex-ink placeholder:text-vergex-faint transition-colors hover:border-vergex-line-strong hover:duration-0 focus:border-vergex-ink/40 focus:bg-vergex-surface focus:outline-none disabled:bg-vergex-surface-muted disabled:text-vergex-muted'
 
 const sizes = {
   sm: 'max-w-md',
@@ -95,7 +95,7 @@ export function Dialog({
   // become the containing block of the fixed backdrop.
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex animate-overlay-in items-start justify-center overflow-y-auto bg-black/40 p-4 backdrop-blur-xs sm:items-center"
+      className="fixed inset-0 z-50 flex animate-overlay-in items-start justify-center overflow-y-auto bg-vergex-scrim p-4 sm:items-center"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose()
       }}
@@ -106,9 +106,9 @@ export function Dialog({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={`my-6 flex max-h-[calc(100vh-3rem)] w-full animate-dialog-in flex-col rounded-[18px] border border-[var(--line)] bg-[var(--surface)] shadow-[var(--shadow-lg)] outline-none ${sizes[size]}`}
+        className={`my-6 flex max-h-[calc(100vh-3rem)] w-full animate-dialog-in flex-col rounded-2xl border border-vergex-line bg-vergex-surface shadow-(--shadow-overlay) outline-none ${sizes[size]}`}
       >
-        <header className="flex items-start gap-3 border-b border-[var(--line)] px-6 py-4">
+        <header className="flex items-start gap-3 border-b border-vergex-line px-6 py-4">
           {onBack && (
             <Button
               type="button"
@@ -125,12 +125,12 @@ export function Dialog({
           <div className="min-w-0 flex-1">
             <h2
               id={titleId}
-              className="text-[17px] font-semibold leading-snug text-vergex-text"
+              className="text-base font-semibold leading-snug text-vergex-ink"
             >
               {title}
             </h2>
             {description && (
-              <div className="mt-0.5 text-[13px] text-vergex-text-muted">
+              <div className="mt-0.5 text-[13px] text-vergex-muted">
                 {description}
               </div>
             )}
@@ -151,7 +151,7 @@ export function Dialog({
         </header>
         <div className={bodyClassName}>{children}</div>
         {footer && (
-          <footer className="flex items-center justify-end gap-2 border-t border-[var(--line)] px-6 py-4">
+          <footer className="flex items-center justify-end gap-2 border-t border-vergex-line px-6 py-4">
             {footer}
           </footer>
         )}
@@ -178,20 +178,20 @@ export function DialogSteps({
             {index > 0 && (
               <li
                 aria-hidden
-                className={`h-px w-6 ${done || active ? 'bg-vergex-accent/50' : 'bg-[var(--line)]'}`}
+                className={`h-px w-6 ${done || active ? 'bg-vergex-ink' : 'bg-vergex-line'}`}
               />
             )}
             <li
               aria-current={active ? 'step' : undefined}
-              className={`flex items-center gap-1.5 ${active ? 'font-medium text-vergex-text' : 'text-vergex-text-muted'}`}
+              className={`flex items-center gap-1.5 ${active ? 'font-medium text-vergex-ink' : 'text-vergex-muted'}`}
             >
               <span
                 className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${
                   done
-                    ? 'bg-vergex-accent/10 text-vergex-accent'
+                    ? 'bg-vergex-ink-tint text-vergex-ink'
                     : active
-                      ? 'bg-vergex-accent text-white'
-                      : 'bg-vergex-bg-deeper text-vergex-text-muted'
+                      ? 'bg-vergex-ink text-vergex-on-ink'
+                      : 'bg-vergex-surface-muted text-vergex-muted'
                 }`}
               >
                 {done ? <Check className="h-3 w-3" /> : index + 1}
@@ -222,13 +222,13 @@ export function DialogField({
     <div className="space-y-1.5">
       <label
         htmlFor={htmlFor}
-        className="block text-[13px] font-medium text-vergex-text"
+        className="block text-[13px] font-medium text-vergex-ink"
       >
         {label}
         {required && <span className="ml-0.5 text-vergex-danger">*</span>}
       </label>
       {children}
-      {hint && <p className="text-xs text-vergex-text-muted">{hint}</p>}
+      {hint && <p className="text-xs text-vergex-muted">{hint}</p>}
     </div>
   )
 }
@@ -241,13 +241,15 @@ export function DialogNote({
   children: ReactNode
 }) {
   const tones = {
-    info: 'border-vergex-accent/15 bg-[var(--brand-soft)] text-vergex-text/85',
-    success: 'border-vergex-success/20 bg-vergex-success/5 text-vergex-success',
-    warning: 'border-vergex-danger/20 bg-vergex-danger/5 text-vergex-danger',
+    info: 'border-vergex-line bg-vergex-surface-muted text-vergex-ink',
+    success:
+      'border-vergex-success-border bg-vergex-success-bg text-vergex-success',
+    warning:
+      'border-vergex-warning-border bg-vergex-warning-bg text-vergex-warning',
   }
   return (
     <div
-      className={`rounded-xl border px-4 py-3 text-[13px] leading-relaxed ${tones[tone]}`}
+      className={`rounded-md border px-4 py-3 text-[13px] leading-relaxed ${tones[tone]}`}
     >
       {children}
     </div>

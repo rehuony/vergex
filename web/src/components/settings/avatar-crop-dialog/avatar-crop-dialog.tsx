@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import ReactCrop, {
   centerCrop,
   makeAspectCrop,
@@ -6,13 +6,13 @@ import ReactCrop, {
 } from 'react-image-crop'
 import 'react-image-crop/dist/ReactCrop.css'
 import './avatar-crop-dialog.css'
-import { RotateCcwSquare } from 'lucide-react'
+import { RotateCcwSquare, RotateCwSquare, Undo2 } from 'lucide-react'
 import { t, type Language } from '@/i18n'
-import { renderAvatar, rotateLeft } from '@/components/settings/avatar'
+import { renderAvatar, rotateQuarter } from '@/components/settings/avatar'
 import { Dialog } from '@/components/common/dialog'
 import { Button } from '@/components/ui/button'
 
-// Both steps share the stage and the controls' heights (the rotate tile, the
+// Both steps share the stage and the controls' heights (the rotate tiles, the
 // gap and the pill), so the dialog does not change size between them.
 const stage = 'grid h-[min(360px,50dvh)] w-full place-items-center'
 const controls = 'flex h-[130px] flex-col items-center justify-end gap-5'
@@ -24,6 +24,28 @@ function fullSquare(width: number, height: number): PercentCrop {
     makeAspectCrop({ unit: '%', ...side }, 1, width, height),
     width,
     height
+  )
+}
+
+function RotateTile({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: ReactNode
+  label: string
+  onClick: () => void
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      className="h-auto w-22 flex-col gap-1.5 rounded-2xl bg-vergex-surface-muted px-1 py-3 font-normal"
+      onClick={onClick}
+    >
+      {icon}
+      {label}
+    </Button>
   )
 }
 
@@ -48,7 +70,12 @@ export function AvatarCropDialog({
   const [preview, setPreview] = useState<{ blob: Blob; url: string } | null>(
     null
   )
-  const [busy, setBusy] = useState(false)
+  const [saving, setSaving] = useState(false)
+  // Every control stays clickable. Clicks on the photo run one after another, so
+  // a quick second one is not lost and starts from what the first one made.
+  const latest = useRef(src)
+  const pending = useRef(0)
+  const queue = useRef<Promise<void>>(Promise.resolve())
 
   useEffect(
     () => () => {
@@ -63,19 +90,44 @@ export function AvatarCropDialog({
     [preview]
   )
 
-  const run = async (action: () => Promise<void>) => {
-    setBusy(true)
-    try {
-      await action()
-    } finally {
-      setBusy(false)
-    }
+  const enqueue = (step: () => void | Promise<void>) => {
+    pending.current += 1
+    queue.current = queue.current
+      .then(step)
+      .catch((error) => console.error('Could not change the photo:', error))
+      .finally(() => {
+        pending.current -= 1
+      })
   }
 
-  const next = () =>
-    run(async () => {
+  // The frame starts over: the new orientation opens on the full square.
+  const rotate = (direction: 'left' | 'right') =>
+    enqueue(async () => {
+      const rotated = await rotateQuarter(latest.current, direction)
+      latest.current = rotated
+      setCrop(undefined)
+      setImage(rotated)
+    })
+
+  const reset = () =>
+    enqueue(() => {
+      if (latest.current !== src) {
+        latest.current = src
+        setCrop(undefined)
+        setImage(src)
+        return
+      }
       const element = imageRef.current
-      if (!element || !crop) return
+      if (element) {
+        setCrop(fullSquare(element.naturalWidth, element.naturalHeight))
+      }
+    })
+
+  // While a turn is running or the photo is loading there is nothing to crop yet.
+  const next = () => {
+    const element = imageRef.current
+    if (pending.current > 0 || !element || !crop?.width) return
+    enqueue(async () => {
       const width = element.naturalWidth
       const height = element.naturalHeight
       const blob = await renderAvatar(image, {
@@ -86,6 +138,17 @@ export function AvatarCropDialog({
       })
       setPreview({ blob, url: URL.createObjectURL(blob) })
     })
+  }
+
+  const save = async (blob: Blob) => {
+    if (saving) return
+    setSaving(true)
+    try {
+      await onSave(blob)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
     <Dialog
@@ -105,7 +168,8 @@ export function AvatarCropDialog({
             <img
               src={preview.url}
               alt={t('avatarPreview', language)}
-              className="size-48 rounded-full"
+              draggable={false}
+              className="size-48 select-none rounded-full"
             />
           </div>
           <div className={controls}>
@@ -113,10 +177,10 @@ export function AvatarCropDialog({
               type="button"
               variant="primary"
               className="rounded-full px-6"
-              disabled={busy}
-              onClick={() => void run(() => onSave(preview.blob))}
+              aria-busy={saving}
+              onClick={() => void save(preview.blob)}
             >
-              {busy ? t('saving', language) : t('saveAsAvatar', language)}
+              {saving ? t('saving', language) : t('saveAsAvatar', language)}
             </Button>
           </div>
         </>
@@ -138,6 +202,7 @@ export function AvatarCropDialog({
                 ref={imageRef}
                 src={image}
                 alt=""
+                draggable={false}
                 // Keep the frame when coming back from the preview; rotating
                 // clears it so the new orientation starts from the full square.
                 onLoad={(e) => {
@@ -151,28 +216,28 @@ export function AvatarCropDialog({
             </ReactCrop>
           </div>
           <div className={controls}>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-auto flex-col gap-1.5 rounded-xl bg-vergex-bg px-5 py-3 font-normal"
-              disabled={busy}
-              onClick={() =>
-                void run(async () => {
-                  const rotated = await rotateLeft(image)
-                  setCrop(undefined)
-                  setImage(rotated)
-                })
-              }
-            >
-              <RotateCcwSquare className="size-5" aria-hidden="true" />
-              {t('rotate', language)}
-            </Button>
+            <div className="flex gap-2">
+              <RotateTile
+                icon={<RotateCcwSquare className="size-5" aria-hidden="true" />}
+                label={t('rotateLeft', language)}
+                onClick={() => rotate('left')}
+              />
+              <RotateTile
+                icon={<Undo2 className="size-5" aria-hidden="true" />}
+                label={t('rotateReset', language)}
+                onClick={reset}
+              />
+              <RotateTile
+                icon={<RotateCwSquare className="size-5" aria-hidden="true" />}
+                label={t('rotateRight', language)}
+                onClick={() => rotate('right')}
+              />
+            </div>
             <Button
               type="button"
               variant="primary"
               className="rounded-full px-8"
-              disabled={busy || !crop?.width}
-              onClick={() => void next()}
+              onClick={next}
             >
               {t('next', language)}
             </Button>

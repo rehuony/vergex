@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="150" height="150">
+<svg width="64" height="64" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
   <defs>
     <linearGradient id="minimax-gradient" x1="0%" y1="50%" x2="100%" y2="50%">
       <stop offset="0%" stop-color="#E2167E"/>

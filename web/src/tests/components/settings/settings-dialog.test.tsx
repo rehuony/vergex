@@ -20,7 +20,7 @@ vi.mock('@/contexts/auth-context', () => ({
 vi.mock('@/hooks/use-profile', () => ({
   useProfile: () => ({
     data: { avatar: '', display_name: 'Admin' },
-    mutate: mocks.mutateProfile,
+    setProfile: mocks.mutateProfile,
   }),
 }))
 vi.mock('@/contexts/language-context', async (importOriginal) => ({
@@ -28,11 +28,28 @@ vi.mock('@/contexts/language-context', async (importOriginal) => ({
   useLanguage: () => ({ language: 'en', setLanguage: vi.fn() }),
 }))
 
+it('lists the sections in their order', () => {
+  render(
+    <SettingsDialog
+      section="profile"
+      onSectionChange={vi.fn()}
+      onClose={vi.fn()}
+    />
+  )
+  expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+    'Profile',
+    'Trading accounts',
+    'Telegram',
+    'Agent models',
+    'Agent costs',
+  ])
+})
+
 it('changes the password only with the current one and a confirmed new one', async () => {
   mocks.changePassword.mockResolvedValue(undefined)
   render(
     <SettingsDialog
-      section="account"
+      section="profile"
       onSectionChange={vi.fn()}
       onClose={vi.fn()}
     />
@@ -72,7 +89,7 @@ it('flags a wrong current password on the field until it is edited', async () =>
   )
   render(
     <SettingsDialog
-      section="account"
+      section="profile"
       onSectionChange={vi.fn()}
       onClose={vi.fn()}
     />
@@ -98,7 +115,7 @@ it('saves the name on Enter or blur, and restores an emptied one', async () => {
   mocks.updateDisplayName.mockResolvedValue('Trader Joe')
   render(
     <SettingsDialog
-      section="account"
+      section="profile"
       onSectionChange={vi.fn()}
       onClose={vi.fn()}
     />
@@ -122,9 +139,9 @@ it('saves the name on Enter or blur, and restores an emptied one', async () => {
   )
   expect(mocks.updateDisplayName).toHaveBeenCalledTimes(1)
   await waitFor(() =>
-    expect(mocks.mutateProfile).toHaveBeenCalledWith(
-      { avatar: '', display_name: 'Trader Joe' },
-      { revalidate: false }
-    )
+    expect(mocks.mutateProfile).toHaveBeenCalledWith({
+      avatar: '',
+      display_name: 'Trader Joe',
+    })
   )
 })

@@ -15,13 +15,13 @@ func TestExtractInitialBalancePrefersExplicitTotalEquity(t *testing.T) {
 	}
 }
 
-func TestExtractInitialBalanceSupportsLegacyExchangeFields(t *testing.T) {
+func TestExtractInitialBalanceFallsBackToWalletBalance(t *testing.T) {
 	account := map[string]interface{}{
 		"totalWalletBalance": 100.5,
 	}
 
 	got := extractInitialBalance(account)
 	if got != 100.5 {
-		t.Fatalf("expected legacy wallet balance fallback, got %.6f", got)
+		t.Fatalf("expected wallet balance fallback, got %.6f", got)
 	}
 }

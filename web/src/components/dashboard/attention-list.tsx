@@ -1,15 +1,25 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ChevronRight, TriangleAlert } from 'lucide-react'
-import type { Overview, OverviewAttention } from '@/api/overview'
+import type { Overview, OverviewAttention } from '@/api/dashboard'
 import { SettingsLink } from '@/components/settings/settings-link'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { buildFrontierPath } from '@/constants/route-paths'
+import { buildFuturesPath } from '@/constants/route-paths'
 import { t, type Language } from '@/i18n'
+import { cn } from '@/utils/cn'
 import { formatRequestError } from '@/utils/request-errors'
 import { traderPath } from './overview-links'
 
+const cellClass =
+  'flex h-full w-full flex-col justify-center gap-1 px-4 py-3 text-left'
+
 const rowClass =
-  'flex min-h-11 items-center gap-3 px-4 py-2 text-[13px] hover:bg-vergex-danger/10'
+  'flex min-h-11 items-center gap-3 px-4 py-2 text-[13px] hover:bg-vergex-surface-muted hover:duration-0'
 
 function serviceName(name: string, language: Language) {
   const key = `dashboard.service.${name}`
@@ -53,17 +63,13 @@ function Row({
 }) {
   const body = (
     <>
-      <TriangleAlert
-        className="size-4 shrink-0 text-vergex-danger"
-        aria-hidden="true"
-      />
       <span className="min-w-0 flex-1">
-        <span className="font-medium text-vergex-text">
+        <span className="font-medium text-vergex-ink">
           {t(`dashboard.attention.${item.kind}`, language, { name })}
         </span>
         {item.detail && more === 0 && (
           <span
-            className="block truncate text-xs text-vergex-text-muted"
+            className="block truncate text-xs text-vergex-muted"
             title={item.detail}
           >
             {formatRequestError(item.detail)}
@@ -71,7 +77,7 @@ function Row({
         )}
       </span>
       <ChevronRight
-        className="size-4 shrink-0 text-vergex-text-muted"
+        className="size-4 shrink-0 text-vergex-muted"
         aria-hidden="true"
       />
     </>
@@ -88,7 +94,7 @@ function Row({
   }
   if (item.kind.startsWith('account_')) {
     return (
-      <SettingsLink section="exchanges" className={rowClass}>
+      <SettingsLink section="accounts" className={rowClass}>
         {body}
       </SettingsLink>
     )
@@ -102,7 +108,7 @@ function Row({
   }
   return (
     <Link
-      to={buildFrontierPath({ plan: item.plan_id, tab: 'positions' })}
+      to={buildFuturesPath({ plan: item.plan_id, tab: 'positions' })}
       className={rowClass}
     >
       {body}
@@ -110,8 +116,9 @@ function Row({
   )
 }
 
-// AttentionList names what needs the user, each row leading to where to fix it.
-// It takes no space when all is well.
+// AttentionList is the last of the Dashboard's figures, always there, saying whether
+// anything needs the user. With problems it opens a list of them, each row leading to
+// where to fix it. Nothing on the page moves either way.
 export function AttentionList({
   overview,
   language,
@@ -119,21 +126,58 @@ export function AttentionList({
   overview: Overview
   language: Language
 }) {
-  if (overview.attention.length === 0) return null
+  const [open, setOpen] = useState(false)
+  const count = overview.attention.length
+  const title = t('dashboard.needsAttention', language)
+  const name = (
+    <span className="block whitespace-nowrap text-xs text-vergex-muted">
+      {title}
+    </span>
+  )
+  if (count === 0) {
+    return (
+      <div className={cellClass}>
+        {name}
+        <span className="text-[13px] text-vergex-ink">
+          {t('dashboard.attentionNone', language)}
+        </span>
+      </div>
+    )
+  }
   return (
-    <section
-      aria-label={t('dashboard.needsAttention', language)}
-      className="overflow-hidden rounded-xl border border-vergex-danger/30 bg-vergex-danger/5"
-    >
-      <ScrollArea className="max-h-36">
-        <ul className="divide-y divide-vergex-danger/20">
-          {mergeByKind(overview.attention, language).map((row) => (
-            <li key={row.item.kind}>
-              <Row {...row} overview={overview} language={language} />
-            </li>
-          ))}
-        </ul>
-      </ScrollArea>
-    </section>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        className={cn(
+          cellClass,
+          'hover:bg-vergex-surface-muted hover:duration-0 data-[state=open]:bg-vergex-surface-muted'
+        )}
+      >
+        {name}
+        <span className="inline-flex items-center gap-1 whitespace-nowrap text-[13px] font-normal tabular-nums text-vergex-warning">
+          <TriangleAlert className="size-3 shrink-0" aria-hidden="true" />
+          {t('dashboard.attentionCount', language, { count })}
+        </span>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        collisionPadding={16}
+        aria-label={title}
+        className="w-[360px] max-w-[calc(100vw-32px)] overflow-hidden"
+      >
+        <ScrollArea className="max-h-72">
+          {/* A row opens a page or Settings, which belongs in front of this. */}
+          <ul
+            className="divide-y divide-vergex-line"
+            onClick={() => setOpen(false)}
+          >
+            {mergeByKind(overview.attention, language).map((row) => (
+              <li key={row.item.kind}>
+                <Row {...row} overview={overview} language={language} />
+              </li>
+            ))}
+          </ul>
+        </ScrollArea>
+      </PopoverContent>
+    </Popover>
   )
 }

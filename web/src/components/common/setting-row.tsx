@@ -14,12 +14,15 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 export function SettingRow({
   label,
   htmlFor,
+  top,
   className,
   children,
 }: {
   label: string
   /** Id of the control the label names; omit when the row has no single one. */
   htmlFor?: string
+  /** Lines the name up with a tall control's first line, not its middle. */
+  top?: boolean
   className?: string
   children: ReactNode
 }) {
@@ -27,11 +30,18 @@ export function SettingRow({
   return (
     <div
       className={cn(
-        'grid gap-2 border-t border-[var(--line)] py-4 first:border-t-0 sm:grid-cols-[160px_minmax(0,1fr)] sm:items-center sm:gap-6',
+        'grid gap-2 border-t border-vergex-line py-4 first:border-t-0 sm:grid-cols-[160px_minmax(0,1fr)] sm:gap-6',
+        top ? 'sm:items-start' : 'sm:items-center',
         className
       )}
     >
-      <Label htmlFor={htmlFor} className="text-sm font-medium text-vergex-text">
+      <Label
+        htmlFor={htmlFor}
+        className={cn(
+          'text-sm font-medium text-vergex-ink',
+          top && 'sm:leading-9'
+        )}
+      >
         {label}
       </Label>
       <div className="flex min-h-9 min-w-0 flex-wrap items-center gap-2">
@@ -58,20 +68,20 @@ export function SettingItem({
   children?: ReactNode
 }) {
   return (
-    <div className="flex items-center gap-3 border-t border-[var(--line)] py-4 first:border-t-0">
-      <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[var(--surface)] text-vergex-text-muted">
+    <div className="flex items-center gap-3 border-t border-vergex-line py-4 first:border-t-0">
+      <span className="grid size-9 shrink-0 place-items-center rounded-md border border-vergex-line bg-vergex-surface text-vergex-muted">
         {icon}
       </span>
       <div className="min-w-0 flex-1">
         {/* Where the name and badge do not fit, the badge drops below. */}
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <p className="max-w-full truncate text-sm font-medium text-vergex-text">
+          <p className="max-w-full truncate text-sm font-medium text-vergex-ink">
             {title}
           </p>
           {badge}
         </div>
         {detail && (
-          <p className="truncate text-xs text-vergex-text-muted">{detail}</p>
+          <p className="truncate text-xs text-vergex-muted">{detail}</p>
         )}
       </div>
       {children}
@@ -115,7 +125,7 @@ export function SettingState({
       role={role}
       className={cn(
         'flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center text-sm',
-        role === 'alert' ? 'text-vergex-danger' : 'text-vergex-text-muted'
+        role === 'alert' ? 'text-vergex-danger' : 'text-vergex-muted'
       )}
     >
       {children}
@@ -126,7 +136,7 @@ export function SettingState({
 const badgeTones = {
   success: 'bg-vergex-success/10 text-vergex-success',
   danger: 'bg-vergex-danger/10 text-vergex-danger',
-  muted: 'bg-vergex-bg text-vergex-text-muted',
+  muted: 'bg-vergex-surface-muted text-vergex-muted',
 }
 
 export function SettingBadge({
@@ -178,16 +188,16 @@ export function SettingBack({
         <ChevronLeft className="size-4" />
       </Button>
       {icon && (
-        <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-[var(--line)] bg-[var(--surface)] text-vergex-text-muted">
+        <span className="grid size-9 shrink-0 place-items-center rounded-md border border-vergex-line bg-vergex-surface text-vergex-muted">
           {icon}
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <h3 className="truncate text-sm font-medium text-vergex-text">
+        <h3 className="truncate text-sm font-medium text-vergex-ink">
           {title}
         </h3>
         {detail && (
-          <p className="truncate text-xs text-vergex-text-muted">{detail}</p>
+          <p className="truncate text-xs text-vergex-muted">{detail}</p>
         )}
       </div>
       {children}
@@ -198,8 +208,8 @@ export function SettingBack({
 const messageTones = {
   danger: 'text-vergex-danger',
   success: 'text-vergex-success',
-  warning: 'text-[var(--warning)]',
-  muted: 'text-vergex-text-muted',
+  warning: 'text-vergex-warning',
+  muted: 'text-vergex-muted',
 }
 
 /**
@@ -221,7 +231,7 @@ export function SettingActions({
   children: ReactNode
 }) {
   return (
-    <div className="flex items-center gap-2 border-t border-[var(--line)] py-4">
+    <div className="flex items-center gap-2 border-t border-vergex-line py-4">
       <p
         id={messageId}
         aria-live="polite"

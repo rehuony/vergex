@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"vergex/internal/exchange/binance"
-	"vergex/internal/store/database/testdb"
+	"vergex/internal/database/testdb"
+	"vergex/internal/venue/binance"
 )
 
 const (

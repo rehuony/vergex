@@ -81,7 +81,7 @@ func (at *AutoTrader) startDrawdownMonitor() {
 func (at *AutoTrader) marksCallForCheck(held []heldPosition) bool {
 	due := false
 	for _, pos := range held {
-		mark, ok := market.MarkPrice(at.exchange, pos.symbol)
+		mark, ok := market.MarkPrice(at.venue, pos.symbol)
 		if !ok {
 			continue
 		}
@@ -179,7 +179,7 @@ func (at *AutoTrader) checkPositionDrawdown(previous []heldPosition) []heldPosit
 			logger.Infof("📊 Drawdown monitoring: %s %s | Price move: %.2f%% | Profit: %.2f%% | Peak: %.2f%% | Drawdown: %.2f%%",
 				symbol, side, pricePnLPct, currentPnLPct, peakPnLPct, drawdownPct)
 		}
-		market.WatchMark(at.exchange, symbol)
+		market.WatchMark(at.venue, symbol)
 		held = append(held, pos)
 	}
 	return held
@@ -268,11 +268,11 @@ func isMajorAsset(symbol string) bool {
 // equity: the account equity
 // symbol: the trading symbol
 func (at *AutoTrader) enforcePositionValueRatio(positionSizeUSD float64, equity float64, symbol string) (float64, bool) {
-	if at.config.StrategyConfig == nil {
+	if at.config.Agent == nil {
 		return positionSizeUSD, false
 	}
 
-	riskControl := at.config.StrategyConfig.RiskControl
+	riskControl := at.config.Agent.RiskControl
 
 	// Get the appropriate position value ratio limit. BTC/ETH use the higher
 	// tier; altcoins use the lower tier.
@@ -304,11 +304,11 @@ func (at *AutoTrader) enforcePositionValueRatio(positionSizeUSD float64, equity 
 
 // enforceMinPositionSize checks minimum position size (CODE ENFORCED)
 func (at *AutoTrader) enforceMinPositionSize(positionSizeUSD float64) error {
-	if at.config.StrategyConfig == nil {
+	if at.config.Agent == nil {
 		return nil
 	}
 
-	minSize := at.config.StrategyConfig.RiskControl.MinPositionSize
+	minSize := at.config.Agent.RiskControl.MinPositionSize
 	if minSize <= 0 {
 		minSize = 12 // Default: 12 USDT
 	}
@@ -321,11 +321,11 @@ func (at *AutoTrader) enforceMinPositionSize(positionSizeUSD float64) error {
 
 // enforceMaxPositions checks maximum positions count (CODE ENFORCED)
 func (at *AutoTrader) enforceMaxPositions(currentPositionCount int) error {
-	if at.config.StrategyConfig == nil {
+	if at.config.Agent == nil {
 		return nil
 	}
 
-	maxPositions := at.config.StrategyConfig.RiskControl.MaxPositions
+	maxPositions := at.config.Agent.RiskControl.MaxPositions
 	if maxPositions <= 0 {
 		maxPositions = 3 // Default: 3 positions
 	}

@@ -8,21 +8,20 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sort"
 	"strings"
 	"syscall"
 	"time"
 
 	"vergex/internal/config"
+	"vergex/internal/database"
 	"vergex/internal/forecast"
+	"vergex/internal/futures"
 	"vergex/internal/logger"
 	"vergex/internal/market/feed"
-	"vergex/internal/planning"
 	"vergex/internal/security/auth"
 	"vergex/internal/security/crypto"
-	"vergex/internal/store"
-	"vergex/internal/store/database"
+	"vergex/internal/user"
 
 	"github.com/joho/godotenv"
 	"golang.org/x/term"
@@ -35,7 +34,7 @@ const minResetPasswordLen = 8
 
 // runCLISubcommand dispatches local admin subcommands.
 //
-// SECURITY: account recovery (reset-password, reset-account) is intentionally
+// SECURITY: user recovery (reset-password, reset-user) is intentionally
 // NOT exposed over HTTP. Performing it requires running this binary on the host,
 // which in turn requires shell/file access to the server. A remote attacker on a
 // public-facing deployment has only the network — they can reach the API but not
@@ -51,8 +50,8 @@ func runCLISubcommand(args []string) bool {
 	case "reset-password":
 		runResetPassword(args[1:])
 		return true
-	case "reset-account":
-		runResetAccount(args[1:])
+	case "reset-user":
+		runResetUser(args[1:])
 		return true
 	case "market-backfill":
 		runMarketBackfill(args[1:])
@@ -171,7 +170,7 @@ func runForecastBacktest(args []string) {
 		strategy, err = forecasts.StrategyByID(*strategyID)
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "read strategy strategy: %v\n", err)
+		fmt.Fprintf(os.Stderr, "read the strategy: %v\n", err)
 		os.Exit(1)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -194,16 +193,19 @@ func runForecastBacktest(args []string) {
 func printBacktest(strategyID string, report forecast.Report) {
 	fmt.Printf("Strategy %s, %s to %s, fees %.2f%% round trip\n", strategyID,
 		time.UnixMilli(report.FirstTime).UTC().Format("2006-01-02"), time.UnixMilli(report.LastTime).UTC().Format("2006-01-02"), report.FeePct)
-	fmt.Printf("%-16s %8s %8s %8s %8s %8s %8s %8s %8s %8s\n", "", "samples", "signals", "hit", "up base", "brier", "lift", "ret", "net ret", "in move")
-	row := func(name string, m forecast.Metrics) {
-		hit := "—"
-		if m.HitRate != nil {
-			hit = fmt.Sprintf("%.1f%%", *m.HitRate*100)
+	fmt.Printf("%-16s %8s %8s %8s %8s %8s %8s %8s %8s %8s %8s\n", "", "samples", "signals", "hit", "chance", "up base", "brier", "lift", "ret", "net ret", "in move")
+	rate := func(value *float64) string {
+		if value == nil {
+			return "—"
 		}
-		fmt.Printf("%-16s %8d %8d %8s %7.1f%% %8.4f %7.2f%% %7.3f%% %7.3f%% %7.1f%%\n", name, m.Samples, m.Signals, hit,
+		return fmt.Sprintf("%.1f%%", *value*100)
+	}
+	row := func(name string, m forecast.Metrics) {
+		fmt.Printf("%-16s %8d %8d %8s %8s %7.1f%% %8.4f %7.2f%% %7.3f%% %7.3f%% %7.1f%%\n", name, m.Samples, m.Signals, rate(m.HitRate), rate(m.ChanceRate),
 			m.BaselineUp*100, m.Brier, m.Lift*100, m.AvgReturnPct, m.AvgReturnAfterFee, m.MoveCoverage*100)
 	}
 	row("overall", report.Overall)
+	fmt.Printf("Derivatives in %.1f%% of samples; Brier %.4f, on candles alone %.4f\n", report.Overall.DerivativeCoverage*100, report.Overall.Brier, report.Overall.BrierCandles)
 	for _, group := range []map[string]forecast.Metrics{report.ByInterval, report.ByRegime, report.BySymbol} {
 		fmt.Println()
 		names := make([]string, 0, len(group))
@@ -214,6 +216,17 @@ func printBacktest(strategyID string, report forecast.Report) {
 		for _, name := range names {
 			row(name, group[name])
 		}
+	}
+	fmt.Println("\nFactors: how often the sign matched the move, and correlation with it")
+	edge := func(e forecast.FactorEdge) string {
+		if e.AgreeRate == nil || e.Correlation == nil {
+			return "—"
+		}
+		return fmt.Sprintf("%.1f%% %+.3f", *e.AgreeRate*100, *e.Correlation)
+	}
+	fmt.Printf("%-16s %16s %16s\n", "", "trending", "ranging")
+	for _, factor := range report.Factors {
+		fmt.Printf("%-16s %16s %16s\n", factor.Name, edge(factor.Trending), edge(factor.Ranging))
 	}
 	fmt.Println("\nReliability")
 	for _, bucket := range report.Reliability {
@@ -226,7 +239,7 @@ func printBacktest(strategyID string, report forecast.Report) {
 
 // openStoreForCLI loads config + encryption and opens the same database the
 // server uses, so subcommands operate on the live data.
-func openStoreForCLI() (*store.Store, error) {
+func openDatabaseForCLI() (*gorm.DB, error) {
 	_ = godotenv.Load()
 	logger.Init(nil)
 	config.MustInit()
@@ -237,7 +250,7 @@ func openStoreForCLI() (*store.Store, error) {
 	}
 	crypto.SetGlobalCryptoService(cryptoService)
 
-	return store.New(databaseConfig(config.Get()))
+	return database.OpenMigrated(databaseConfig(config.Get()))
 }
 
 // runResetPassword resets the password for a single account from the command
@@ -254,14 +267,15 @@ func runResetPassword(args []string) {
 		os.Exit(2)
 	}
 
-	st, err := openStoreForCLI()
+	db, err := openDatabaseForCLI()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer st.Close()
+	defer database.Close(db)
+	users := user.NewStore(db)
 
-	user, err := st.User().GetByEmail(strings.TrimSpace(*email))
+	owner, err := users.GetByEmail(strings.TrimSpace(*email))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: no account found for %q\n", strings.TrimSpace(*email))
 		os.Exit(1)
@@ -278,46 +292,42 @@ func runResetPassword(args []string) {
 		fmt.Fprintf(os.Stderr, "error: failed to hash password: %v\n", err)
 		os.Exit(1)
 	}
-	if err := st.User().UpdatePassword(user.ID, hash); err != nil {
+	if err := users.UpdatePassword(owner.ID, hash); err != nil {
 		fmt.Fprintf(os.Stderr, "error: failed to update password: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Printf("✓ Password reset for %s. Log in with the new password.\n", user.Email)
+	fmt.Printf("✓ Password reset for %s. Log in with the new password.\n", owner.Email)
 }
 
-// resetTables lists every table Vergex creates. reset-account empties all of
+// resetTables lists every table Vergex creates. reset-user empties all of
 // them; cli_test.go fails when a table is missing here.
 var resetTables = []string{
-	"frontier.account_closes", "frontier.run_orders", "frontier.runs", "frontier.plans",
+	"futures.account_closes", "futures.run_orders", "futures.runs", "futures.plans", "futures.calculators",
 	"trader.decisions", "trader.cycles", "trader.equity_snapshots", "trader.traders",
-	"trading.skipped_fills", "trading.fills", "trading.positions", "trading.orders", "trading.account_leases", "core.users", "agent.models", "agent.calls", "agent.conversations", "agent.messages", "trading.accounts",
+	"account.skipped_fills", "account.fills", "account.positions", "account.orders", "account.leases", "core.users", "agent.models", "agent.calls", "agent.conversations", "agent.messages", "account.accounts",
 	"telegram.bot", "telegram.alert_marks",
 }
 
-// planningDataDir holds Frontier's per-user entry calculators and data plugin
-// settings, relative to the working directory like in api/handler_planning.go.
-var planningDataDir = filepath.Join("data", "planning")
-
-const resetAccountWarning = `This wipes Vergex back to a fresh install. It permanently deletes:
-  - the account
-  - models and exchange accounts, API keys included
-  - traders, strategies and grid settings
+const resetUserWarning = `This wipes Vergex back to a fresh install. It permanently deletes:
+  - the user
+  - models and accounts, API keys included
+  - traders and their settings
   - decisions, positions, orders, equity history and agent costs
-  - Frontier plans, conversations and entry calculators
+  - Futures plans, conversations and entry calculators
   - the Telegram bot token and chat binding
 Positions and orders on the exchange are not touched.
 `
 
-// runResetAccount wipes every Vergex table back to a fresh install. This is the
+// runResetUser wipes every Vergex table back to a fresh install. This is the
 // destructive "forgot everything" recovery, moved off the public API.
-func runResetAccount(args []string) {
-	fs := flag.NewFlagSet("reset-account", flag.ExitOnError)
+func runResetUser(args []string) {
+	fs := flag.NewFlagSet("reset-user", flag.ExitOnError)
 	yes := fs.Bool("yes", false, "skip the interactive confirmation prompt")
 	_ = fs.Parse(args)
 
 	if !*yes {
-		fmt.Print(resetAccountWarning + "Type 'wipe' to confirm: ")
+		fmt.Print(resetUserWarning + "Type 'wipe' to confirm: ")
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		if strings.TrimSpace(line) != "wipe" {
 			fmt.Fprintln(os.Stderr, "aborted")
@@ -325,41 +335,34 @@ func runResetAccount(args []string) {
 		}
 	}
 
-	st, err := openStoreForCLI()
+	db, err := openDatabaseForCLI()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
-	defer st.Close()
+	defer database.Close(db)
 
-	if err := wipeAllData(st, planningDataDir); err != nil {
-		fmt.Fprintf(os.Stderr, "error: failed to reset account: %v\n", err)
+	if err := wipeAllData(db); err != nil {
+		fmt.Fprintf(os.Stderr, "error: failed to reset user: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Println("✓ Vergex wiped. Restart the backend so running traders stop, then open\n" +
-		"  the web app to create the account again.")
+		"  the web app to create the user again.")
 }
 
-// wipeAllData empties every table in resetTables and removes Frontier's files.
-func wipeAllData(st *store.Store, planningDir string) error {
-	err := st.Transaction(func(tx *gorm.DB) error {
+// wipeAllData empties every table in resetTables.
+func wipeAllData(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
 		for _, table := range resetTables {
 			if err := tx.Exec("DELETE FROM " + table).Error; err != nil {
 				return fmt.Errorf("clear %s: %w", table, err)
 			}
 		}
 		// Market and forecast data outlive an account, and so do their settings and
-		// forecast strategies. Trading strategies went with the user they belong to.
-		return tx.Exec("DELETE FROM core.settings WHERE module = ?", planning.SettingsModule).Error
+		// forecast strategies.
+		return tx.Exec("DELETE FROM core.settings WHERE module = ?", futures.SettingsModule).Error
 	})
-	if err != nil {
-		return err
-	}
-	if err := os.RemoveAll(planningDir); err != nil {
-		return fmt.Errorf("remove %s: %w", planningDir, err)
-	}
-	return nil
 }
 
 // resolveNewPassword returns the new password from the --password flag, or

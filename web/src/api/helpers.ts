@@ -38,3 +38,16 @@ export async function handleJSONResponse<T>(res: Response): Promise<T> {
   }
   return JSON.parse(text) as T
 }
+
+// A request body that carries an API key: plain JSON, or encrypted to the
+// server's public key when transport encryption is on.
+export async function sealCredentials(request: object): Promise<unknown> {
+  const config = await CryptoService.fetchCryptoConfig()
+  if (!config.transport_encryption) return request
+  await CryptoService.initialize(await CryptoService.fetchPublicKey())
+  return CryptoService.encryptSensitiveData(
+    JSON.stringify(request),
+    localStorage.getItem('user_id') || '',
+    sessionStorage.getItem('session_id') || ''
+  )
+}

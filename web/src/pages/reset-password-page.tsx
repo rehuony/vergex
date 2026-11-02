@@ -1,4 +1,3 @@
-import { KeyRound } from 'lucide-react'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
 import {
@@ -10,8 +9,7 @@ export function ResetPasswordPage() {
   const { language } = useLanguage()
   return (
     <RecoveryCommandPage
-      icon={KeyRound}
-      tone="brand"
+      tone="neutral"
       title={t('resetPasswordTitle', language)}
       intro={t('resetPasswordCliIntro', language)}
       command={`${RECOVERY_CLI} reset-password --email you@example.com`}

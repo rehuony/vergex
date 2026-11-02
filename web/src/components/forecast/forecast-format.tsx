@@ -1,9 +1,17 @@
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react'
-import type { ForecastDirection } from '@/api/forecast'
+import type { ForecastDirection, ForecastInterval } from '@/api/forecast'
 import { activeLanguage, t, type Language } from '@/i18n'
 import { cn } from '@/utils/cn'
 
 export const baseAsset = (symbol: string) => symbol.replace(/USDT$/, '')
+
+// A candle is named by its open time; what it says is known at its close.
+export const intervalMillis: Record<ForecastInterval, number> = {
+  '15m': 15 * 60_000,
+  '1h': 60 * 60_000,
+  '4h': 4 * 60 * 60_000,
+  '1d': 24 * 60 * 60_000,
+}
 
 export const fmtPrice = (value: number | null | undefined) =>
   value === null || value === undefined || !Number.isFinite(value)
@@ -13,8 +21,11 @@ export const fmtPrice = (value: number | null | undefined) =>
           value >= 1000 ? 1 : value >= 1 ? 3 : value >= 0.01 ? 5 : 8,
       })
 
-export const fmtPct = (value: number, signed = false) =>
-  `${signed && value > 0 ? '+' : ''}${value.toFixed(2)}%`
+export const fmtPct = (value: number, signed = false, digits = 2) =>
+  `${signed && value > 0 ? '+' : ''}${value.toFixed(digits)}%`
+
+export const fmtRate = (rate: number | null | undefined) =>
+  rate === null || rate === undefined ? '—' : `${(rate * 100).toFixed(1)}%`
 
 export const fmtTime = (ms: number) =>
   new Date(ms).toLocaleString(activeLanguage(), {
@@ -44,7 +55,7 @@ const directionTone = (direction: ForecastDirection) =>
     ? 'text-vergex-success'
     : direction === 'down'
       ? 'text-vergex-danger'
-      : 'text-vergex-text-muted'
+      : 'text-vergex-muted'
 
 export function DirectionIcon({ direction }: { direction: ForecastDirection }) {
   const Icon =

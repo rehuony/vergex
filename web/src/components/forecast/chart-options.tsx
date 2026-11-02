@@ -77,7 +77,7 @@ export function ChartOptionsMenu({
   const row = (name: keyof ChartOptions) => (
     <div
       key={name}
-      className="flex min-h-9 items-center justify-between gap-6 px-2 text-sm text-vergex-text"
+      className="flex min-h-9 items-center justify-between gap-6 px-2 text-sm text-vergex-ink"
     >
       {label(name)}
       <Switch
@@ -103,7 +103,7 @@ export function ChartOptionsMenu({
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64 p-2">
         {OVERLAYS.map(row)}
-        <p className="mt-1 border-t border-[var(--line)] px-2 pb-1 pt-2 text-xs text-vergex-text-muted">
+        <p className="mt-1 border-t border-vergex-line px-2 pb-1 pt-2 text-xs text-vergex-muted">
           {label('indicators')}
         </p>
         {INDICATORS.map(row)}

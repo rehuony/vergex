@@ -2,14 +2,14 @@ package trader
 
 import (
 	"testing"
-	"vergex/internal/store"
+	"vergex/internal/trader/kind"
 )
 
-func TestEnforcePositionValueRatioUsesStrategyCaps(t *testing.T) {
-	cfg := store.GetDefaultStrategyConfig("en")
+func TestEnforcePositionValueRatioUsesConfigCaps(t *testing.T) {
+	cfg := kind.DefaultAgent()
 	cfg.RiskControl.BTCETHMaxPositionValueRatio = 10
 	cfg.RiskControl.AltcoinMaxPositionValueRatio = 2
-	at := &AutoTrader{config: AutoTraderConfig{StrategyConfig: &cfg}}
+	at := &AutoTrader{config: AutoTraderConfig{Agent: cfg}}
 
 	if adjusted, capped := at.enforcePositionValueRatio(900, 100, "BTCUSDT"); capped || adjusted != 900 {
 		t.Fatalf("BTC within the 10x cap should pass, got capped=%v adjusted=%.2f", capped, adjusted)

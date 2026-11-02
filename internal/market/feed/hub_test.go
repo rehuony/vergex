@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"vergex/internal/exchange/binance"
-	"vergex/internal/market/wsfeed"
+	"vergex/internal/market/ws"
+	"vergex/internal/venue/binance"
 )
 
-func candleEvent(openTime int64, close float64, closed bool) wsfeed.Event {
-	return wsfeed.Event{Venue: binance.Venue, Candle: &wsfeed.Candle{
+func candleEvent(openTime int64, close float64, closed bool) ws.Event {
+	return ws.Event{Venue: binance.Venue, Candle: &ws.Candle{
 		Symbol: "BTCUSDT", Interval: "1h", OpenTime: openTime, Open: close, High: close, Low: close, Close: close, Closed: closed,
 	}}
 }
@@ -121,19 +121,25 @@ func TestHubReportsPricesAndMarksByVenue(t *testing.T) {
 	hub := NewHub()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	events := make(chan wsfeed.Event)
+	events := make(chan ws.Event)
 	go hub.Run(ctx, events)
-	events <- wsfeed.Event{Venue: binance.Venue, Prices: []wsfeed.Tick{{Symbol: "BTCUSDT", Price: 70000}, {Symbol: "ETHUSDT", Price: 3000}}}
-	events <- wsfeed.Event{Venue: "okx", Prices: []wsfeed.Tick{{Symbol: "BTC-USDT-SWAP", Price: 70001}}}
-	events <- wsfeed.Event{Venue: binance.Venue, Marks: []wsfeed.Tick{{Symbol: "BTCUSDT", Price: 69999}}}
+	events <- ws.Event{Venue: binance.Venue, Prices: []ws.Tick{{Symbol: "BTCUSDT", Price: 70000}, {Symbol: "ETHUSDT", Price: 3000, Open24h: 2400}}}
+	events <- ws.Event{Venue: "okx", Prices: []ws.Tick{{Symbol: "BTC-USDT-SWAP", Price: 70001}}}
+	events <- ws.Event{Venue: binance.Venue, Marks: []ws.Tick{{Symbol: "BTCUSDT", Price: 69999}}}
 	// A second unbuffered send proves the first three were taken; this one is applied by the time it returns.
-	events <- wsfeed.Event{Venue: binance.Venue, Marks: []wsfeed.Tick{{Symbol: "BTCUSDT", Price: 69998}}}
+	events <- ws.Event{Venue: binance.Venue, Marks: []ws.Tick{{Symbol: "BTCUSDT", Price: 69998}}}
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		prices := hub.Prices(binance.Venue)
 		mark, ok := hub.Mark(binance.Venue, "BTCUSDT")
-		if len(prices) == 2 && prices["ETHUSDT"] == 3000 && ok && mark.Price == 69998 {
+		if len(prices) == 2 && prices["ETHUSDT"].Price == 3000 && ok && mark.Price == 69998 {
+			if change := prices["ETHUSDT"].Change24hPct; change == nil || *change != 25 {
+				t.Fatalf("change = %v, want 25%% from the 24-hour open", change)
+			}
+			if prices["BTCUSDT"].Change24hPct != nil {
+				t.Fatal("a tick with no open has no change")
+			}
 			break
 		}
 		if time.Now().After(deadline) {

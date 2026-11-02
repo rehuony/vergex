@@ -3,9 +3,9 @@ package trader
 import (
 	"math"
 	"vergex/internal/logger"
-	"vergex/internal/market"
-	"vergex/internal/store"
-	"vergex/internal/trader/agent"
+	traderagent "vergex/internal/trader/agent"
+	"vergex/internal/trader/grid"
+	"vergex/internal/trader/kind"
 )
 
 // ============================================================================
@@ -13,7 +13,7 @@ import (
 // ============================================================================
 
 // calculateDefaultBounds calculates default bounds based on price
-func (at *AutoTrader) calculateDefaultBounds(price float64, config *store.GridStrategyConfig) {
+func (at *AutoTrader) calculateDefaultBounds(price float64, config *kind.GridConfig) {
 	// Default: +/-3% from current price
 	multiplier := 0.03 * float64(config.GridCount) / 10
 	at.gridState.UpperPrice = price * (1 + multiplier)
@@ -21,7 +21,7 @@ func (at *AutoTrader) calculateDefaultBounds(price float64, config *store.GridSt
 }
 
 // calculateATRBounds calculates bounds using ATR
-func (at *AutoTrader) calculateATRBounds(price float64, mktData *market.Data, config *store.GridStrategyConfig) {
+func (at *AutoTrader) calculateATRBounds(price float64, mktData *traderagent.Data, config *kind.GridConfig) {
 	atr := 0.0
 	if mktData.LongerTermContext != nil {
 		atr = mktData.LongerTermContext.ATR14
@@ -43,8 +43,8 @@ func (at *AutoTrader) calculateATRBounds(price float64, mktData *market.Data, co
 }
 
 // initializeGridLevels creates the grid level structure
-func (at *AutoTrader) initializeGridLevels(currentPrice float64, config *store.GridStrategyConfig) {
-	levels := make([]agent.GridLevelInfo, config.GridCount)
+func (at *AutoTrader) initializeGridLevels(currentPrice float64, config *kind.GridConfig) {
+	levels := make([]traderagent.GridLevelInfo, config.GridCount)
 	totalWeight := 0.0
 	weights := make([]float64, config.GridCount)
 
@@ -76,7 +76,7 @@ func (at *AutoTrader) initializeGridLevels(currentPrice float64, config *store.G
 			side = "sell"
 		}
 
-		levels[i] = agent.GridLevelInfo{
+		levels[i] = traderagent.GridLevelInfo{
 			Index:        i,
 			Price:        price,
 			State:        "empty",
@@ -112,7 +112,7 @@ func (at *AutoTrader) applyGridDirection(currentPrice float64) {
 	targetBuyLevels := int(float64(totalLevels) * buyRatio)
 
 	// For neutral: use price-based assignment (buy below, sell above)
-	if direction == market.GridDirectionNeutral {
+	if direction == grid.DirectionNeutral {
 		for i := range at.gridState.Levels {
 			if at.gridState.Levels[i].Price <= currentPrice {
 				at.gridState.Levels[i].Side = "buy"
@@ -126,19 +126,19 @@ func (at *AutoTrader) applyGridDirection(currentPrice float64) {
 	// For long/long_bias: more buy levels
 	// For short/short_bias: more sell levels
 	switch direction {
-	case market.GridDirectionLong:
+	case grid.DirectionLong:
 		// 100% buy - all levels are buy
 		for i := range at.gridState.Levels {
 			at.gridState.Levels[i].Side = "buy"
 		}
 
-	case market.GridDirectionShort:
+	case grid.DirectionShort:
 		// 100% sell - all levels are sell
 		for i := range at.gridState.Levels {
 			at.gridState.Levels[i].Side = "sell"
 		}
 
-	case market.GridDirectionLongBias, market.GridDirectionShortBias:
+	case grid.DirectionLongBias, grid.DirectionShortBias:
 		// Assign sides based on position relative to current price
 		// For long_bias: keep all below as buy, convert some above to buy
 		// For short_bias: keep all above as sell, convert some below to sell
@@ -160,10 +160,10 @@ func (at *AutoTrader) applyGridDirection(currentPrice float64) {
 				}
 			} else {
 				// Level above current price
-				if needMoreSells && direction == market.GridDirectionShortBias {
+				if needMoreSells && direction == grid.DirectionShortBias {
 					at.gridState.Levels[i].Side = "sell"
 					sellCount++
-				} else if needMoreBuys && direction == market.GridDirectionLongBias {
+				} else if needMoreBuys && direction == grid.DirectionLongBias {
 					at.gridState.Levels[i].Side = "buy"
 					buyCount++
 				} else if needMoreSells {
@@ -234,7 +234,7 @@ func (at *AutoTrader) autoAdjustGrid() {
 	logger.Warnf("[Grid] Grid heavily skewed: buy_filled=%d, sell_filled=%d. Auto-adjusting...",
 		buyFilled, sellFilled)
 
-	gridConfig := at.config.StrategyConfig.GridConfig
+	gridConfig := at.config.Grid
 
 	// Get current price
 	currentPrice, err := at.trader.GetMarketPrice(gridConfig.Symbol)
@@ -271,7 +271,7 @@ func (at *AutoTrader) autoAdjustGrid() {
 	defer at.gridState.mu.Unlock()
 
 	// Preserve filled positions before reinitializing
-	filledPositions := make(map[int]agent.GridLevelInfo)
+	filledPositions := make(map[int]traderagent.GridLevelInfo)
 	for i, level := range at.gridState.Levels {
 		if level.State == "filled" {
 			filledPositions[i] = level
@@ -282,7 +282,7 @@ func (at *AutoTrader) autoAdjustGrid() {
 	// Use the same logic as InitializeGrid() - either ATR-based or default percentage
 	if gridConfig.UseATRBounds {
 		// Try to get ATR for bound calculation
-		mktData, err := market.GetWithTimeframes(gridConfig.Symbol, []string{"4h"}, "4h", 20)
+		mktData, err := traderagent.GetWithTimeframes(gridConfig.Symbol, []string{"4h"}, "4h", 20)
 		if err != nil {
 			logger.Warnf("[Grid] Failed to get market data for ATR during adjust: %v, using default bounds", err)
 			at.calculateDefaultBoundsLocked(currentPrice, gridConfig)
@@ -330,7 +330,7 @@ func (at *AutoTrader) autoAdjustGrid() {
 }
 
 // calculateDefaultBoundsLocked calculates default bounds (caller must hold lock)
-func (at *AutoTrader) calculateDefaultBoundsLocked(price float64, config *store.GridStrategyConfig) {
+func (at *AutoTrader) calculateDefaultBoundsLocked(price float64, config *kind.GridConfig) {
 	// Default: +/-3% from current price, scaled by grid count
 	multiplier := 0.03 * float64(config.GridCount) / 10
 	at.gridState.UpperPrice = price * (1 + multiplier)
@@ -338,7 +338,7 @@ func (at *AutoTrader) calculateDefaultBoundsLocked(price float64, config *store.
 }
 
 // calculateATRBoundsLocked calculates bounds using ATR (caller must hold lock)
-func (at *AutoTrader) calculateATRBoundsLocked(price float64, mktData *market.Data, config *store.GridStrategyConfig) {
+func (at *AutoTrader) calculateATRBoundsLocked(price float64, mktData *traderagent.Data, config *kind.GridConfig) {
 	atr := 0.0
 	if mktData.LongerTermContext != nil {
 		atr = mktData.LongerTermContext.ATR14
@@ -360,8 +360,8 @@ func (at *AutoTrader) calculateATRBoundsLocked(price float64, mktData *market.Da
 }
 
 // initializeGridLevelsLocked creates the grid level structure (caller must hold lock)
-func (at *AutoTrader) initializeGridLevelsLocked(currentPrice float64, config *store.GridStrategyConfig) {
-	levels := make([]agent.GridLevelInfo, config.GridCount)
+func (at *AutoTrader) initializeGridLevelsLocked(currentPrice float64, config *kind.GridConfig) {
+	levels := make([]traderagent.GridLevelInfo, config.GridCount)
 	totalWeight := 0.0
 	weights := make([]float64, config.GridCount)
 
@@ -393,7 +393,7 @@ func (at *AutoTrader) initializeGridLevelsLocked(currentPrice float64, config *s
 			side = "sell"
 		}
 
-		levels[i] = agent.GridLevelInfo{
+		levels[i] = traderagent.GridLevelInfo{
 			Index:        i,
 			Price:        price,
 			State:        "empty",
@@ -424,7 +424,7 @@ func (at *AutoTrader) applyGridDirectionLocked(currentPrice float64) {
 	buyRatio, _ := direction.GetBuySellRatio(biasRatio)
 
 	// For neutral: use price-based assignment (buy below, sell above)
-	if direction == market.GridDirectionNeutral {
+	if direction == grid.DirectionNeutral {
 		for i := range at.gridState.Levels {
 			if at.gridState.Levels[i].Price <= currentPrice {
 				at.gridState.Levels[i].Side = "buy"
@@ -439,17 +439,17 @@ func (at *AutoTrader) applyGridDirectionLocked(currentPrice float64) {
 	targetBuyLevels := int(float64(totalLevels) * buyRatio)
 
 	switch direction {
-	case market.GridDirectionLong:
+	case grid.DirectionLong:
 		for i := range at.gridState.Levels {
 			at.gridState.Levels[i].Side = "buy"
 		}
 
-	case market.GridDirectionShort:
+	case grid.DirectionShort:
 		for i := range at.gridState.Levels {
 			at.gridState.Levels[i].Side = "sell"
 		}
 
-	case market.GridDirectionLongBias, market.GridDirectionShortBias:
+	case grid.DirectionLongBias, grid.DirectionShortBias:
 		buyCount := 0
 		sellCount := 0
 
@@ -466,10 +466,10 @@ func (at *AutoTrader) applyGridDirectionLocked(currentPrice float64) {
 					sellCount++
 				}
 			} else {
-				if needMoreSells && direction == market.GridDirectionShortBias {
+				if needMoreSells && direction == grid.DirectionShortBias {
 					at.gridState.Levels[i].Side = "sell"
 					sellCount++
-				} else if needMoreBuys && direction == market.GridDirectionLongBias {
+				} else if needMoreBuys && direction == grid.DirectionLongBias {
 					at.gridState.Levels[i].Side = "buy"
 					buyCount++
 				} else if needMoreSells {

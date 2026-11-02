@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import useSWR from 'swr'
+import { useQuery } from '@tanstack/react-query'
 import {
   Check,
   ChevronRight,
@@ -11,8 +11,7 @@ import {
 import { api } from '@/api'
 import { t, type Language } from '@/i18n'
 import type { DecisionRecord } from '@/types'
-import { Panel, PanelState } from '@/components/common/panel'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { PanelState } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/utils/cn'
 import { pollEvery } from '@/utils/poll'
@@ -32,9 +31,9 @@ const PAGE_SIZE = 50
 
 const TONE_CLASS: Record<LogTone, string> = {
   ok: 'text-vergex-success',
-  warn: 'text-[var(--warning)]',
+  warn: 'text-vergex-warning',
   risk: 'text-vergex-danger',
-  info: 'text-vergex-text-muted',
+  info: 'text-vergex-muted',
 }
 const TONE_ICON: Record<LogTone, LucideIcon | null> = {
   ok: Check,
@@ -71,19 +70,19 @@ function Cycle({
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`traderDetail.${key}`, language, params)
   return (
-    <li className="border-t border-[var(--line)] first:border-t-0">
+    <li className="border-t border-vergex-line first:border-t-0">
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-vergex-bg"
+        className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-vergex-surface-muted"
       >
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <span className="text-[13px] font-medium text-vergex-text">
+            <span className="text-[13px] font-medium text-vergex-ink">
               {label('cycleNumber', { cycle: record.cycle_number })}
             </span>
             <span
-              className="whitespace-nowrap text-xs tabular-nums text-vergex-text-muted"
+              className="whitespace-nowrap text-xs tabular-nums text-vergex-muted"
               title={label('localTime')}
             >
               {fmtDateTime(record.timestamp)}
@@ -99,7 +98,7 @@ function Cycle({
                       ? 'text-vergex-success'
                       : side === 'short'
                         ? 'text-vergex-danger'
-                        : 'text-vergex-text-muted'
+                        : 'text-vergex-muted'
                   )}
                 >
                   {action.action.toLowerCase()} {baseLabel(action.symbol)}
@@ -107,7 +106,7 @@ function Cycle({
               )
             })}
             {trades.length === 0 && (
-              <span className="text-xs text-vergex-text-muted">
+              <span className="text-xs text-vergex-muted">
                 {label('noAction')}
               </span>
             )}
@@ -129,7 +128,7 @@ function Cycle({
           )}
         </span>
         <ChevronRight
-          className="mt-0.5 size-4 shrink-0 text-vergex-text-muted"
+          className="mt-0.5 size-4 shrink-0 text-vergex-muted"
           aria-hidden="true"
         />
       </button>
@@ -147,11 +146,12 @@ export function DecisionLog({
   language: Language
 }) {
   const label = (key: string) => t(`traderDetail.${key}`, language)
-  const { data: newest, error } = useSWR(
-    ['decision-summaries', traderId],
-    () => api.getDecisionSummaries(traderId, PAGE_SIZE, undefined, true),
-    pollEvery(30000)
-  )
+  const { data: newest, error } = useQuery({
+    queryKey: ['decision-summaries', traderId],
+    queryFn: () =>
+      api.getDecisionSummaries(traderId, PAGE_SIZE, undefined, true),
+    ...pollEvery(30000),
+  })
   const [older, setOlder] = useState<DecisionRecord[]>([])
   const [hasMore, setHasMore] = useState(true)
   const [loadingOlder, setLoadingOlder] = useState(false)
@@ -194,31 +194,27 @@ export function DecisionLog({
   }
 
   return (
-    <Panel title={label('decisions')}>
+    <>
       {!newest ? (
-        error ? (
-          <PanelState role="alert">{label('decisionsFailed')}</PanelState>
-        ) : (
-          <PanelState role="status">{t('loading', language)}</PanelState>
-        )
+        <PanelState role={error ? 'alert' : 'status'}>
+          {error ? label('decisionsFailed') : t('loading', language)}
+        </PanelState>
       ) : records.length === 0 ? (
         <PanelState role="status">{label('noDecisions')}</PanelState>
       ) : (
         <>
-          <ScrollArea className="max-h-[640px] border-t border-[var(--line)]">
-            <ul>
-              {records.map((record) => (
-                <Cycle
-                  key={record.id}
-                  record={record}
-                  language={language}
-                  onOpen={() => setOpen(record.id)}
-                />
-              ))}
-            </ul>
-          </ScrollArea>
+          <ul>
+            {records.map((record) => (
+              <Cycle
+                key={record.id}
+                record={record}
+                language={language}
+                onOpen={() => setOpen(record.id)}
+              />
+            ))}
+          </ul>
           {hasMore && records.length >= PAGE_SIZE && (
-            <div className="flex items-center justify-end gap-3 border-t border-[var(--line)] px-4 py-2">
+            <div className="flex items-center justify-end gap-3 border-t border-vergex-line px-4 py-2">
               {olderFailed && (
                 <span role="alert" className="text-xs text-vergex-danger">
                   {label('decisionsFailed')}
@@ -245,10 +241,17 @@ export function DecisionLog({
           language={language}
           onClose={() => {
             setOpen(null)
-            if (params.has('decision')) setParams({}, { replace: true })
+            if (params.has('decision'))
+              setParams(
+                (current) => {
+                  current.delete('decision')
+                  return current
+                },
+                { replace: true }
+              )
           }}
         />
       )}
-    </Panel>
+    </>
   )
 }

@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"vergex/internal/exchange/binance"
 	"vergex/internal/logger"
+	"vergex/internal/venue/binance"
 )
 
 const (

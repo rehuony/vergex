@@ -7,7 +7,6 @@ import (
 
 	"vergex/internal/agent"
 	"vergex/internal/logger"
-	"vergex/internal/store"
 	telegramagent "vergex/internal/telegram/agent"
 
 	"github.com/google/uuid"
@@ -17,12 +16,12 @@ import (
 // chatHistory keeps Telegram chats in agent.conversations, one per chat until /start
 // begins another.
 type chatHistory struct {
-	conversations *store.AgentConversationStore
+	conversations *agent.ConversationStore
 	userID        string
 }
 
 func (h *chatHistory) Resume(chatID int64, limit int) (string, []telegramagent.Message) {
-	conversation, err := h.conversations.Latest(h.userID, store.FeatureTelegram, strconv.FormatInt(chatID, 10))
+	conversation, err := h.conversations.Latest(h.userID, agent.FeatureTelegram, strconv.FormatInt(chatID, 10))
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return h.Start(chatID), nil
 	}
@@ -43,10 +42,10 @@ func (h *chatHistory) Resume(chatID int64, limit int) (string, []telegramagent.M
 }
 
 func (h *chatHistory) Start(chatID int64) string {
-	conversation := store.AgentConversation{
+	conversation := agent.Conversation{
 		ID:       uuid.NewString(),
 		UserID:   h.userID,
-		Feature:  store.FeatureTelegram,
+		Feature:  agent.FeatureTelegram,
 		SourceID: strconv.FormatInt(chatID, 10),
 	}
 	if err := h.conversations.Open(&conversation); err != nil {
@@ -57,7 +56,7 @@ func (h *chatHistory) Start(chatID int64) string {
 }
 
 func (h *chatHistory) Append(conversationID, role string, message agent.Message) {
-	row := store.AgentMessage{Role: role, Content: message.Content, Thinking: message.ReasoningContent, ToolCallID: message.ToolCallID}
+	row := agent.ConversationMessage{Role: role, Content: message.Content, Thinking: message.ReasoningContent, ToolCallID: message.ToolCallID}
 	if len(message.ToolCalls) > 0 {
 		calls, err := json.Marshal(message.ToolCalls)
 		if err != nil {

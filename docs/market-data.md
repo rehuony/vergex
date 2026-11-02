@@ -9,7 +9,7 @@ Exchange streams (one goroutine per connection)
 Hub: newest candle per series, last and mark prices, each with when it arrived
   ├─ finished candles ─▶ Writer: batches them into the store, moving the water mark
   │                      a lost or dropped candle leaves the series behind for the hydrator
-  └─ followers keep only what is new: Frontier charts
+  └─ followers keep only what is new: Futures charts
 ```
 
 Nothing downstream can hold the stream up, and every goroutine stops with the application.
@@ -18,7 +18,7 @@ Nothing downstream can hold the stream up, and every goroutine stops with the ap
 
 | Venue | Address | Carries |
 | :---- | :------ | :------- |
-| Binance | `wss://fstream.binance.com/market/stream` | Every coin's last price once a second (`!miniTicker@arr`), the watchlist's candles, and what trading and open charts ask for |
+| Binance | `wss://fstream.binance.com/market/stream` | Every coin's last price and 24-hour open once a second (`!miniTicker@arr`), the watchlist's candles, and what trading and open charts ask for |
 | OKX | `wss://ws.okx.com/ws/v5/business` | Candles for open charts; connects only when one is open |
 | OKX | `wss://ws.okx.com/ws/v5/public` | Mark prices of OKX positions; connects only while there are any |
 
@@ -32,7 +32,7 @@ The default watchlist with a trader reading three more series measured 42 messag
 
 ## Storage
 
-The market tables are in the main PostgreSQL database, on a connection pool of their own, so bulk candle writes never queue up orders and positions. Everything here can be fetched again, so it is safe to empty these tables to start over.
+The market tables are in the main PostgreSQL database, on a connection pool of their own, so bulk candle writes never queue up orders and positions. Everything here can be fetched again, so these tables can be emptied to start over. Forecast's records refer to `market.series`, so emptying that table takes them with it.
 
 | Table | Holds |
 | :---- | :---- |
@@ -76,13 +76,13 @@ Work goes in this order: what you are waiting for, the watchlist's latest candle
 
 ## What trading reads
 
-`market.GetWithTimeframes` and `market.GetWithExchange`, which feed the prompts and the price behind order sizing and stop-loss checks, ask for the latest candles of a Binance series. The answer is local history plus the candle forming on the stream, only when that can be vouched for: the stream is up, the forming candle is the current one, and history joins up with it. Anything else gets the exchange's own answer. Reading also opens the series, so the next read is local.
+`market.Klines`, which feeds the prompts and the price behind order sizing and stop-loss checks, asks for the latest candles of a series. For a Binance series, the answer is local history plus the candle forming on the stream, only when that can be vouched for: the stream is up, the forming candle is the current one, and history joins up with it. Anything else gets the exchange's own answer. Reading also opens the series, so the next read is local.
 
 OKX traders read OKX's candles directly over REST, which is cheap and always current, and Binance's if OKX has none.
 
 The drawdown monitor reads positions from the exchange every minute, as the check of record. Between reads, the live mark price keeps each position's peak current and can call that check within a second of a giveback. It never closes anything itself, and if the stream stops the minute check carries on alone.
 
-Frontier's chart gets what the exchange has when it opens, then the stream, and polls every 3 seconds while no stream is up. Plan snapshots and execution do not read any of this.
+The Futures chart gets what the exchange has when it opens, then the stream, and polls every 3 seconds while no stream is up. Plan snapshots and execution do not read any of this.
 
 ## Rate limits
 
@@ -94,6 +94,7 @@ Frontier's chart gets what the exchange has when it opens, then the stream, and 
 | 418 | Pauses everything for `Retry-After` or at least an hour, and the Dashboard shows the service as failed |
 | 5xx, timeouts | Backs off that series only |
 | Retries | None within a request; the series goes back in the queue |
+| Silent connections | Every REST request to a venue, trading included, goes through `service.VenueTransport`. A connection that has received nothing for 10 seconds gets an HTTP/2 ping, and is closed if no answer comes within 5. That fails the requests waiting on it, and the next one opens a new connection |
 
 ## Derivatives
 

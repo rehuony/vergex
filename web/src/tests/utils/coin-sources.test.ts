@@ -10,7 +10,7 @@ describe('coin source labels', () => {
     expect(coinSourceLabel('oi_top', 'en')).toBe('OI increase')
     expect(coinSourceLabel('vergex_signal', 'en')).toBe('vergex_signal')
     for (const type of COIN_SOURCE_TYPES) {
-      expect(coinSourceLabel(type, 'en')).not.toContain('strategy.')
+      expect(coinSourceLabel(type, 'en')).not.toContain('traderSettings.')
     }
   })
 

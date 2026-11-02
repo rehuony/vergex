@@ -6,8 +6,7 @@ import (
 	"time"
 	"vergex/internal/logger"
 	"vergex/internal/market/instrument"
-	"vergex/internal/store"
-	"vergex/internal/trader/agent"
+	traderagent "vergex/internal/trader/agent"
 )
 
 // runCycle runs one trading cycle (using agent full decision-making)
@@ -27,12 +26,12 @@ func (at *AutoTrader) runCycle() error {
 		return nil
 	}
 
-	if err := at.reloadStrategyConfigIfChanged(); err != nil {
-		at.logWarnf("⚠️ Strategy refresh failed, using current in-memory config: %v", err)
+	if err := at.reloadConfigIfChanged(); err != nil {
+		at.logWarnf("⚠️ Config refresh failed, using current in-memory config: %v", err)
 	}
 
 	// Create decision record
-	record := &store.DecisionRecord{
+	record := &DecisionRecord{
 		ExecutionLog: []string{},
 		Success:      true,
 	}
@@ -82,7 +81,7 @@ func (at *AutoTrader) runCycle() error {
 	// Save equity snapshot independently (decoupled from agent decision, used for drawing profit curve)
 	// NOTE: Must be called BEFORE candidate coins check to ensure equity is always recorded
 	at.saveEquitySnapshot(ctx)
-	record.AccountState = &store.AccountSnapshot{
+	record.AccountState = &AccountSnapshot{
 		TotalBalance:          ctx.Account.TotalEquity,
 		AvailableBalance:      ctx.Account.AvailableBalance,
 		TotalUnrealizedProfit: ctx.Account.UnrealizedPnL,
@@ -111,8 +110,8 @@ func (at *AutoTrader) runCycle() error {
 		ctx.Account.TotalEquity, ctx.Account.AvailableBalance, ctx.Account.PositionCount)
 
 	// 5. Use strategy engine to call agent for decision
-	at.logInfof("🤖 Requesting agent analysis and decision... [Strategy Engine]")
-	agentDecision, err := agent.GetFullDecisionWithStrategy(ctx, at.agentClient, at.strategyEngine, "balanced", at.openConversation)
+	at.logInfof("🤖 Requesting agent analysis and decision... [Engine]")
+	agentDecision, err := traderagent.GetFullDecision(ctx, at.agentClient, at.engine, "balanced", at.openConversation)
 	at.keepConversation(agentDecision)
 
 	if agentDecision != nil && agentDecision.AgentDurationMs > 0 {
@@ -194,8 +193,8 @@ func (at *AutoTrader) runCycle() error {
 	// logger.Infof(strings.Repeat("-", 70) + "\n")
 
 	// 7. Print agent decisions
-	// logger.Infof("📋 agent decision list (%d items):\n", len(agent.Decisions))
-	// for i, d := range agent.Decisions {
+	// logger.Infof("📋 agent decision list (%d items):\n", len(traderagent.Decisions))
+	// for i, d := range traderagent.Decisions {
 	//     logger.Infof("  [%d] %s: %s - %s", i+1, d.Symbol, d.Action, d.Reasoning)
 	//     if d.Action == "open_long" || d.Action == "open_short" {
 	//        logger.Infof("      Leverage: %dx | Position: %.2f USDT | Stop loss: %.4f | Take profit: %.4f",
@@ -209,7 +208,7 @@ func (at *AutoTrader) runCycle() error {
 
 	// 8. Sort decisions: ensure close positions first, then open positions (prevent position stacking overflow)
 	sortedDecisions := sortDecisionsByPriority(agentDecision.Decisions)
-	sortedDecisions = at.filterDecisionsToStrategyUniverse(sortedDecisions, ctx)
+	sortedDecisions = at.filterDecisionsToUniverse(sortedDecisions, ctx)
 	sortedDecisions = sortDecisionsByPriority(sortedDecisions)
 
 	logger.Info("🔄 Execution order (optimized): Close positions first → Open positions later")
@@ -229,7 +228,7 @@ func (at *AutoTrader) runCycle() error {
 
 	// Safe mode: filter out open positions, only allow close/hold
 	if at.isSafeMode() {
-		filtered := make([]agent.Decision, 0)
+		filtered := make([]traderagent.Decision, 0)
 		for _, d := range sortedDecisions {
 			if d.Action == "open_long" || d.Action == "open_short" {
 				at.logWarnf("🛡️ Safe mode: BLOCKED %s %s (no new positions allowed)", d.Action, d.Symbol)
@@ -255,7 +254,7 @@ func (at *AutoTrader) runCycle() error {
 			break
 		}
 
-		actionRecord := store.DecisionAction{
+		actionRecord := DecisionAction{
 			Action:     d.Action,
 			Symbol:     d.Symbol,
 			Quantity:   0,
@@ -327,7 +326,7 @@ func isOpenDecision(action string) bool {
 	return a == "open_long" || a == "open_short"
 }
 
-func (at *AutoTrader) filterDecisionsToStrategyUniverse(decisions []agent.Decision, ctx *agent.Context) []agent.Decision {
+func (at *AutoTrader) filterDecisionsToUniverse(decisions []traderagent.Decision, ctx *traderagent.Context) []traderagent.Decision {
 	if ctx == nil || len(decisions) == 0 {
 		return decisions
 	}
@@ -350,7 +349,7 @@ func (at *AutoTrader) filterDecisionsToStrategyUniverse(decisions []agent.Decisi
 		}
 	}
 
-	filtered := make([]agent.Decision, 0, len(decisions))
+	filtered := make([]traderagent.Decision, 0, len(decisions))
 	for _, d := range decisions {
 		sym := normalizeUniverseSymbol(d.Symbol)
 		if sym == "" || sym == "ALL" {
@@ -388,7 +387,7 @@ func (at *AutoTrader) filterDecisionsToStrategyUniverse(decisions []agent.Decisi
 // canonicalUniverseSymbolForBase finds the canonical candidate or position
 // symbol that has the given base. Used to rewrite an agent decision's symbol
 // (e.g. "QNTUSDC") to the form our order pipeline expects ("QNTUSDT").
-func canonicalUniverseSymbolForBase(ctx *agent.Context, base string) string {
+func canonicalUniverseSymbolForBase(ctx *traderagent.Context, base string) string {
 	for _, coin := range ctx.CandidateCoins {
 		if universeBaseKey(coin.Symbol) == base {
 			return coin.Symbol
@@ -403,7 +402,7 @@ func canonicalUniverseSymbolForBase(ctx *agent.Context, base string) string {
 }
 
 // buildTradingContext builds trading context
-func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
+func (at *AutoTrader) buildTradingContext() (*traderagent.Context, error) {
 	// 1. Get account information
 	balance, err := at.trader.GetBalance()
 	if err != nil {
@@ -440,7 +439,7 @@ func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
 		return nil, fmt.Errorf("failed to get positions: %w", err)
 	}
 
-	var positionInfos []agent.PositionInfo
+	var positionInfos []traderagent.PositionInfo
 	totalMarginUsed := 0.0
 
 	// Current position key set (for cleaning up closed position records)
@@ -481,8 +480,8 @@ func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
 
 		var updateTime int64
 		// Priority 1: Get from database (trader_positions table) - most accurate
-		if at.store != nil {
-			if dbPos, err := at.store.Position().GetOpenPositionBySymbol(at.id, symbol, side); err == nil && dbPos != nil {
+		if at.stores != nil {
+			if dbPos, err := at.stores.Positions.GetOpenPositionBySymbol(at.id, symbol, side); err == nil && dbPos != nil {
 				if dbPos.EntryTime > 0 {
 					updateTime = dbPos.EntryTime
 				}
@@ -507,7 +506,7 @@ func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
 		peakPnlPct := at.peakPnLCache[posKey]
 		at.peakPnLCacheMutex.RUnlock()
 
-		positionInfos = append(positionInfos, agent.PositionInfo{
+		positionInfos = append(positionInfos, traderagent.PositionInfo{
 			Symbol:           symbol,
 			Side:             side,
 			EntryPrice:       entryPrice,
@@ -530,18 +529,14 @@ func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
 		}
 	}
 
-	// 3. Use strategy engine to get candidate coins (must have strategy engine)
-	var candidateCoins []agent.CandidateCoin
-	if at.strategyEngine == nil {
-		at.logWarnf("⚠️ No strategy engine configured, skipping candidate coins")
+	// 3. Use the engine to get candidate coins
+	var candidateCoins []traderagent.CandidateCoin
+	coins, err := at.engine.GetCandidateCoins()
+	if err != nil {
+		at.logWarnf("⚠️ Failed to get candidate coins: %v (will use empty list)", err)
 	} else {
-		coins, err := at.strategyEngine.GetCandidateCoins()
-		if err != nil {
-			at.logWarnf("⚠️ Failed to get candidate coins: %v (will use empty list)", err)
-		} else {
-			candidateCoins = coins
-			logger.Infof("📋 [%s] Strategy engine fetched candidate coins: %d", at.name, len(candidateCoins))
-		}
+		candidateCoins = coins
+		logger.Infof("📋 [%s] Engine fetched candidate coins: %d", at.name, len(candidateCoins))
 	}
 
 	// 4. Calculate total P&L
@@ -556,20 +551,20 @@ func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
 		marginUsedPct = (totalMarginUsed / totalEquity) * 100
 	}
 
-	// 5. Get leverage from strategy config
-	strategyConfig := at.strategyEngine.GetConfig()
-	btcEthLeverage := strategyConfig.RiskControl.BTCETHMaxLeverage
-	altcoinLeverage := strategyConfig.RiskControl.AltcoinMaxLeverage
-	logger.Infof("📋 [%s] Strategy leverage config: BTC/ETH=%dx, Altcoin=%dx", at.name, btcEthLeverage, altcoinLeverage)
+	// 5. Get leverage from the config
+	config := at.engine.GetConfig()
+	btcEthLeverage := config.RiskControl.BTCETHMaxLeverage
+	altcoinLeverage := config.RiskControl.AltcoinMaxLeverage
+	logger.Infof("📋 [%s] Leverage config: BTC/ETH=%dx, Altcoin=%dx", at.name, btcEthLeverage, altcoinLeverage)
 
 	// 6. Build context
-	ctx := &agent.Context{
+	ctx := &traderagent.Context{
 		CurrentTime:     time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),
 		RuntimeMinutes:  int(time.Since(at.startTime).Minutes()),
 		CallCount:       at.callCount,
 		BTCETHLeverage:  btcEthLeverage,
 		AltcoinLeverage: altcoinLeverage,
-		Account: agent.AccountInfo{
+		Account: traderagent.AccountInfo{
 			TotalEquity:      totalEquity,
 			AvailableBalance: availableBalance,
 			UnrealizedPnL:    totalUnrealizedProfit,
@@ -584,9 +579,9 @@ func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
 	}
 
 	// 7. Add recent closed trades (if store is available)
-	if at.store != nil {
+	if at.stores != nil {
 		// Get recent 10 closed trades for agent context
-		recentTrades, err := at.store.Position().GetRecentTrades(at.id, 10)
+		recentTrades, err := at.stores.Positions.GetRecentTrades(at.id, 10)
 		if err != nil {
 			at.logWarnf("⚠️ Failed to get recent trades: %v", err)
 		} else {
@@ -602,7 +597,7 @@ func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
 					exitTimeStr = time.Unix(trade.ExitTime, 0).UTC().Format("01-02 15:04 UTC")
 				}
 
-				ctx.RecentOrders = append(ctx.RecentOrders, agent.RecentOrder{
+				ctx.RecentOrders = append(ctx.RecentOrders, traderagent.RecentOrder{
 					Symbol:       trade.Symbol,
 					Side:         trade.Side,
 					EntryPrice:   trade.EntryPrice,
@@ -616,7 +611,7 @@ func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
 			}
 		}
 		// Get trading statistics for agent context
-		stats, err := at.store.Position().GetFullStats(at.id, at.initialBalance)
+		stats, err := at.stores.Positions.GetFullStats(at.id, at.initialBalance)
 		if err != nil {
 			at.logWarnf("⚠️ Failed to get trading stats: %v", err)
 		} else if stats == nil {
@@ -624,7 +619,7 @@ func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
 		} else if stats.TotalTrades == 0 {
 			at.logWarnf("⚠️ GetFullStats returned 0 trades")
 		} else {
-			ctx.TradingStats = &agent.TradingStats{
+			ctx.TradingStats = &traderagent.TradingStats{
 				TotalTrades:    stats.TotalTrades,
 				WinRate:        stats.WinRate,
 				ProfitFactor:   stats.ProfitFactor,
@@ -646,7 +641,7 @@ func (at *AutoTrader) buildTradingContext() (*agent.Context, error) {
 
 // sortDecisionsByPriority sorts decisions: close positions first, then open positions, finally hold/wait
 // This avoids position stacking overflow when changing positions
-func sortDecisionsByPriority(decisions []agent.Decision) []agent.Decision {
+func sortDecisionsByPriority(decisions []traderagent.Decision) []traderagent.Decision {
 	if len(decisions) <= 1 {
 		return decisions
 	}
@@ -666,7 +661,7 @@ func sortDecisionsByPriority(decisions []agent.Decision) []agent.Decision {
 	}
 
 	// Copy decision list
-	sorted := make([]agent.Decision, len(decisions))
+	sorted := make([]traderagent.Decision, len(decisions))
 	copy(sorted, decisions)
 
 	// Sort by priority

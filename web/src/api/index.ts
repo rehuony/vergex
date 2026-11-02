@@ -1,21 +1,21 @@
-import { traderApi } from './traders'
-import { strategyApi } from './strategies'
-import { configApi } from './config'
-import { dataApi } from './data'
+import { accountApi } from './account'
+import { agentApi } from './agent'
 import { forecastApi } from './forecast'
-import { marketDataApi } from './market-data'
-import { overviewApi } from './overview'
+import { marketApi } from './market'
+import { overviewApi } from './dashboard'
+import { systemApi } from './system'
 import { telegramApi } from './telegram'
+import { traderApi } from './trader'
 import { userApi } from './user'
 
 export const api = {
-  ...traderApi,
-  ...strategyApi,
-  ...configApi,
-  ...dataApi,
+  ...accountApi,
+  ...agentApi,
   ...forecastApi,
-  ...marketDataApi,
+  ...marketApi,
   ...overviewApi,
+  ...systemApi,
   ...telegramApi,
+  ...traderApi,
   ...userApi,
 }

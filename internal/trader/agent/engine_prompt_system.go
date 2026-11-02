@@ -3,11 +3,11 @@ package agent
 import (
 	"fmt"
 	"strings"
-	"vergex/internal/store"
+	"vergex/internal/trader/kind"
 )
 
-// BuildSystemPrompt builds System Prompt according to strategy configuration
-func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string) string {
+// BuildSystemPrompt builds System Prompt according to the config
+func (e *Engine) BuildSystemPrompt(accountEquity float64, variant string) string {
 	var sb strings.Builder
 	riskControl := e.config.RiskControl
 	promptSections := e.config.PromptSections
@@ -17,14 +17,6 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 	lang := LangEnglish
 	zh := false
 	singleSymbol, primarySymbol := e.singleSymbolInfo()
-
-	// Configs created in the Chinese-UI era carry legacy stored prompt sections
-	// and custom prompts written for a different contract; ignore them wholesale
-	// and fall back to the canonical built-in English sections.
-	legacyZhConfig := strings.EqualFold(strings.TrimSpace(e.config.Language), "zh")
-	if legacyZhConfig {
-		promptSections = store.PromptSectionsConfig{}
-	}
 
 	// 0. Data Dictionary & Schema (ensure agent understands all fields)
 	sb.WriteString(GetSchemaPrompt(lang))
@@ -131,9 +123,6 @@ func (e *StrategyEngine) BuildSystemPrompt(accountEquity float64, variant string
 
 	// 8. Custom Prompt.
 	customPrompt := englishOnlyPromptSection(e.config.CustomPrompt)
-	if legacyZhConfig {
-		customPrompt = ""
-	}
 
 	if customPrompt != "" {
 		if zh {
@@ -168,7 +157,7 @@ func englishOnlyPromptSection(section string) string {
 // trade exactly one instrument. Multi-symbol strategies return (false, "").
 // The flag is used to drop crypto-specific "BTC/ETH vs Altcoin" labeling and
 // to put the actual trading symbol into the JSON example.
-func (e *StrategyEngine) singleSymbolInfo() (bool, string) {
+func (e *Engine) singleSymbolInfo() (bool, string) {
 	coinSource := e.config.CoinSource
 	if coinSource.SourceType == "static" && len(coinSource.StaticCoins) == 1 {
 		return true, strings.ToUpper(strings.TrimSpace(coinSource.StaticCoins[0]))
@@ -199,7 +188,7 @@ func writeModeVariant(sb *strings.Builder, variant string, zh bool) {
 	}
 }
 
-func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskControl store.RiskControlConfig, btcEthPosValueRatio, altcoinPosValueRatio float64, singleSymbol bool, primarySymbol string, zh bool) {
+func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskControl kind.RiskControl, btcEthPosValueRatio, altcoinPosValueRatio float64, singleSymbol bool, primarySymbol string, zh bool) {
 	if zh {
 		sb.WriteString("# Hard Constraints (Risk Control)\n\n")
 		sb.WriteString("## CODE ENFORCED (backend validation, cannot be bypassed):\n")
@@ -296,7 +285,7 @@ func writeHardConstraints(sb *strings.Builder, accountEquity float64, riskContro
 	}
 }
 
-func writeOutputFormat(sb *strings.Builder, accountEquity, btcEthPosValueRatio float64, riskControl store.RiskControlConfig, singleSymbol bool, primarySymbol string, zh bool) {
+func writeOutputFormat(sb *strings.Builder, accountEquity, btcEthPosValueRatio float64, riskControl kind.RiskControl, singleSymbol bool, primarySymbol string, zh bool) {
 	// Output format schema MUST stay English/structural; parser depends on it.
 	sb.WriteString("# Output Format (Strictly Follow)\n\n")
 	if zh {
@@ -321,7 +310,7 @@ func writeOutputFormat(sb *strings.Builder, accountEquity, btcEthPosValueRatio f
 	sb.WriteString("```json\n[\n")
 
 	// Build a JSON example using the actual trading symbol when the strategy
-	// is single-symbol. Falls back to the legacy BTC/ETH two-line example
+	// is single-symbol. Falls back to the BTC/ETH two-line example
 	// only for multi-symbol strategies that genuinely have BTC/ETH on tap.
 	if singleSymbol {
 		lev := riskControl.AltcoinMaxLeverage
@@ -364,7 +353,7 @@ func writeOutputFormat(sb *strings.Builder, accountEquity, btcEthPosValueRatio f
 	}
 }
 
-func (e *StrategyEngine) writeAvailableIndicators(sb *strings.Builder, zh bool) {
+func (e *Engine) writeAvailableIndicators(sb *strings.Builder, zh bool) {
 	indicators := e.config.Indicators
 	kline := indicators.Klines
 

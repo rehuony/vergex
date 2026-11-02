@@ -145,7 +145,7 @@ init:
 up: init
 	DB_HOST=vergex-postgres DB_PORT=5432 docker compose up -d --build
 
-# Stop and remove the containers (data/ is kept)
+# Stop and remove the containers (the database volume is kept)
 down:
 	docker compose down
 

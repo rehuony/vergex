@@ -71,21 +71,19 @@ export function getTraderModelLabel(
   )
 }
 
-// Helper function to get exchange display name from exchange ID (UUID)
-export function getExchangeDisplayName(
-  exchangeId: string | undefined,
-  exchanges: {
+// How the interface names an account from its ID (UUID)
+export function getAccountDisplayName(
+  accountId: string | undefined,
+  accounts: {
     id: string
-    exchange_type?: string
+    venue?: string
     name: string
-    account_name?: string
+    venue_name?: string
   }[]
 ): string {
-  if (!exchangeId) return 'Unknown'
-  const exchange = exchanges.find((e) => e.id === exchangeId)
-  if (!exchange) return exchangeId.substring(0, 8).toUpperCase() + '...' // Show truncated UUID if not found
-  const typeName = exchange.exchange_type?.toUpperCase() || exchange.name
-  return exchange.account_name
-    ? `${typeName} - ${exchange.account_name}`
-    : typeName
+  if (!accountId) return 'Unknown'
+  const account = accounts.find((e) => e.id === accountId)
+  if (!account) return accountId.substring(0, 8).toUpperCase() + '...' // Show truncated UUID if not found
+  const venueName = account.venue?.toUpperCase() || account.venue_name || ''
+  return account.name ? `${venueName} - ${account.name}` : venueName
 }

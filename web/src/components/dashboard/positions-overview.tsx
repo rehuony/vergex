@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
-import type { Overview } from '@/api/overview'
-import { Panel, PanelState } from '@/components/common/panel'
+import type { Overview } from '@/api/dashboard'
+import { PanelState } from '@/components/common/panel'
 import { baseLabel, fmtUsd } from '@/utils/trader-format'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { t, type Language } from '@/i18n'
@@ -8,11 +8,11 @@ import { cn } from '@/utils/cn'
 import { traderPath } from './overview-links'
 
 const headClass =
-  'sticky top-0 bg-[var(--surface)] px-2 py-2 text-xs font-medium whitespace-nowrap'
+  'sticky top-0 bg-vergex-surface px-2 py-2 text-xs font-medium whitespace-nowrap'
 const cellClass = 'px-2 py-2 whitespace-nowrap'
 
-// PositionsOverview lists every open position across accounts. It is read-only:
-// a row opens the page that manages that position, where it can be closed.
+// PositionsOverview lists every open position across accounts, filling what holds it. It
+// is read-only: a row opens the page that manages that position, where it can be closed.
 export function PositionsOverview({
   overview,
   language,
@@ -26,18 +26,20 @@ export function PositionsOverview({
   const { positions, positions_partial: partial } = overview
   const holder = (traderId?: string) =>
     overview.traders.find((trader) => trader.trader_id === traderId)
-      ?.trader_name ?? 'Frontier'
+      ?.trader_name ?? t('futuresNav', language)
   return (
-    <Panel
-      title={label('positions')}
-      meta={partial ? label('someAccountsUnread') : undefined}
-    >
+    <div className="flex h-full min-h-0 flex-col">
+      {positions.length > 0 && partial && (
+        <p className="shrink-0 px-4 py-2 text-xs text-vergex-warning">
+          {label('someAccountsUnread')}
+        </p>
+      )}
       {positions.length === 0 ? (
-        <PanelState role={partial ? 'alert' : 'status'}>
+        <PanelState role={partial ? 'alert' : 'status'} className="flex-1">
           {partial ? label('positionsUnread') : label('noPositions')}
         </PanelState>
       ) : (
-        <ScrollArea className="max-h-80 px-2 pb-2">
+        <ScrollArea className="min-h-0 flex-1 px-2 pb-2">
           <table className="w-full text-left text-[13px] tabular-nums">
             <thead>
               <tr>
@@ -62,12 +64,12 @@ export function PositionsOverview({
                 )
                 return (
                   <tr
-                    key={`${position.exchange_id}-${position.symbol}-${position.side}`}
+                    key={`${position.account_id}-${position.symbol}-${position.side}`}
                     className="cursor-pointer"
                     onClick={() => navigate(path)}
                   >
                     <td className={cellClass}>
-                      <div className="font-medium text-vergex-text">
+                      <div className="font-medium text-vergex-ink">
                         {baseLabel(position.symbol)}
                       </div>
                       <div
@@ -84,7 +86,7 @@ export function PositionsOverview({
                     <td
                       className={cn(
                         cellClass,
-                        'max-w-40 truncate text-vergex-text-muted max-sm:hidden'
+                        'max-w-40 truncate text-vergex-muted max-sm:hidden'
                       )}
                     >
                       {holder(position.trader_id)}
@@ -110,6 +112,6 @@ export function PositionsOverview({
           </table>
         </ScrollArea>
       )}
-    </Panel>
+    </div>
   )
 }

@@ -3,14 +3,16 @@ import { api } from '@/api'
 import { t, type Language } from '@/i18n'
 import type { HistoricalPosition } from '@/types'
 import { cn } from '@/utils/cn'
-import { Panel, PanelState } from '@/components/common/panel'
+import {
+  cellClass,
+  EmptyLine,
+  gainTone,
+  headClass,
+  numberClass,
+  wideTableClass,
+} from '@/components/common/figures'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { baseLabel, fmtHold, fmtTime, fmtUsd } from '@/utils/trader-format'
-
-const headClass =
-  'sticky top-0 bg-[var(--surface)] px-2 py-2 text-xs font-medium whitespace-nowrap'
-const cellClass = 'px-2 py-2 whitespace-nowrap'
 
 /** How many closed trades the page reads first, and each older page after that. */
 export const CLOSES_PAGE_SIZE = 50
@@ -66,104 +68,95 @@ export function RecentCloses({
   }
 
   return (
-    <Panel title={label('recentCloses')}>
+    <div className="mt-4">
+      <table className={wideTableClass}>
+        <thead>
+          <tr>
+            <th className={cn(headClass, 'border-t')}>
+              {label('closedTradesHead')}
+            </th>
+            <th className={cn(headClass, 'w-20 border-t')}>{label('side')}</th>
+            <th className={cn(headClass, 'w-24 border-t text-right')}>
+              {label('hold')}
+            </th>
+            <th className={cn(headClass, 'w-40 border-t max-sm:hidden')}>
+              {label('closedAt')}
+            </th>
+            <th className={cn(headClass, 'w-28 border-t text-right')}>
+              {label('pnl')}
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((trade) => {
+            const long = /long/i.test(trade.side)
+            return (
+              <tr key={trade.id}>
+                <td className={cn(cellClass, 'font-medium text-vergex-ink')}>
+                  {baseLabel(trade.symbol)}
+                </td>
+                <td
+                  className={cn(
+                    cellClass,
+                    'text-xs',
+                    long ? 'text-vergex-success' : 'text-vergex-danger'
+                  )}
+                >
+                  {long ? label('longSide') : label('shortSide')}
+                </td>
+                <td className={cn(cellClass, numberClass)}>
+                  {fmtHold(trade.entry_time, trade.exit_time)}
+                </td>
+                <td
+                  className={cn(
+                    cellClass,
+                    'mono text-xs text-vergex-muted max-sm:hidden'
+                  )}
+                >
+                  {fmtTime(trade.exit_time) || '—'}
+                </td>
+                <td
+                  className={cn(
+                    cellClass,
+                    numberClass,
+                    gainTone(trade.realized_pnl)
+                  )}
+                >
+                  {fmtUsd(trade.realized_pnl, true)}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
       {!trades ? (
-        failed ? (
-          <PanelState role="alert">{label('closedTradesFailed')}</PanelState>
-        ) : (
-          <PanelState role="status">{t('loading', language)}</PanelState>
-        )
-      ) : rows.length === 0 ? (
-        <PanelState role="status">{label('noClosedTrades')}</PanelState>
+        <EmptyLine role={failed ? 'alert' : 'status'}>
+          {failed ? label('closedTradesFailed') : t('loading', language)}
+        </EmptyLine>
       ) : (
-        <>
-          <ScrollArea className="max-h-96 px-2 pb-2">
-            <table className="w-full text-left text-[13px] tabular-nums">
-              <thead>
-                <tr>
-                  <th className={headClass}>{label('symbol')}</th>
-                  <th className={headClass}>{label('side')}</th>
-                  <th className={cn(headClass, 'text-right')}>
-                    {label('hold')}
-                  </th>
-                  <th className={cn(headClass, 'max-sm:hidden')}>
-                    {label('closedAt')}
-                  </th>
-                  <th className={cn(headClass, 'text-right')}>
-                    {label('pnl')}
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((trade) => {
-                  const long = /long/i.test(trade.side)
-                  return (
-                    <tr key={trade.id}>
-                      <td
-                        className={cn(
-                          cellClass,
-                          'font-medium text-vergex-text'
-                        )}
-                      >
-                        {baseLabel(trade.symbol)}
-                      </td>
-                      <td
-                        className={cn(
-                          cellClass,
-                          long ? 'text-vergex-success' : 'text-vergex-danger'
-                        )}
-                      >
-                        {long ? label('longSide') : label('shortSide')}
-                      </td>
-                      <td className={cn(cellClass, 'text-right')}>
-                        {fmtHold(trade.entry_time, trade.exit_time)}
-                      </td>
-                      <td
-                        className={cn(
-                          cellClass,
-                          'text-vergex-text-muted max-sm:hidden'
-                        )}
-                      >
-                        {fmtTime(trade.exit_time) || '—'}
-                      </td>
-                      <td
-                        className={cn(
-                          cellClass,
-                          'text-right font-medium',
-                          trade.realized_pnl >= 0
-                            ? 'text-vergex-success'
-                            : 'text-vergex-danger'
-                        )}
-                      >
-                        {fmtUsd(trade.realized_pnl, true)}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </ScrollArea>
-          {hasMore && rows.length >= CLOSES_PAGE_SIZE && (
-            <div className="flex items-center justify-end gap-3 border-t border-[var(--line)] px-4 py-2">
-              {olderFailed && (
-                <span role="alert" className="text-xs text-vergex-danger">
-                  {label('closedTradesFailed')}
-                </span>
-              )}
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="max-sm:h-10"
-                disabled={loadingOlder}
-                onClick={() => void loadOlder()}
-              >
-                {loadingOlder ? t('loading', language) : label('loadOlder')}
-              </Button>
-            </div>
-          )}
-        </>
+        rows.length === 0 && (
+          <EmptyLine role="status">{label('noClosedTrades')}</EmptyLine>
+        )
       )}
-    </Panel>
+      {hasMore && rows.length >= CLOSES_PAGE_SIZE && (
+        <div className="flex items-center justify-end gap-3 px-4 py-2">
+          {olderFailed && (
+            <span role="alert" className="text-xs text-vergex-danger">
+              {label('closedTradesFailed')}
+            </span>
+          )}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="max-sm:h-10"
+            disabled={loadingOlder}
+            onClick={() => void loadOlder()}
+          >
+            {loadingOlder ? t('loading', language) : label('loadOlder')}
+          </Button>
+        </div>
+      )}
+    </div>
   )
 }

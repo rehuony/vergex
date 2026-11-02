@@ -11,10 +11,14 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import { THEME_EVENT } from '@/contexts/theme-context'
+import { wheelIntent } from './chart-input'
+import { priceDigits } from './chart-legend'
 import {
   addProjectionSeries,
+  candleColors,
   colors,
   createMarketChart,
+  projectionColors,
   themeOptions,
   volumeColor,
 } from './market-chart-surface'
@@ -56,17 +60,19 @@ export interface ChartLines {
   rsi?: ChartPoint[]
 }
 
+// The lines stay achromatic, told apart by shade and dash: green and red are
+// for the market's own meaning.
 const lineStyles: Record<
   keyof ChartLines,
   { color: () => string; width: 1 | 2; style?: LineStyle }
 > = {
-  ema20: { color: () => colors.info, width: 1 },
-  ema50: { color: () => colors.entry, width: 1 },
-  bollUpper: { color: () => colors.text, width: 1, style: LineStyle.Dotted },
-  bollMiddle: { color: () => colors.text, width: 1 },
-  bollLower: { color: () => colors.text, width: 1, style: LineStyle.Dotted },
-  vwap: { color: () => brandColor(), width: 1 },
-  rsi: { color: () => colors.info, width: 1 },
+  ema20: { color: () => colors.inkSoft, width: 1 },
+  ema50: { color: () => colors.muted, width: 1, style: LineStyle.Dashed },
+  bollUpper: { color: () => colors.faint, width: 1, style: LineStyle.Dotted },
+  bollMiddle: { color: () => colors.faint, width: 1 },
+  bollLower: { color: () => colors.faint, width: 1, style: LineStyle.Dotted },
+  vwap: { color: () => colors.ink, width: 1 },
+  rsi: { color: () => colors.inkSoft, width: 1 },
 }
 
 // What a new coin opens on: recent candles large enough to read, and room to the
@@ -74,18 +80,15 @@ const lineStyles: Record<
 const INITIAL_BARS = 120
 const INITIAL_FUTURE_BARS = 12
 
+// How far the zoom buttons go at a press, and how few candles they stop at.
+const ZOOM_STEP = 0.75
+const MIN_ZOOM_BARS = 12
+
 const RSI_PANE = 1
 const RSI_PANE_HEIGHT = 120
 
-function brandColor() {
-  return getComputedStyle(document.documentElement)
-    .getPropertyValue('--brand')
-    .trim()
-}
-
-// Enough decimals to tell prices apart, as the rest of Forecast shows them.
 function priceFormat(price: number) {
-  const precision = price >= 1000 ? 1 : price >= 1 ? 3 : price >= 0.01 ? 5 : 8
+  const precision = priceDigits(price)
   return { type: 'price' as const, precision, minMove: 10 ** -precision }
 }
 
@@ -113,18 +116,82 @@ export class LocalMarketChart {
   private projection: ISeriesApi<'Candlestick'>
   private lines = new Map<keyof ChartLines, ISeriesApi<'Line'>>()
   private levels: IPriceLine[] = []
+  private rsiLevels: IPriceLine[] = []
+  // What setData last drew, to draw again in the new colours.
+  private shown: Parameters<LocalMarketChart['setData']> | null = null
   private fittedFor: string | null = null
   private lastTime = 0
   private live: ChartCandle | null = null
+  private wheelZooms = false
 
-  constructor(host: HTMLElement) {
+  constructor(private readonly host: HTMLElement) {
     const { chart, candles, volume } = createMarketChart(host, (base) => base)
     this.chart = chart
     this.candles = candles
     this.volume = volume
     this.markers = createSeriesMarkers(candles, [])
     this.projection = addProjectionSeries(chart)
+    // An upright swipe on a phone scrolls the page, and the wheel is decided in onWheel.
+    chart.applyOptions({
+      handleScale: { mouseWheel: false },
+      handleScroll: { vertTouchDrag: false },
+    })
+    host.addEventListener('wheel', this.onWheel, {
+      capture: true,
+      passive: true,
+    })
     window.addEventListener(THEME_EVENT, this.repaint)
+  }
+
+  // Runs before the library sees the wheel. A scroll meant for the page never reaches it,
+  // so nothing stops the page moving, and it only zooms while Ctrl or Command is held.
+  private readonly onWheel = (event: WheelEvent) => {
+    const intent = wheelIntent(event)
+    if (intent === 'page') {
+      event.stopPropagation()
+      return
+    }
+    const zooms = intent === 'zoom'
+    if (zooms !== this.wheelZooms) {
+      this.wheelZooms = zooms
+      this.chart?.applyOptions({ handleScale: { mouseWheel: zooms } })
+    }
+  }
+
+  // Shows fewer candles for a factor under 1 and more over it, keeping the right edge,
+  // where the newest candles and the forecast are.
+  zoom(factor: number) {
+    const scale = this.chart?.timeScale()
+    const range = scale?.getVisibleLogicalRange()
+    if (!scale || !range) return
+    const span = Math.max(MIN_ZOOM_BARS, (range.to - range.from) * factor)
+    scale.setVisibleLogicalRange({ from: range.to - span, to: range.to })
+  }
+
+  zoomIn() {
+    this.zoom(ZOOM_STEP)
+  }
+
+  zoomOut() {
+    this.zoom(1 / ZOOM_STEP)
+  }
+
+  // Goes back to what a new coin opens on, wherever the view has been moved to.
+  resetView() {
+    const rows = this.shown?.[0].length ?? 0
+    if (rows === 0) return
+    this.chart?.priceScale('right').applyOptions({ autoScale: true })
+    this.chart?.timeScale().setVisibleLogicalRange({
+      from: Math.max(0, rows - INITIAL_BARS),
+      to: rows + INITIAL_FUTURE_BARS,
+    })
+  }
+
+  // Says which candle the pointer is over, by its time, or null when it is off them.
+  onCrosshair(listener: (time: number | null) => void) {
+    this.chart?.subscribeCrosshairMove((param) => {
+      listener(typeof param.time === 'number' ? param.time : null)
+    })
   }
 
   // fitFor names what is shown: the view fits once for each, and after that the
@@ -135,6 +202,7 @@ export class LocalMarketChart {
     markers: ChartMarker[],
     fitFor: string
   ) {
+    this.shown = [rows, levels, markers, fitFor]
     this.candles.setData(rows.map(toBar))
     this.volume.setData(rows.map(toVolume))
     const last = rows.length > 0 ? rows[rows.length - 1] : null
@@ -169,10 +237,7 @@ export class LocalMarketChart {
       )
     )
     if (this.fittedFor !== fitFor && rows.length > 0) {
-      this.chart?.timeScale().setVisibleLogicalRange({
-        from: Math.max(0, rows.length - INITIAL_BARS),
-        to: rows.length + INITIAL_FUTURE_BARS,
-      })
+      this.resetView()
       this.fittedFor = fitFor
     }
   }
@@ -232,15 +297,15 @@ export class LocalMarketChart {
     )
     this.lines.set(name, series)
     if (name === 'rsi') {
-      for (const price of [30, 70]) {
+      this.rsiLevels = [30, 70].map((price) =>
         series.createPriceLine({
           price,
-          color: colors.text,
+          color: colors.faint,
           lineStyle: LineStyle.Dotted,
           lineWidth: 1,
           axisLabelVisible: false,
         })
-      }
+      )
     }
     return series
   }
@@ -251,19 +316,19 @@ export class LocalMarketChart {
       panes[RSI_PANE].setHeight(RSI_PANE_HEIGHT)
   }
 
-  // A time past the last real candle is on a simulated one.
-  onCrosshair(listener: (onProjection: boolean) => void) {
-    this.chart?.subscribeCrosshairMove((param) => {
-      listener(typeof param.time === 'number' && param.time > this.lastTime)
-    })
-  }
-
   private readonly repaint = () => {
     this.chart?.applyOptions(themeOptions())
-    this.lines.get('vwap')?.applyOptions({ color: brandColor() })
+    this.candles.applyOptions(candleColors())
+    this.projection.applyOptions(projectionColors())
+    for (const [name, series] of this.lines)
+      series.applyOptions({ color: lineStyles[name].color() })
+    for (const line of this.rsiLevels)
+      line.applyOptions({ color: colors.faint })
+    if (this.shown) this.setData(...this.shown)
   }
 
   dispose() {
+    this.host.removeEventListener('wheel', this.onWheel, { capture: true })
     window.removeEventListener(THEME_EVENT, this.repaint)
     this.chart?.remove()
     this.chart = null

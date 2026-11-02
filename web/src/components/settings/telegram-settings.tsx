@@ -24,7 +24,7 @@ const ALERT_KINDS = [
 ]
 
 const command = (text: string) => (
-  <code className="font-mono text-vergex-brand">{text}</code>
+  <code className="font-mono text-vergex-ink">{text}</code>
 )
 
 // The numbered how-to for the current step.
@@ -166,7 +166,7 @@ export function TelegramSettings({ language }: { language: Language }) {
   const modelRow = (
     <SettingRow label={t('telegram.model', language)} htmlFor={`${id}-model`}>
       {models.length === 0 ? (
-        <p className="text-sm text-vergex-text-muted">
+        <p className="text-sm text-vergex-muted">
           {t('telegram.noEnabledModels', language)}
         </p>
       ) : (
@@ -188,7 +188,7 @@ export function TelegramSettings({ language }: { language: Language }) {
   )
   const tokenRow = config?.token_masked && (
     <SettingRow label="Bot Token">
-      <p className="truncate font-mono text-sm text-vergex-text">
+      <p className="truncate font-mono text-sm text-vergex-ink">
         {config.token_masked}
       </p>
     </SettingRow>
@@ -208,7 +208,7 @@ export function TelegramSettings({ language }: { language: Language }) {
       </div>
 
       {isLoading ? (
-        <p className="py-8 text-center text-sm text-vergex-text-muted">
+        <p className="py-8 text-center text-sm text-vergex-muted">
           {t('telegram.loading', language)}
         </p>
       ) : step === 0 ? (

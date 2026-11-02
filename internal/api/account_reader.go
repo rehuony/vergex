@@ -2,8 +2,7 @@ package api
 
 import (
 	"errors"
-	"vergex/internal/store"
-	"vergex/internal/trading"
+	"vergex/internal/account"
 )
 
 // Keep account inspection independent of autonomous-trader loading. A finite
@@ -11,27 +10,27 @@ import (
 // This interface cannot submit, cancel, or change account settings.
 type accountReader interface {
 	GetPositions() ([]map[string]interface{}, error)
-	GetOpenOrders(string) ([]trading.OpenOrder, error)
+	GetOpenOrders(string) ([]account.OpenOrder, error)
 }
 
-func (s *Server) accountReadConfig(user, traderID string, exchangeIDs ...string) (*store.Exchange, error) {
+func (s *Server) accountReadConfig(user, traderID string, accountIDs ...string) (*account.Account, error) {
 	if user == "" {
 		return nil, errors.New("Authentication is required")
 	}
-	if len(exchangeIDs) > 0 && exchangeIDs[0] != "" {
+	if len(accountIDs) > 0 && accountIDs[0] != "" {
 		if traderID != "" {
 			bound, err := s.accountReadConfig(user, traderID)
-			if err != nil || bound.ID != exchangeIDs[0] {
+			if err != nil || bound.ID != accountIDs[0] {
 				return nil, errors.New("Trader does not belong to the selected account")
 			}
 		}
-		ex, err := s.store.Exchange().GetByID(user, exchangeIDs[0])
+		ex, err := s.stores.Accounts.GetByID(user, accountIDs[0])
 		if err != nil {
 			return nil, errors.New("Trading account is unavailable")
 		}
 		return ex, nil
 	}
-	owned, err := s.store.Trader().List(user)
+	owned, err := s.stores.Traders.List(user)
 	if err != nil {
 		return nil, errors.New("Could not verify account ownership")
 	}
@@ -39,7 +38,7 @@ func (s *Server) accountReadConfig(user, traderID string, exchangeIDs ...string)
 		if traderID != "" && t.ID != traderID {
 			continue
 		}
-		ex, err := s.store.Exchange().GetByID(user, t.ExchangeID)
+		ex, err := s.stores.Accounts.GetByID(user, t.AccountID)
 		if err != nil {
 			return nil, errors.New("Trading account is unavailable")
 		}
@@ -48,10 +47,10 @@ func (s *Server) accountReadConfig(user, traderID string, exchangeIDs ...string)
 	return nil, errors.New("Trader does not belong to this account")
 }
 
-func (s *Server) accountReadClient(user, traderID string, exchangeIDs ...string) (accountReader, error) {
-	ex, err := s.accountReadConfig(user, traderID, exchangeIDs...)
+func (s *Server) accountReadClient(user, traderID string, accountIDs ...string) (accountReader, error) {
+	ex, err := s.accountReadConfig(user, traderID, accountIDs...)
 	if err != nil {
 		return nil, err
 	}
-	return buildExchangeProbeTrader(ex, user)
+	return buildAccountProbe(ex, user)
 }

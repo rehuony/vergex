@@ -11,11 +11,11 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Vergex 是一个开源、自托管的 Agent 交易终端。交易员按计划运行一个 Agent：它读取策略给出的候选币种、行情数据和你的账户状态，然后在你连接的交易所上决策并执行。这一切都运行在你自己的机器上，密钥不会离开你的服务器。',
+            text: 'Vergex 是一个开源、自托管的 Agent 交易终端。交易员按计划运行一个 Agent：它读取配置给出的候选币种、行情数据和你的账户状态，然后在你连接的交易所上决策并执行。这一切都运行在你自己的机器上，密钥不会离开你的服务器。',
           },
           {
             type: 'p',
-            text: '你可以在“策略”页面编写自定义策略，并同时运行多个交易员。',
+            text: '你可以在每个交易员的“配置”标签里调整它，并同时运行多个交易员。',
           },
         ],
       },
@@ -30,8 +30,8 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              '在“设置 → 模型”中添加模型服务商的 API Key（DeepSeek、OpenAI、Claude 等）。',
-              '在“设置 → 交易所”中添加具备交易权限（禁用提现）的 Binance 或 OKX 合约 API Key，并确保至少有 `12 USDT` 可用保证金。',
+              '在“设置 → Agent 模型”中添加模型服务商的 API Key（DeepSeek、OpenAI、Claude 等）。',
+              '在“设置 → 交易账户”中添加具备交易权限（禁用提现）的 Binance 或 OKX 合约 API Key，并确保至少有 `12 USDT` 可用保证金。',
             ],
           },
           {
@@ -46,7 +46,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: 'Vergex 交易 Binance 和 OKX 上以 USDT 保证金结算的加密货币永续合约。候选币种来自你的策略：固定列表，或 Binance 免费榜单（持仓量、成交额、涨幅榜和跌幅榜）。',
+            text: 'Vergex 交易 Binance 和 OKX 上以 USDT 保证金结算的加密货币永续合约。候选币种来自交易员的配置：固定列表，或 Binance 免费榜单（持仓量、成交额、涨幅榜和跌幅榜）。',
           },
         ],
       },
@@ -74,7 +74,7 @@ export const faq: FAQContent = [
           },
           {
             type: 'p',
-            text: '每个交易员的页面都如实展示表现：区分已实现和未实现盈亏，并按你真实的初始余额显示手续费、盈利因子和最大回撤。请关注这些数字，从小资金开始，只用你能承受损失的钱交易。',
+            text: '每个交易员都如实展示表现：区分已实现和未实现盈亏，并按你真实的初始余额显示手续费、盈利因子和最大回撤。请关注这些数字，从小资金开始，只用你能承受损失的钱交易。',
           },
           {
             type: 'note',
@@ -89,7 +89,7 @@ export const faq: FAQContent = [
     title: '启动和账户',
     items: [
       {
-        id: 'exchange-api-keys',
+        id: 'account-api-keys',
         question: '应该如何创建交易所 API Key？安全吗？',
         blocks: [
           {
@@ -146,10 +146,10 @@ export const faq: FAQContent = [
           {
             type: 'steps',
             items: [
-              '确定范围：从策略的币种来源（固定列表或榜单）收集候选币种，并去掉排除的币种。',
-              '读取行情：多周期 OHLCV K 线，以及策略启用的指标（EMA、MACD、RSI、ATR、布林带、成交量、持仓量、资金费率）。',
+              '确定范围：从交易员的币种来源（固定列表或榜单）收集候选币种，并去掉排除的币种。',
+              '读取行情：多周期 OHLCV K 线，以及交易员配置启用的指标（EMA、MACD、RSI、ATR、布林带、成交量、持仓量、资金费率）。',
               '加入账户信息：权益、可用保证金、当前持仓和交易员自己的近期表现。',
-              '决策和计算仓位：只有达到策略置信度阈值和最低盈亏比的机会才会开仓；平仓总是先于开仓执行。',
+              '决策和计算仓位：只有达到交易员置信度阈值和最低盈亏比的机会才会开仓；平仓总是先于开仓执行。',
             ],
           },
           {
@@ -190,14 +190,14 @@ export const faq: FAQContent = [
             type: 'list',
             items: [
               '你的账户：权益、可用保证金、带盈亏的当前持仓。',
-              '策略币种来源给出的候选币种。',
+              '交易员币种来源给出的候选币种。',
               '每个候选币种的多周期 K 线和已启用的指标。',
               '它自己的战绩：胜率、盈利因子、回撤和近期交易。',
             ],
           },
           {
             type: 'p',
-            text: '每一轮都会保存为一条决策记录。交易员页面的“决策”标签会显示推理过程、操作和被拦截的订单。',
+            text: '每一轮都会保存为一条决策记录。交易员的“决策”标签会显示推理过程、操作和被拦截的订单。',
           },
         ],
       },
@@ -207,12 +207,12 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: '杠杆来自策略的风险设置（默认 5 倍）。硬性风控独立于 Agent 运行，Agent 无法绕过：',
+            text: '杠杆来自交易员的风险配置（默认 5 倍）。硬性风控独立于 Agent 运行，Agent 无法绕过：',
           },
           {
             type: 'list',
             items: [
-              '策略配置的持仓数上限：达到上限后拒绝新开仓。',
+              '交易员配置的持仓数上限：达到上限后拒绝新开仓。',
               '按资产类别设置的杠杆上限（BTC/ETH 和山寨币）。',
               '交易节流阻止频繁操作，例如开仓几分钟、价格几乎没动就平仓。',
               '安全模式（见下文）在模型本身出问题时保护账户。',
@@ -230,7 +230,7 @@ export const faq: FAQContent = [
           },
           {
             type: 'p',
-            text: '安全模式会以横幅显示在交易员页面，并出现在总览的“需要处理”中，不会悄悄发生。',
+            text: '安全模式会显示在自动交易页面的交易员上，并出现在总览的“需要处理”中，不会悄悄发生。',
           },
         ],
       },
@@ -247,7 +247,7 @@ export const faq: FAQContent = [
           },
           {
             type: 'p',
-            text: '手续费是高频策略的隐形杀手。交易员页面的“表现”标签会把手续费和已实现盈亏放在一起，并按持仓时长和方向拆分，让你看清它们是否吃掉了收益。',
+            text: '手续费是高频策略的隐形杀手。交易员的“表现”标签会把手续费和已实现盈亏放在一起，并按持仓时长和方向拆分，让你看清它们是否吃掉了收益。',
           },
         ],
       },
@@ -258,8 +258,8 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              '停止：在交易员页面点“停止”，或在“交易员”页面点“全部停止”。停止只会中断决策循环，持仓不会被平掉，由你自行管理。',
-              '手动平仓：在交易员页面的“持仓”标签平仓，或在 Frontier 的“持仓和订单”中平仓。手动平仓会同步到持仓历史。',
+              '停止：在自动交易页面选中交易员后点“停止”，或点“全部停止”。停止只会中断决策循环，持仓不会被平掉，由你自行管理。',
+              '手动平仓：在交易员的“持仓”标签平仓，或在合约交易页面的“持仓和订单”中平仓。手动平仓会同步到持仓历史。',
               '紧急情况：你随时可以直接在交易所管理持仓，Vergex 不会把你锁在自己的账户之外。',
             ],
           },
@@ -268,16 +268,16 @@ export const faq: FAQContent = [
     ],
   },
   {
-    id: 'strategies',
-    title: '策略和网格',
+    id: 'trader-settings',
+    title: '交易员配置和网格',
     items: [
       {
-        id: 'strategy-editor',
-        question: '策略里可以修改什么？',
+        id: 'trader-settings-editor',
+        question: '交易员的配置里可以修改什么？',
         blocks: [
           {
             type: 'p',
-            text: '所有内容都在“策略”页面编辑。Agent 策略有四个分区：',
+            text: '所有内容都在交易员的“配置”标签编辑。Agent 交易员有四个部分：',
           },
           {
             type: 'list',
@@ -290,17 +290,17 @@ export const faq: FAQContent = [
           },
           {
             type: 'p',
-            text: '策略类型（Agent 或网格）在创建时确定，之后不能更改。底部的栏会估算每轮使用的 token 数量。',
+            text: '交易员的种类（Agent 或网格）在创建时确定，之后不能更改。新交易员从预设或另一个交易员的副本开始。底部的栏会估算每轮使用的 token 数量。',
           },
         ],
       },
       {
-        id: 'strategy-test',
+        id: 'trader-dry-run',
         question: '“测试”会做什么，要花钱吗？',
         blocks: [
           {
             type: 'p',
-            text: '测试会用表单中当前的策略（无论是否保存），在实时公开行情和一个并不存在的 1000 USDT 账户上试运行。',
+            text: '试运行会用表单中当前的配置（无论是否保存），在实时公开行情和一个并不存在的 1000 USDT 账户上试运行。',
           },
           {
             type: 'list',
@@ -316,18 +316,18 @@ export const faq: FAQContent = [
         ],
       },
       {
-        id: 'strategy-running',
+        id: 'trader-settings-running',
         question: '保存的修改会影响正在运行的交易员吗？',
         blocks: [
           {
             type: 'p',
-            text: '会。运行中的交易员在每一轮开始时重新加载策略，所以保存的修改从下一轮开始生效，包括币种和风险限制。',
+            text: '会。运行中的 Agent 交易员在每一轮开始时读取配置，所以保存的修改从下一轮开始生效，包括币种和风险限制。运行中的网格交易员会按新配置重启。',
           },
         ],
       },
       {
         id: 'grid-how',
-        question: '网格策略是如何工作的？',
+        question: '网格交易员是如何工作的？',
         blocks: [
           {
             type: 'p',
@@ -346,21 +346,21 @@ export const faq: FAQContent = [
     ],
   },
   {
-    id: 'frontier',
-    title: 'Frontier',
+    id: 'futures',
+    title: '合约交易',
     items: [
       {
-        id: 'frontier-what',
-        question: 'Frontier 是什么，和交易员有什么区别？',
+        id: 'futures-what',
+        question: '合约交易是什么，和自动交易有什么区别？',
         blocks: [
           {
             type: 'p',
-            text: 'Frontier 和你一起一次规划一笔交易。你在实时图表上和 Agent 讨论行情，对比入场计划，然后批准其中一个。它不是持续运行的策略（那是交易员），也不是回测工具。',
+            text: '合约交易页面和你一起一次规划一笔交易。你在实时图表上和 Agent 讨论行情，对比入场计划，然后批准其中一个。它不是持续运行的策略（那是自动交易），也不是回测工具。',
           },
         ],
       },
       {
-        id: 'frontier-workflow',
+        id: 'futures-workflow',
         question: '如何规划并下单？',
         blocks: [
           {
@@ -375,7 +375,7 @@ export const faq: FAQContent = [
         ],
       },
       {
-        id: 'frontier-entries',
+        id: 'futures-entries',
         question: '计划可以使用哪些入场方式？',
         blocks: [
           {
@@ -394,7 +394,7 @@ export const faq: FAQContent = [
         ],
       },
       {
-        id: 'frontier-protection',
+        id: 'futures-protection',
         question: '计划的止损有保证吗？',
         blocks: [
           {
@@ -408,7 +408,7 @@ export const faq: FAQContent = [
         ],
       },
       {
-        id: 'frontier-restart',
+        id: 'futures-restart',
         question: '服务器重启时，运行中的计划会怎样？',
         blocks: [
           {
@@ -444,7 +444,7 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              '创建、更新、启动、停止和删除交易员和策略。',
+              '创建、更新、启动、停止和删除交易员，并修改它们的配置。',
               '回答余额、持仓、订单、决策、统计和 Agent 费用方面的问题。',
               '平仓。',
               '诊断交易员无法启动、模型或账户故障、订单未成功的原因。',
@@ -462,7 +462,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: '高风险操作会等待你确认：启动、停止或删除交易员，更新运行中的交易员，平仓，删除策略，以及修改策略的风险或网格设置。你的下一条消息必须是明确的确认，例如“确认”或“yes”；其他任何内容都会取消，且 5 分钟后过期。',
+            text: '高风险操作会等待你确认：启动、停止或删除交易员，更新运行中的交易员，平仓，以及修改交易员的风险或网格配置。你的下一条消息必须是明确的确认，例如“确认”或“yes”；其他任何内容都会取消，且 5 分钟后过期。',
           },
           {
             type: 'p',
@@ -566,10 +566,10 @@ export const faq: FAQContent = [
           {
             type: 'list',
             items: [
-              '需要处理：安全模式、账户无法读取、Frontier 计划需要对账等问题。',
+              '需要处理：安全模式、账户无法读取、合约交易计划需要对账等问题。',
               '场景：系统的每个部分，以及每个真实事件发生时在它们之间的流动。',
               '事件：最近 24 小时发生的事，可以筛选并打开。',
-              '所有交易员和 Frontier 计划的持仓。',
+              '所有交易员和合约交易计划的持仓。',
             ],
           },
           {
@@ -580,7 +580,7 @@ export const faq: FAQContent = [
       },
       {
         id: 'trader-metrics',
-        question: '交易员页面上的数字是什么意思？',
+        question: '自动交易页面上的数字是什么意思？',
         blocks: [
           {
             type: 'list',
@@ -609,7 +609,7 @@ export const faq: FAQContent = [
         blocks: [
           {
             type: 'p',
-            text: '交易员页面的“决策”标签列出每一轮的操作、模型调用耗时，以及被拦截的订单和触发的规则（节流、持仓上限、风控）。打开一轮可以查看它的提示词、推理过程和模型的原始回复。',
+            text: '交易员的“决策”标签列出每一轮的操作、模型调用耗时，以及被拦截的订单和触发的规则（节流、持仓上限、风控）。打开一轮可以查看它的提示词、推理过程和模型的原始回复。',
           },
         ],
       },
@@ -702,7 +702,7 @@ export const faq: FAQContent = [
         ],
       },
       {
-        id: 'exchange-unreachable',
+        id: 'account-unreachable',
         question: '交易所账户显示“凭证无效”或“不可用”。',
         blocks: [
           {
@@ -723,7 +723,7 @@ export const faq: FAQContent = [
             type: 'list',
             items: [
               '后端：`docker logs vergex-backend`（或运行 `make run-backend` 的终端）。',
-              '每一轮的 Agent 推理和错误：交易员页面的“决策”标签。',
+              '每一轮的 Agent 推理和错误：交易员的“决策”标签。',
               '前端构建或运行问题：浏览器开发者工具的控制台。',
             ],
           },

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"vergex/internal/database/testdb"
 )
 
 const sampleCatalog = `{
@@ -85,8 +87,8 @@ func TestRefreshWritesCacheAndKeepsOldOnFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	svc := NewService(dir)
+	db := testdb.Open(t)
+	svc := NewService(db)
 	svc.sourceURL = srv.URL
 	if err := svc.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
@@ -100,11 +102,11 @@ func TestRefreshWritesCacheAndKeepsOldOnFailure(t *testing.T) {
 		t.Fatal("previous catalog should be kept after a failed refresh")
 	}
 
-	reloaded := NewService(dir)
+	reloaded := NewService(db)
 	if err := reloaded.LoadCache(); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := reloaded.Lookup("deepseek", "", "deepseek-v4-pro"); !ok {
-		t.Fatal("cache file should contain the downloaded catalog")
+		t.Fatal("cache should contain the downloaded catalog")
 	}
 }

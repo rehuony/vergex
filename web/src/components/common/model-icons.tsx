@@ -1,71 +1,35 @@
+import { MonoIcon } from './mono-icon'
+
 interface IconProps {
   width?: number
   height?: number
   className?: string
 }
 
-// model colors for fallback display
-const MODEL_COLORS: Record<string, string> = {
-  deepseek: '#4A90E2',
-  qwen: '#9B59B6',
-  claude: '#D97757',
-  kimi: '#6366F1',
-  gemini: '#4285F4',
-  grok: '#000000',
-  openai: '#10A37F',
-  minimax: '#E45735',
-  zhipu: '#3859F3',
-}
+const MODEL_ICONS = new Set([
+  'deepseek',
+  'qwen',
+  'claude',
+  'kimi',
+  'gemini',
+  'grok',
+  'openai',
+  'minimax',
+])
 
 // Returns the icon for a model
 export const getModelIcon = (modelType: string, props: IconProps = {}) => {
   // Supports full ID or type name
   const type = modelType.includes('_') ? modelType.split('_').pop() : modelType
-
-  let iconPath: string | null = null
-
-  switch (type) {
-    case 'deepseek':
-      iconPath = '/icons/deepseek.svg'
-      break
-    case 'qwen':
-      iconPath = '/icons/qwen.svg'
-      break
-    case 'claude':
-      iconPath = '/icons/claude.svg'
-      break
-    case 'kimi':
-      iconPath = '/icons/kimi.svg'
-      break
-    case 'gemini':
-      iconPath = '/icons/gemini.svg'
-      break
-    case 'grok':
-      iconPath = '/icons/grok.svg'
-      break
-    case 'openai':
-      iconPath = '/icons/openai.svg'
-      break
-    case 'minimax':
-      iconPath = '/icons/minimax.svg'
-      break
-    default:
-      return null
-  }
+  if (!type || !MODEL_ICONS.has(type)) return null
 
   return (
-    <img
-      src={iconPath}
-      alt={`${type} icon`}
-      width={props.width || 24}
-      height={props.height || 24}
+    <MonoIcon
+      src={`/icons/${type}.svg`}
+      label={`${type} icon`}
+      width={props.width}
+      height={props.height}
       className={props.className}
     />
   )
-}
-
-// Returns the model color (fallback for when there is no icon)
-export const getModelColor = (modelType: string): string => {
-  const type = modelType.includes('_') ? modelType.split('_').pop() : modelType
-  return MODEL_COLORS[type || ''] || '#295be8'
 }
