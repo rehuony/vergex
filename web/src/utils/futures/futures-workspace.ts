@@ -21,6 +21,7 @@ const SAVED_LIMITS = [
   'equity',
   'max_risk',
   'max_notional',
+  'max_risk_pct',
   'min_reward_risk',
   'fee_bps',
   'slippage_bps',
@@ -60,7 +61,8 @@ export interface PlanBatch {
   ids: string[]
   created: string
   waiting?: boolean
-  deferred?: { kind: string; reason: string }[]
+  // The ways of entering that left no plan, and why: put off, or tried and refused.
+  deferred?: { kind: string; reason: string; rejected?: boolean }[]
 }
 
 export function workspaceKey(account: string, venue: string, symbol: string) {
@@ -122,17 +124,9 @@ export function batchPlans(
     const record = drafts.find((row) => row.plan.id === id)
     return record ? [record.plan] : []
   })
-  return ['market', 'limit', 'ladder', 'twap'].flatMap((kind) => {
-    const candidates = found.filter((plan) => plan.idea.execution.kind === kind)
-    return candidates.length ? [candidates[candidates.length - 1]] : []
-  })
-}
-
-export function comparablePlans(plans: Plan[], now: number) {
-  const fresh = plans.filter((plan) => Date.parse(plan.expires) > now)
-  if (!fresh.length) return []
-  const basis = JSON.stringify(fresh[0].constraints)
-  return fresh.filter((plan) => JSON.stringify(plan.constraints) === basis)
+  return ['market', 'limit', 'ladder', 'twap'].flatMap((kind) =>
+    found.filter((plan) => plan.idea.execution.kind === kind)
+  )
 }
 
 export interface AccountCheck {

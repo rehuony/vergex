@@ -126,6 +126,10 @@ type Decision struct {
 	Confidence int     `json:"confidence,omitempty"` // Confidence level (0-100)
 	RiskUSD    float64 `json:"risk_usd,omitempty"`   // Maximum USD risk
 	Reasoning  string  `json:"reasoning"`
+
+	// Rejected says why validation refused this decision. It is not carried out, and the
+	// rest of the reply still is.
+	Rejected string `json:"-"`
 }
 
 // FullDecision agent's complete decision (including chain of thought)

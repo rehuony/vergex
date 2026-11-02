@@ -1,3 +1,4 @@
+import { activeLanguage, t } from '@/i18n'
 import { CryptoService } from '@/utils/crypto'
 import { httpClient } from './http-client'
 
@@ -27,6 +28,11 @@ export async function handleJSONResponse<T>(res: Response): Promise<T> {
       const data = text ? JSON.parse(text) : null
       if (data && typeof data === 'object') {
         message = data.error || data.message || message
+        // Where the server names its wording, say it in the user's language.
+        if (data.error_key) {
+          const text = t(data.error_key, activeLanguage(), data.error_params)
+          if (text !== data.error_key) message = text
+        }
       }
     } catch {
       /* ignore JSON parse errors */
@@ -37,6 +43,22 @@ export async function handleJSONResponse<T>(res: Response): Promise<T> {
     return {} as T
   }
   return JSON.parse(text) as T
+}
+
+// What the server said went wrong, in the user's language where it names the wording.
+export function serverError(
+  result: {
+    message?: string
+    errorKey?: string
+    errorParams?: Record<string, string>
+  },
+  fallback: string
+): Error {
+  const text =
+    result.errorKey && t(result.errorKey, activeLanguage(), result.errorParams)
+  return new Error(
+    text && text !== result.errorKey ? text : result.message || fallback
+  )
 }
 
 // A request body that carries an API key: plain JSON, or encrypted to the

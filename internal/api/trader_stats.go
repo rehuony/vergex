@@ -2,6 +2,11 @@ package api
 
 import (
 	"net/http"
+	"strings"
+
+	"vergex/internal/account"
+	"vergex/internal/logger"
+	"vergex/internal/market"
 
 	"github.com/gin-gonic/gin"
 )
@@ -52,9 +57,11 @@ func (s *Server) handleTraderMetrics(c *gin.Context) {
 		if snapshot := latest[trader.ID]; snapshot != nil {
 			row["equity"] = snapshot.TotalEquity
 			row["equity_at"] = snapshot.Timestamp.Unix()
-			if initial > 0 {
-				row["return_pct"] = (snapshot.TotalEquity - initial) / initial * 100
-			}
+		}
+		if profit, err := s.traderProfit(trader.ID); err != nil {
+			logger.Warnf("Trader %s: read its profit: %v", trader.ID, err)
+		} else if initial > 0 {
+			row["return_pct"] = profit / initial * 100
 		}
 		stats, err := s.stores.Positions.GetFullStats(trader.ID, initial)
 		if err != nil {
@@ -69,4 +76,32 @@ func (s *Server) handleTraderMetrics(c *gin.Context) {
 		metrics[trader.ID] = row
 	}
 	c.JSON(http.StatusOK, metrics)
+}
+
+// traderProfit is what a trader has made by the ledger: what it realized after fees and
+// what its open positions stand at by the live mark price. A position with no current
+// price counts for nothing yet. The account's equity is not used, since other traders,
+// Futures and transfers all move it.
+func (s *Server) traderProfit(traderID string) (float64, error) {
+	profit, err := s.stores.Positions.NetOfTrader(traderID)
+	if err != nil {
+		return 0, err
+	}
+	open, err := s.stores.Positions.OpenOfTrader(traderID)
+	if err != nil {
+		return 0, err
+	}
+	for _, position := range open {
+		market.WatchMark(position.Venue, position.Symbol)
+		mark, ok := market.MarkPrice(position.Venue, position.Symbol)
+		if !ok {
+			continue
+		}
+		move := mark - position.EntryPrice
+		if position.Side == strings.ToUpper(account.SideShort) {
+			move = -move
+		}
+		profit += move * position.Quantity
+	}
+	return profit, nil
 }

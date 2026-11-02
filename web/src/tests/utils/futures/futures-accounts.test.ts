@@ -1,7 +1,9 @@
 import { beforeEach, expect, it } from 'vitest'
+import { getAccountDisplayName } from '@/constants/model-providers'
 import type { Account } from '@/types'
 import {
   accountLabel,
+  accountName,
   preferredAccount,
   rememberAccount,
 } from '@/utils/futures/futures-accounts'
@@ -23,6 +25,16 @@ beforeEach(() => localStorage.clear())
 it('disambiguates duplicate account names without displaying credentials', () => {
   expect(accountLabel(accounts[0], accounts)).toBe('Main · aaaa1111')
   expect(accountLabel(accounts[1], accounts)).toBe('Main · bbbb2222')
+})
+it('says when an account is on a test environment', () => {
+  const demo = { ...accounts[0], name: 'Demo', testnet: true }
+  expect(accountLabel(demo, [demo])).toBe('Demo · Testnet')
+  // The switcher lists names as they are.
+  expect(accountName(demo, [demo])).toBe('Demo')
+  expect(getAccountDisplayName(demo.id, [demo])).toBe(
+    'BINANCE - Demo · Testnet'
+  )
+  expect(getAccountDisplayName(accounts[0].id, accounts)).toBe('BINANCE - Main')
 })
 it('isolates saved selections by user and falls back when an account is removed', () => {
   localStorage.setItem('user_id', 'alice')

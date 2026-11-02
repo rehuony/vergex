@@ -45,6 +45,8 @@ type Account struct {
 	apiKey      string
 	secretKey   string
 	passphrase  string
+	// testnet sends every request to OKX's demo trading, on the same host.
+	testnet bool
 
 	// Margin mode setting used for new orders and leverage changes.
 	isCrossMargin bool
@@ -112,7 +114,7 @@ func genOkxClOrdID() string {
 }
 
 // NewAccount creates OKX trader
-func NewAccount(apiKey, secretKey, passphrase string) *Account {
+func NewAccount(apiKey, secretKey, passphrase string, testnet bool) *Account {
 	// The venue transport respects system proxy settings
 	// OKX requires proxy in China due to DNS pollution
 	httpClient := &http.Client{
@@ -124,6 +126,7 @@ func NewAccount(apiKey, secretKey, passphrase string) *Account {
 		apiKey:           apiKey,
 		secretKey:        secretKey,
 		passphrase:       passphrase,
+		testnet:          testnet,
 		isCrossMargin:    true,
 		httpClient:       httpClient,
 		cacheDuration:    15 * time.Second,
@@ -146,6 +149,19 @@ func NewAccount(apiKey, secretKey, passphrase string) *Account {
 	logger.Infof("✓ OKX trader initialized with position mode: %s, default margin mode: %s",
 		trader.positionMode, trader.marginMode())
 	return trader
+}
+
+// Testnet says whether the account is on OKX's demo trading.
+func (t *Account) Testnet() bool { return t.testnet }
+
+// simulatedTradingHeader chooses between real and demo trading on every request.
+const simulatedTradingHeader = "x-simulated-trading"
+
+func simulatedTradingValue(testnet bool) string {
+	if testnet {
+		return "1"
+	}
+	return "0"
 }
 
 func (t *Account) marginMode() string {
@@ -250,7 +266,7 @@ func (t *Account) doRequestContext(ctx context.Context, method, path string, bod
 	req.Header.Set("OK-ACCESS-PASSPHRASE", t.passphrase)
 	req.Header.Set("Content-Type", "application/json")
 	// Set request header
-	req.Header.Set("x-simulated-trading", "0")
+	req.Header.Set(simulatedTradingHeader, simulatedTradingValue(t.testnet))
 
 	// Signed credentials must never be forwarded to a redirect destination.
 	client := *t.httpClient
@@ -339,7 +355,7 @@ func (t *Account) formatSize(sz float64, inst *OKXInstrument) string {
 }
 
 // NewReadOnlyAccount initializes a read-only account client without changing exchange settings.
-func NewReadOnlyAccount(apiKey, secretKey, passphrase string) *Account {
+func NewReadOnlyAccount(apiKey, secretKey, passphrase string, testnet bool) *Account {
 	httpClient := &http.Client{
 		Timeout:   30 * time.Second,
 		Transport: service.VenueTransport,
@@ -349,6 +365,7 @@ func NewReadOnlyAccount(apiKey, secretKey, passphrase string) *Account {
 		apiKey:           apiKey,
 		secretKey:        secretKey,
 		passphrase:       passphrase,
+		testnet:          testnet,
 		isCrossMargin:    true,
 		httpClient:       httpClient,
 		cacheDuration:    15 * time.Second,

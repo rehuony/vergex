@@ -33,6 +33,8 @@ type Account struct {
 	APIKey     crypto.EncryptedString `gorm:"column:api_key" json:"apiKey"`
 	SecretKey  crypto.EncryptedString `gorm:"column:secret_key" json:"secretKey"`
 	Passphrase crypto.EncryptedString `gorm:"column:passphrase" json:"passphrase"`
+	// Testnet says the keys reach the venue's test environment. It never changes.
+	Testnet bool `gorm:"column:testnet" json:"testnet"`
 	// Identity is what an approval binds to: see AccountIdentity.
 	Identity  string    `gorm:"column:identity;serializer:nulltext" json:"-"`
 	CreatedAt time.Time `json:"created_at"`
@@ -105,13 +107,13 @@ func NewStore(db *gorm.DB) *Store {
 	return &Store{db: db}
 }
 
-// List gets user's accounts
+// List gets user's accounts, by venue, real before testnet, then by name.
 func (s *Store) List(userID string) ([]*Account, error) {
 	var accounts []*Account
 	if uuid.Validate(userID) != nil {
 		return accounts, nil
 	}
-	err := s.db.Where("user_id = ?", userID).Order("venue, name").Find(&accounts).Error
+	err := s.db.Where("user_id = ?", userID).Order("venue, testnet, lower(name), id").Find(&accounts).Error
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +126,7 @@ func (s *Store) ListNames(userID string) ([]*Account, error) {
 	if uuid.Validate(userID) != nil {
 		return accounts, nil
 	}
-	err := s.db.Select("id", "venue", "name").Where("user_id = ?", userID).Order("venue, name").Find(&accounts).Error
+	err := s.db.Select("id", "venue", "name", "testnet").Where("user_id = ?", userID).Order("venue, testnet, lower(name), id").Find(&accounts).Error
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +176,7 @@ func (s *Store) Leased(id string) (bool, error) {
 }
 
 // Create creates a new account with UUID
-func (s *Store) Create(userID, venue, accountName, apiKey, secretKey, passphrase string) (string, error) {
+func (s *Store) Create(userID, venue, accountName, apiKey, secretKey, passphrase string, testnet bool) (string, error) {
 	if missing := MissingCredentialFields(venue, apiKey, secretKey, passphrase); len(missing) > 0 {
 		return "", fmt.Errorf("missing required account fields: %s", strings.Join(missing, ", "))
 	}
@@ -189,6 +191,7 @@ func (s *Store) Create(userID, venue, accountName, apiKey, secretKey, passphrase
 		APIKey:     crypto.EncryptedString(apiKey),
 		SecretKey:  crypto.EncryptedString(secretKey),
 		Passphrase: crypto.EncryptedString(passphrase),
+		Testnet:    testnet,
 	}
 	if err := s.db.Create(account).Error; err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
@@ -229,6 +232,22 @@ func (s *Store) Update(userID, id, apiKey, secretKey, passphrase string) error {
 			return ErrDuplicate
 		}
 		return err
+	}
+	return nil
+}
+
+// Rename changes the name an account goes by. Nothing trades on it, so whatever is using
+// the account carries on.
+func (s *Store) Rename(userID, id, name string) error {
+	if uuid.Validate(id) != nil || uuid.Validate(userID) != nil {
+		return gorm.ErrRecordNotFound
+	}
+	result := s.db.Model(&Account{}).Where("id = ? AND user_id = ?", id, userID).Update("name", name)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
 	}
 	return nil
 }

@@ -40,9 +40,7 @@ it('uses weighted child notional and the plan leverage, not the current selector
   expect(screen.getByText('500.00')).toBeInTheDocument()
   expect(screen.getByText('100.00')).toBeInTheDocument()
   expect(screen.getByText('5x')).toBeInTheDocument()
-  expect(
-    screen.getByText(/Available margin at sizing: 100.00/)
-  ).toBeInTheDocument()
+  expect(screen.getByText(/Available margin 100.00/)).toBeInTheDocument()
 })
 
 it('identifies a saved legacy size cap without implying the position was resized', () => {
@@ -63,6 +61,5 @@ it('does not invent an available balance for an older saved plan', () => {
     />
   )
   expect(screen.getByText('300.00')).toBeInTheDocument()
-  expect(screen.getByText(/Saved plan size/)).toBeInTheDocument()
-  expect(screen.queryByText(/Available margin at sizing/)).toBeNull()
+  expect(screen.queryByText(/Available margin/)).toBeNull()
 })

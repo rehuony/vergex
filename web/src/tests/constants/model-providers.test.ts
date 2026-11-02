@@ -41,7 +41,9 @@ describe('getTraderModelLabel', () => {
   ]
 
   it('names the model the trader runs on, not its ID', () => {
-    expect(getTraderModelLabel('model-deepseek', models)).toBe('deepseek-chat')
+    expect(getTraderModelLabel('model-deepseek', models)).toBe(
+      'deepseek-v4-pro'
+    )
     expect(getTraderModelLabel('model-openai', models)).toBe('gpt-4o-mini')
   })
 

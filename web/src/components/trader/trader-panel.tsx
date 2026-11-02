@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api'
 import { EditableTitle, NameInput } from '@/components/common/name-editing'
+import { notify } from '@/components/common/notify'
 import { Panel } from '@/components/common/panel'
 import { SectionTabs } from '@/components/common/section-tabs'
 import { ActionMenu, type RailAction } from '@/components/common/split-view'
@@ -83,15 +84,29 @@ export function TraderPanel({
   const id = trader.trader_id
   const running = Boolean(trader.is_running)
   const { status, account, positions } = useTraderData(id)
+  const client = useQueryClient()
+  const resume = async () => {
+    try {
+      await api.resumeTrader(id)
+      await client.invalidateQueries({ queryKey: ['trader-status', id] })
+    } catch {
+      notify.error(t('operationFailed', language))
+    }
+  }
   // A draft of the settings outlives moving to another tab and back.
   const [settingsOpened, setSettingsOpened] = useState(false)
   if (tab === 'settings' && !settingsOpened) setSettingsOpened(true)
 
   const { data: storedMetrics } = useQuery(traderMetricsQuery)
-  const { data: stats } = useQuery({
+  const { data: stats, error: statsError } = useQuery({
     queryKey: ['full-stats', id],
     queryFn: () => api.getFullStats(id, true),
     ...pollEvery(30000),
+  })
+  const { data: costs, error: costsError } = useQuery({
+    queryKey: ['agent-costs', 'all', id],
+    queryFn: () => api.getAgentCostSummary('all', true, id),
+    ...pollEvery(60000),
   })
   const { data: history, error: historyError } = useQuery({
     queryKey: ['pos-history', id],
@@ -132,6 +147,9 @@ export function TraderPanel({
           accountFailed={Boolean(account.error)}
           stored={storedMetrics?.[id]}
           stats={stats}
+          statsFailed={Boolean(statsError)}
+          costs={costs}
+          costsFailed={Boolean(costsError)}
           positions={positions.data}
           running={status.data?.is_running}
           nextCycleMs={nextCycleMs}
@@ -144,6 +162,7 @@ export function TraderPanel({
         <TraderBreakdown
           symbols={history?.symbol_stats}
           positions={history?.positions}
+          failed={Boolean(historyError)}
           language={language}
         />
       </>
@@ -154,6 +173,7 @@ export function TraderPanel({
           traderId={id}
           positions={positions.data}
           failed={Boolean(positions.error)}
+          reason={positions.error?.message}
           language={language}
         />
         <RecentCloses
@@ -207,6 +227,7 @@ export function TraderPanel({
             running={running}
             status={status.data}
             language={language}
+            onResume={() => void resume()}
           />
         </EditableTitle>
       }

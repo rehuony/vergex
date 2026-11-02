@@ -19,13 +19,19 @@ export interface OpenOrder {
 }
 
 const POLL_MS = 10000
+const POLL_IN_VIEW_MS = 5000
 const ORDER_READ_WAIT_MS = 30000
 
 // useAccountWatch keeps reading the exchange for the account in view: positions on
 // every market, open orders on this one, and whether a trader runs on it. It lives
 // with the page, since the order blocker and reviews rely on what it observes
-// whichever section is showing. It only reads.
-export function useAccountWatch(accountID: string, symbol: string) {
+// whichever section is showing, and reads more often while the account is in view. It
+// only reads.
+export function useAccountWatch(
+  accountID: string,
+  symbol: string,
+  inView = false
+) {
   const [snapshot, setSnapshot] = useState<{
     accountID: string
     positions: AccountPosition[]
@@ -135,7 +141,8 @@ export function useAccountWatch(accountID: string, symbol: string) {
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
       if (!document.hidden) await refresh()
-      if (!cancelled) timer = setTimeout(poll, POLL_MS)
+      if (!cancelled)
+        timer = setTimeout(poll, inView ? POLL_IN_VIEW_MS : POLL_MS)
     }
     void poll()
     return () => {
@@ -143,7 +150,7 @@ export function useAccountWatch(accountID: string, symbol: string) {
       clearTimeout(timer)
       generation.current++
     }
-  }, [refresh, accountID])
+  }, [refresh, accountID, inView])
 
   const observation = useMemo<AccountObservation | null>(
     () =>

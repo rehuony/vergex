@@ -21,6 +21,7 @@ type Stores struct {
 	Accounts      *account.Store
 	Models        *agent.ModelStore
 	Conversations *agent.ConversationStore
+	Calls         *agent.CallStore
 }
 
 // NewStores opens them on a migrated connection.
@@ -36,5 +37,6 @@ func NewStores(db *gorm.DB) *Stores {
 		Accounts:      account.NewStore(db),
 		Models:        agent.NewModelStore(db),
 		Conversations: agent.NewConversationStore(db),
+		Calls:         agent.NewCallStore(db),
 	}
 }

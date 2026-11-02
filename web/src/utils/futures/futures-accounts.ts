@@ -1,6 +1,8 @@
+import { testnetMark } from '@/constants/model-providers'
 import type { Account } from '@/types'
 
-export function accountLabel(account: Account, accounts: Account[] = []) {
+// An account's name in a list of accounts, told apart from another of the same name.
+export function accountName(account: Account, accounts: Account[] = []) {
   const name = account.name?.trim() || account.venue_name || account.venue
   const duplicate = accounts.some(
     (other) =>
@@ -9,6 +11,11 @@ export function accountLabel(account: Account, accounts: Account[] = []) {
       (other.name?.trim() || other.venue_name || other.venue) === name
   )
   return duplicate ? `${name} · ${account.id.slice(0, 8)}` : name
+}
+
+// An account's name where what happens on it is at stake, so test money never reads as real.
+export function accountLabel(account: Account, accounts: Account[] = []) {
+  return accountName(account, accounts) + testnetMark(account)
 }
 
 function preferenceKey(venue: string) {

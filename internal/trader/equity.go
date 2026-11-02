@@ -67,6 +67,32 @@ func (s *EquityStore) GetSeries(traderID string, since time.Time, maxPoints int)
 	return thinned, nil
 }
 
+// PeakSince is the highest equity recorded since a time, or 0 with none. A zero time
+// means all of them.
+func (s *EquityStore) PeakSince(traderID string, since time.Time) (float64, error) {
+	var peak float64
+	query := s.db.Model(&EquitySnapshot{}).Select("COALESCE(MAX(total_equity), 0)").Where("trader_id = ?", traderID)
+	if !since.IsZero() {
+		query = query.Where("taken_at >= ?", since)
+	}
+	if err := query.Scan(&peak).Error; err != nil {
+		return 0, fmt.Errorf("failed to query peak equity: %w", err)
+	}
+	return peak, nil
+}
+
+// FirstSince is the first equity recorded since a time, or 0 with none.
+func (s *EquityStore) FirstSince(traderID string, since time.Time) (float64, error) {
+	var first float64
+	err := s.db.Model(&EquitySnapshot{}).Select("total_equity").
+		Where("trader_id = ? AND taken_at >= ?", traderID, since).
+		Order("taken_at ASC").Limit(1).Scan(&first).Error
+	if err != nil {
+		return 0, fmt.Errorf("failed to query first equity: %w", err)
+	}
+	return first, nil
+}
+
 // GetAllTradersLatest gets latest equity for all traders
 func (s *EquityStore) GetAllTradersLatest() (map[string]*EquitySnapshot, error) {
 	var snapshots []*EquitySnapshot

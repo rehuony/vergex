@@ -12,7 +12,7 @@ import {
 } from '@/components/common/split-view'
 import { fieldClass } from '@/components/common/form-fields'
 import { confirmToast, notify } from '@/components/common/notify'
-import { Panel, PanelState } from '@/components/common/panel'
+import { Panel, PanelLoading, PanelState } from '@/components/common/panel'
 import { SectionTabs } from '@/components/common/section-tabs'
 import {
   SettingActions,
@@ -298,7 +298,7 @@ export function ForecastStrategiesPage() {
         </Panel>
       ) : !data || !selected ? (
         <Panel>
-          <PanelState role="status">{label('loading')}</PanelState>
+          <PanelLoading />
         </Panel>
       ) : (
         <SplitView

@@ -37,7 +37,7 @@ The interface is in English or Simplified Chinese. It follows your browser until
 
 1. **Create the user.** The first registered user is the only user of the instance.
 2. **Add a model** in Settings → Agent models: see [models.md](models.md).
-3. **Add an account** in Settings → Trading accounts: see [accounts.md](accounts.md).
+3. **Add an account** in Settings → Trading accounts: see [accounts.md](accounts.md). A [testnet](accounts.md#testnet) account lets you try everything with test money.
 4. **Plan a trade** in [Futures](futures.md), which asks for your approval on every order, or create a [trader](traders.md), which places orders on its own once started.
 
 Stopping the service does not close positions. Check the exchange after a restart.
@@ -61,12 +61,20 @@ The schema is migrated automatically at startup, by the SQL files in `internal/d
 Everything the backend keeps lives in PostgreSQL, in the `vergex-postgres` Docker volume; it writes no files. Logs go to standard output, so `make logs` shows them, and they last as long as the container. Back up the database with:
 
 ```bash
-docker exec vergex-postgres pg_dump -U vergex vergex > vergex.sql
+make backup
 ```
 
-Account and model keys and the Telegram bot token are stored AES-encrypted with `DATA_ENCRYPTION_KEY`, so back up `.env` and the database together and protect both.
+It writes `backups/vergex-<time>.sql.gz`, readable only by you. Account and model keys and the Telegram bot token are stored AES-encrypted with `DATA_ENCRYPTION_KEY`, so back up `.env` and the database together and protect both.
 
-What the models were sent and what they said is kept in `agent.messages` and never cleaned up automatically, not even when a trader is deleted, so keep an eye on the disk. These figures are estimates:
+To restore, name the file and a database that does not exist yet:
+
+```bash
+make restore FILE=backups/vergex-20261102-150000.sql.gz DB=vergex_restored
+```
+
+A restore never overwrites anything: it fills the new database, or removes it again if it fails. To run on it, stop the backend, set `DB_NAME=vergex_restored` in `.env`, and start again with the `.env` the backup was made with. Open positions and orders stay on the exchange whatever the backup says, and the account sync brings the ledger up to date from there.
+
+What the models were sent and what they said is kept in `agent.messages` and never cleaned up automatically, not even when a trader is deleted. **Settings → Agent costs** shows how much disk it takes. These figures are estimates:
 
 | From | Growth |
 | :--- | :----- |
@@ -74,11 +82,17 @@ What the models were sent and what they said is kept in `agent.messages` and nev
 | Futures | About 39 KB of workspace and market data per turn, plus the words and tool results |
 | Telegram | Not measured |
 
-To see its current size:
+To clear out old messages, see first what would go, then confirm:
 
 ```bash
-docker exec vergex-postgres psql -U vergex -d vergex -c "SELECT pg_size_pretty(pg_total_relation_size('agent.messages'))"
+docker exec -it vergex-backend ./vergex prune --before 90d
 ```
+
+```bash
+docker exec -it vergex-backend ./vergex prune --before 90d --yes
+```
+
+From source, run the same subcommand with `go run ./cmd/vergex`. It only touches `agent.messages`: conversations and cycles stay listed, without the text, and orders, positions, costs and forecasts stay whole. `--before` takes at least a day. PostgreSQL reuses the freed space for new messages, so the files on disk don't shrink.
 
 ## User recovery
 

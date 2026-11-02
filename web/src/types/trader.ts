@@ -39,8 +39,6 @@ export interface SystemStatus {
   call_count: number
   initial_balance: number
   scan_interval: string
-  stop_until: string
-  last_reset_time: string
   agent_provider: string
   kind?: TraderKind
   grid_symbol?: string
@@ -50,6 +48,8 @@ export interface SystemStatus {
   trading_blocked?: boolean
   trading_error?: string
   trading_checked_at?: string
+  /** A hard stop that has tripped: opens stop until it ends, or until it is resumed. */
+  halted?: { at: string; reason: string; until?: string }
 }
 
 export interface AccountInfo {
@@ -57,10 +57,10 @@ export interface AccountInfo {
   wallet_balance: number
   unrealized_profit: number // Unrealized PnL (official value from the exchange API)
   available_balance: number
-  total_pnl: number
-  total_pnl_pct: number
+  // By the ledger; absent when it could not be read.
+  total_pnl?: number
+  total_pnl_pct?: number
   initial_balance: number
-  daily_pnl: number
   position_count: number
   margin_used: number
   margin_used_pct: number
@@ -77,6 +77,8 @@ export interface Position {
   unrealized_pnl_pct: number
   liquidation_price: number
   margin_used: number
+  /** On the trader's account, but not its own in the ledger. */
+  foreign?: boolean
 }
 
 export interface DecisionAction {
@@ -93,6 +95,8 @@ export interface DecisionAction {
   timestamp: string
   success: boolean
   error?: string
+  // A rule stopped it, and nothing reached the exchange.
+  blocked?: boolean
 }
 
 export interface AccountSnapshot {
@@ -137,6 +141,8 @@ export interface LaunchCheck {
   status: LaunchCheckStatus
   code?: string
   message?: string
+  // Fills in the interface's wording for the code.
+  params?: Record<string, string>
   required?: number
   actual?: number
   asset?: string
@@ -164,6 +170,8 @@ export interface EquityHistory {
 
 export interface TraderOrder {
   id: number
+  // Who placed it: trader, futures, manual or external.
+  source?: string
   symbol: string
   side: string
   position_side: string
@@ -189,6 +197,13 @@ export interface OrderFill {
   realized_pnl: number
   /** Epoch milliseconds. */
   created_at: number
+}
+
+// A fill as an account's ledger lists it.
+export interface AccountFill extends OrderFill {
+  source: string
+  symbol: string
+  side: string
 }
 
 export interface Statistics {
@@ -225,6 +240,7 @@ export interface TraderInfo {
   is_running?: boolean
   startup_warning?: string
   kind?: TraderKind
+  scan_interval_minutes?: number
 }
 
 // Trader Configuration Data for View Modal
@@ -448,7 +464,7 @@ export interface RiskControlConfig {
   // Max number of coins held simultaneously (CODE ENFORCED)
   max_positions: number
 
-  // Trading Leverage - exchange leverage for opening positions (agent guided)
+  // Trading Leverage - exchange leverage for opening positions (code enforced)
   btc_eth_max_leverage: number // BTC/ETH max exchange leverage
   altcoin_max_leverage: number // Altcoin max exchange leverage
 
@@ -460,8 +476,10 @@ export interface RiskControlConfig {
   // Risk Parameters
   max_margin_usage: number // Max margin utilization, e.g. 0.9 = 90% (CODE ENFORCED)
   min_position_size: number // Min position size in USDT (CODE ENFORCED)
-  min_risk_reward_ratio: number // Min take_profit / stop_loss ratio (agent guided)
-  min_confidence: number // Min agent confidence to open position (agent guided)
+  min_risk_reward_ratio: number // Min reward to risk at the open price (code enforced)
+  min_confidence: number // Min agent confidence to open position (code enforced)
+  max_daily_loss_pct: number // Halt opens at this share lost today, 0 is off (code enforced)
+  max_drawdown_pct: number // Halt opens this far below peak equity, 0 is off (code enforced)
 }
 
 // The server's prompt size estimate for a config (POST /traders/estimate-tokens).

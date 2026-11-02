@@ -39,7 +39,7 @@ services:
       - .env
     environment:
       - TZ=${TZ:-Asia/Shanghai}
-      - VERGEX_AGENT_MAX_TOKENS=8000
+      - VERGEX_AGENT_MAX_TOKENS=${VERGEX_AGENT_MAX_TOKENS:-8000}
       # Set DB_HOST and DB_PORT in .env to use an existing PostgreSQL server.
       - DB_HOST=${DB_HOST:-vergex-postgres}
       - DB_PORT=${DB_PORT:-5432}

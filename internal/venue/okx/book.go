@@ -23,6 +23,8 @@ import (
 type PublicClient struct {
 	HTTP *http.Client
 	Base string
+	// Testnet reads demo trading's data, which OKX serves from the same host.
+	Testnet bool
 }
 
 // NewPublicClient creates a client for OKX's own host.
@@ -30,10 +32,18 @@ func NewPublicClient(client *http.Client) *PublicClient {
 	return &PublicClient{HTTP: client, Base: okxBaseURL}
 }
 
+// NewTestnetPublicClient creates a client for OKX's demo trading.
+func NewTestnetPublicClient(client *http.Client) *PublicClient {
+	return &PublicClient{HTTP: client, Base: okxBaseURL, Testnet: true}
+}
+
 func (c *PublicClient) request(ctx context.Context, u string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, bytes.NewReader(nil))
 	if err != nil {
 		return err
+	}
+	if c.Testnet {
+		req.Header.Set(simulatedTradingHeader, simulatedTradingValue(true))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Cache-Control", "no-cache")
@@ -147,4 +157,22 @@ func (c *PublicClient) PerpetualBook(ctx context.Context, symbol string) (instru
 	}
 	s.SourceTime = time.UnixMilli(ms).UTC()
 	return s, nil
+}
+
+// MarkPrice reads a USDT perpetual's mark price.
+func (c *PublicClient) MarkPrice(ctx context.Context, symbol string) (string, error) {
+	var r struct {
+		Code string `json:"code"`
+		Data []struct {
+			Mark string `json:"markPx"`
+		} `json:"data"`
+	}
+	path := "/api/v5/public/mark-price?instType=SWAP&instId=" + url.QueryEscape(InstrumentID(symbol))
+	if err := c.request(ctx, c.Base+path, &r); err != nil {
+		return "", err
+	}
+	if r.Code != "0" || len(r.Data) != 1 {
+		return "", errors.New("invalid OKX mark price response")
+	}
+	return r.Data[0].Mark, nil
 }

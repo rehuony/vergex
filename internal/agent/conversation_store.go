@@ -120,10 +120,11 @@ func (s *ConversationStore) Append(conversationID string, messages ...Conversati
 	})
 }
 
-// List returns a user's latest conversations in a feature, without their messages.
-func (s *ConversationStore) List(userID, feature string, limit int) ([]Conversation, error) {
+// ListByContext returns a user's latest conversations in a feature whose context holds a
+// value, such as those on one account, without their messages.
+func (s *ConversationStore) ListByContext(userID, feature, key, value string, limit int) ([]Conversation, error) {
 	var conversations []Conversation
-	err := s.db.Where("user_id = ? AND feature = ?", userID, feature).Order("updated_at DESC").Limit(limit).Find(&conversations).Error
+	err := s.db.Where("user_id = ? AND feature = ? AND context ->> ? = ?", userID, feature, key, value).Order("updated_at DESC").Limit(limit).Find(&conversations).Error
 	return conversations, err
 }
 
@@ -139,6 +140,24 @@ func (s *ConversationStore) Get(userID, id string) (*Conversation, error) {
 	return &conversation, nil
 }
 
+// Rename changes a conversation's name. A new name is not activity, so the conversation
+// keeps its place in the list.
+func (s *ConversationStore) Rename(conversation *Conversation, title string) error {
+	return s.db.Model(conversation).UpdateColumn("title", title).Error
+}
+
+// Delete removes a conversation and everything said in it. What came of it stays: plans,
+// usage and trader cycles only lose their link to it.
+func (s *ConversationStore) Delete(conversation *Conversation) error {
+	return s.db.Delete(conversation).Error
+}
+
+// DeleteByContext removes a user's conversations in a feature whose context holds a value,
+// for when what they were about is gone. What came of them stays, as with Delete.
+func (s *ConversationStore) DeleteByContext(userID, feature, key, value string) error {
+	return s.db.Where("user_id = ? AND feature = ? AND context ->> ? = ?", userID, feature, key, value).Delete(&Conversation{}).Error
+}
+
 // Latest returns the conversation last active for a source within a feature.
 func (s *ConversationStore) Latest(userID, feature, sourceID string) (*Conversation, error) {
 	var conversation Conversation
@@ -148,6 +167,41 @@ func (s *ConversationStore) Latest(userID, feature, sourceID string) (*Conversat
 		return nil, err
 	}
 	return &conversation, nil
+}
+
+// MessagesBefore says how many messages are older than a time, and how much text they hold.
+func (s *ConversationStore) MessagesBefore(cutoff time.Time) (count, textBytes int64, err error) {
+	var row struct {
+		Count int64 `gorm:"column:count"`
+		Bytes int64 `gorm:"column:bytes"`
+	}
+	err = s.db.Model(&ConversationMessage{}).
+		Select("COUNT(*) AS count, COALESCE(SUM(octet_length(content) + COALESCE(octet_length(thinking), 0) + COALESCE(octet_length(tool_calls::text), 0)), 0) AS bytes").
+		Where("created_at < ?", cutoff).Scan(&row).Error
+	return row.Count, row.Bytes, err
+}
+
+// DeleteMessagesBefore removes messages older than a time, a batch at a time so nothing
+// writing to the table waits long. The conversations stay, listed with nothing in them.
+func (s *ConversationStore) DeleteMessagesBefore(cutoff time.Time, batch int) (int64, error) {
+	var deleted int64
+	for {
+		result := s.db.Exec("DELETE FROM agent.messages WHERE id IN (SELECT id FROM agent.messages WHERE created_at < ? ORDER BY id LIMIT ?)", cutoff, batch)
+		if result.Error != nil {
+			return deleted, result.Error
+		}
+		deleted += result.RowsAffected
+		if result.RowsAffected < int64(batch) {
+			return deleted, nil
+		}
+	}
+}
+
+// MessageStorage says how much disk the messages take, their indexes included.
+func (s *ConversationStore) MessageStorage() (int64, error) {
+	var size int64
+	err := s.db.Raw("SELECT pg_total_relation_size('agent.messages')").Scan(&size).Error
+	return size, err
 }
 
 // Messages returns everything in a conversation, in order.

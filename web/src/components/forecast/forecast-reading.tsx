@@ -4,6 +4,7 @@ import type { ForecastDetail, ForecastSignal } from '@/api/forecast'
 import { Panel } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
 import { t, type Language } from '@/i18n'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/utils/cn'
 import {
   DirectionLabel,
@@ -76,6 +77,8 @@ export function ForecastCall({
 }) {
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`forecast.${key}`, language, params)
+  // Nothing has come for this coin yet.
+  const reading = latest === undefined && (price ?? null) === null
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 max-lg:contents">
       <span className="flex min-w-0 items-center gap-1">
@@ -110,7 +113,11 @@ export function ForecastCall({
       </span>
       <span className="flex items-baseline gap-2 whitespace-nowrap">
         <span className="font-mono text-xl font-semibold tracking-tight tabular-nums text-vergex-ink">
-          {fmtPrice(price ?? latest?.close)}
+          {reading ? (
+            <Skeleton className="w-24" />
+          ) : (
+            fmtPrice(price ?? latest?.close)
+          )}
         </span>
         <span
           title={label('change24h')}
@@ -123,7 +130,7 @@ export function ForecastCall({
                 : 'text-vergex-danger'
           )}
         >
-          {change === null || change === undefined ? '—' : fmtPct(change, true)}
+          {reading ? <Skeleton className="w-12" /> : fmtPct(change ?? 0, true)}
         </span>
       </span>
       <span className="flex items-baseline gap-2 whitespace-nowrap">
@@ -134,7 +141,7 @@ export function ForecastCall({
             className="self-center text-xs font-medium"
           />
         ) : (
-          <span className="text-xs text-vergex-muted">—</span>
+          reading && <Skeleton className="h-3 w-8" />
         )}
         <span
           className={cn(
@@ -147,8 +154,10 @@ export function ForecastCall({
               {latest.calibrated ? '' : `${label('scoreWord')} `}
               {scoreText(latest.display_prob, latest.calibrated)}
             </>
+          ) : reading ? (
+            <Skeleton className="w-14" />
           ) : (
-            '—'
+            0
           )}
         </span>
       </span>
@@ -176,12 +185,14 @@ export function ForecastFigures({
   const shownPrice = price ?? latest?.close
   const closes = (time: number) =>
     latest ? fmtTime(time + intervalMillis[latest.interval]) : '—'
-  const signed = (value: number | null | undefined, digits = 2) =>
-    value === null || value === undefined ? '—' : fmtPct(value, true, digits)
+  // A figure being read is a bar, and one the call has nothing for is 0.
+  const read = (value: ReactNode) => (detail ? value : <Skeleton />)
   return (
     <Panel>
       <dl className="grid grid-cols-[repeat(auto-fill,minmax(104px,1fr))] gap-x-3 gap-y-3 p-4">
-        <Figure name={label('confidence')}>{latest?.confidence ?? '—'}</Figure>
+        <Figure name={label('confidence')}>
+          {read(latest?.confidence ?? 0)}
+        </Figure>
         <Figure
           name={label('expectedMove')}
           note={
@@ -193,22 +204,22 @@ export function ForecastFigures({
               : undefined
           }
         >
-          {latest ? `±${fmtPct(latest.expected_move_pct)}` : '—'}
+          {read(`±${fmtPct(latest?.expected_move_pct ?? 0)}`)}
         </Figure>
         <Figure name={label('judgedAt')}>
-          {latest ? closes(latest.target_time) : '—'}
+          {read(latest ? closes(latest.target_time) : '—')}
         </Figure>
         <Figure
           name={label('support')}
           note={latest && distance(latest.support, shownPrice)}
         >
-          {fmtPrice(latest?.support)}
+          {read(fmtPrice(latest?.support))}
         </Figure>
         <Figure
           name={label('resistance')}
           note={latest && distance(latest.resistance, shownPrice)}
         >
-          {fmtPrice(latest?.resistance)}
+          {read(fmtPrice(latest?.resistance))}
         </Figure>
         <Figure
           name={label('regime')}
@@ -216,7 +227,7 @@ export function ForecastFigures({
             result ? label('adxValue', { value: result.adx.toFixed(0) }) : ''
           }
         >
-          {latest ? label(`regimeName.${latest.regime}`) : '—'}
+          {read(latest ? label(`regimeName.${latest.regime}`) : '—')}
         </Figure>
         <Figure
           name={label('hitRate')}
@@ -224,33 +235,32 @@ export function ForecastFigures({
             stats ? label('callsCount', { count: stats.samples }) : undefined
           }
         >
-          {fmtRate(stats?.hit_rate)}
+          {read(fmtRate(stats?.hit_rate))}
         </Figure>
         <Figure name={label('chanceRate')}>
-          {fmtRate(stats?.chance_rate)}
+          {read(fmtRate(stats?.chance_rate))}
         </Figure>
         <Figure name={label('funding')}>
-          {readings?.funding === null || readings?.funding === undefined
-            ? '—'
-            : `${(readings.funding * 100).toFixed(4)}%`}
+          {read(`${((readings?.funding ?? 0) * 100).toFixed(4)}%`)}
         </Figure>
         <Figure name={label('openInterest')}>
-          {signed(readings?.oi_change_pct)}
+          {read(fmtPct(readings?.oi_change_pct ?? 0, true))}
         </Figure>
         <Figure name={label('longShort')}>
-          {readings?.long_short_z === null ||
-          readings?.long_short_z === undefined
-            ? '—'
-            : `z ${readings.long_short_z > 0 ? '+' : ''}${readings.long_short_z.toFixed(2)}`}
+          {read(
+            `z ${(readings?.long_short_z ?? 0) > 0 ? '+' : ''}${(readings?.long_short_z ?? 0).toFixed(2)}`
+          )}
         </Figure>
         <Figure
           name={label('madeAt')}
           className={detail?.stale ? 'text-vergex-warning' : undefined}
           title={detail?.stale ? label('stale') : undefined}
         >
-          {latest
-            ? `${detail?.stale ? `${label('stale')} ` : ''}${closes(latest.open_time)}`
-            : '—'}
+          {read(
+            latest
+              ? `${detail?.stale ? `${label('stale')} ` : ''}${closes(latest.open_time)}`
+              : '—'
+          )}
         </Figure>
       </dl>
     </Panel>

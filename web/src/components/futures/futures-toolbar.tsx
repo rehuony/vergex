@@ -3,7 +3,8 @@ import { AppSelect } from '@/components/ui/select'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
 import type { Account } from '@/types'
-import { accountLabel } from '@/utils/futures/futures-accounts'
+import { Skeleton } from '@/components/ui/skeleton'
+import { accountName } from '@/utils/futures/futures-accounts'
 import type { AccountCheck } from '@/utils/futures/futures-workspace'
 
 const LEVERAGES = [1, 2, 3, 5, 10, 20]
@@ -67,7 +68,9 @@ export function FuturesToolbar({
             {label('balanceUnavailable')}
           </SettingsLink>
         ) : (
-          label('loadingBalance')
+          <>
+            {label('available')} <Skeleton className="w-24" />
+          </>
         )}
       </span>
       <AppSelect
@@ -83,7 +86,7 @@ export function FuturesToolbar({
       />
       <AppSelect
         aria-label={label('tradingAccount')}
-        className="w-48 max-sm:h-10 max-sm:w-auto max-sm:min-w-0 max-sm:flex-1"
+        className="w-48 max-sm:h-10 max-sm:w-32"
         value={accountID}
         disabled={busy}
         onChange={onAccountChange}
@@ -91,9 +94,9 @@ export function FuturesToolbar({
           loaded && choices.length > 0
             ? choices.map((account) => ({
                 value: account.id,
-                label: accountLabel(account, accounts),
+                label: accountName(account, accounts),
               }))
-            : [{ value: '', label: loaded ? label('noAccount') : '—' }]
+            : [{ value: '', label: loaded ? label('noAccount') : '' }]
         }
       />
       <AppSelect

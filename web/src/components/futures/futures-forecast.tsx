@@ -65,12 +65,13 @@ export function forecastCoin(venue: string, symbol: string): string | null {
   return swap ? `${swap[1]}USDT` : null
 }
 
-const percent = (rate: number | null) =>
-  rate === null ? '—' : `${(rate * 100).toFixed(1)}%`
+const percent = (rate: number | null) => `${((rate ?? 0) * 100).toFixed(1)}%`
 
 // FuturesForecast overlays the coin's forecast on the market chart, off until asked
 // for since this chart is for placing live trades. It reads the strategy in use from
-// one read-only endpoint; choosing a strategy stays on the Forecast page.
+// one read-only endpoint; choosing a strategy stays on the Forecast page. It extends the
+// real candles, and answers far sooner than they do, so it is not asked for until they
+// are on the chart: simulated candles never show on their own.
 export function FuturesForecast({
   on,
   chart,
@@ -78,6 +79,7 @@ export function FuturesForecast({
   symbol,
   interval,
   scene,
+  candlesReady,
   comparing,
 }: {
   on: boolean
@@ -86,6 +88,7 @@ export function FuturesForecast({
   symbol: string
   interval: string
   scene: number
+  candlesReady: boolean
   comparing: boolean
 }) {
   const { language } = useLanguage()
@@ -94,7 +97,7 @@ export function FuturesForecast({
 
   const coin = forecastCoin(venue, symbol)
   const covered = FORECAST_INTERVALS.includes(interval as ForecastInterval)
-  const wanted = on && !comparing && Boolean(coin) && covered
+  const wanted = on && candlesReady && !comparing && Boolean(coin) && covered
   const { data, error } = useQuery({
     queryKey: ['futures-forecast', coin, interval],
     queryFn: () => api.getForecastOverlay(coin as string, interval),
@@ -109,7 +112,7 @@ export function FuturesForecast({
   }, [chart, venue, symbol, interval, scene, rows])
 
   const note =
-    !on || comparing || !interval
+    !on || !candlesReady || comparing || !interval
       ? null
       : !coin
         ? label('noMarket')
@@ -117,11 +120,9 @@ export function FuturesForecast({
           ? label('shortInterval')
           : error
             ? label('failed')
-            : !data
-              ? label('loading')
-              : data.pending
-                ? t(`forecast.pendingState.${data.pending}`, language)
-                : null
+            : data?.pending
+              ? t(`forecast.pendingState.${data.pending}`, language)
+              : null
 
   const score = data ? Math.round(data.display_prob * 100) : 0
   const Icon =

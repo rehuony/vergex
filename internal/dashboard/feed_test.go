@@ -244,6 +244,40 @@ func TestFeedRebuildsTheLastDayAfterARestart(t *testing.T) {
 	}
 }
 
+// A reader that starts on quiet tables does not walk the old rows on every round, and
+// still sees every row of the window, whatever order their IDs came in.
+func TestFeedStartsWhereTheWindowStarts(t *testing.T) {
+	st := newTestStores(testdb.Open(t))
+	if err := st.Users.Create(&user.User{ID: testdb.UserID, Email: "alice@example.com", PasswordHash: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	call := func(at time.Time) int64 {
+		t.Helper()
+		row := agent.Call{Feature: agent.FeatureTrader, SourceID: trendTrader, Model: "m", Provider: "p", Host: "h", Unpriced: true, CreatedAt: at}
+		if err := st.DB.Create(&row).Error; err != nil {
+			t.Fatal(err)
+		}
+		return row.ID
+	}
+	call(now.Add(-48 * time.Hour))
+	last := call(now.Add(-30 * time.Hour))
+	if r := newReader(Sources{Stores: st.Stores}, func() time.Time { return now }); r.calls != last {
+		t.Fatalf("cursor on quiet tables = %d, want the last row %d", r.calls, last)
+	}
+
+	recent := call(now.Add(-time.Hour))
+	call(now.Add(-40 * time.Hour)) // A late ID with an old time.
+	r := newReader(Sources{Stores: st.Stores}, func() time.Time { return now })
+	if r.calls != recent-1 {
+		t.Fatalf("cursor = %d, want just before %d", r.calls, recent)
+	}
+	rows, _, err := r.readCalls()
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %+v, err %v", rows, err)
+	}
+}
+
 func TestFuturesOrdersRefusedBeforeTheExchangeStillShow(t *testing.T) {
 	at := time.Now().Add(-time.Hour)
 	orders := []RefusedOrder{{RunID: "run", PlanID: "plan", AccountID: "e1", ClientID: "c", Role: "STOP", Symbol: "BTCUSDT", Quantity: "0.5", Error: "rejected", At: at}}

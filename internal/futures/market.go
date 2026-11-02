@@ -21,7 +21,9 @@ import (
 // Market is what Futures reads from a venue's public data, in its own terms: books as
 // plan snapshots, checked for planning, and exact candles for its chart.
 type Market struct {
-	Public          *market.Public
+	Public *market.Public
+	// Testnet marks each snapshot as read from a test environment.
+	Testnet         bool
 	discoveryMu     sync.Mutex
 	discoveryCache  map[string]MarketList
 	discoveryFlight singleflight.Group
@@ -29,6 +31,10 @@ type Market struct {
 
 // NewMarket reads from the venues' own hosts.
 func NewMarket() *Market { return &Market{Public: market.NewPublic()} }
+
+// NewTestnetMarket reads books from the venues' test environments, for plans on a testnet
+// account. Everything else a chart shows still comes from the real market.
+func NewTestnetMarket() *Market { return &Market{Public: market.NewTestnetPublic(), Testnet: true} }
 
 func snapshotOf(venue, symbol, kind string, book instrument.Book) plan.Snapshot {
 	levels := func(rows []instrument.BookLevel) []plan.BookLevel {
@@ -58,6 +64,7 @@ func (m *Market) Snapshot(ctx context.Context, venue, symbol string) (plan.Snaps
 	}
 	book, err := m.Public.PerpetualBook(ctx, venue, symbol)
 	s := snapshotOf(venue, symbol, "perpetual", book)
+	s.Testnet = m.Testnet
 	if err != nil {
 		return s, err
 	}

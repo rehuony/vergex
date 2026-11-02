@@ -11,6 +11,7 @@ export interface Plan {
   reward_risk: string
   snapshot: {
     venue: string
+    testnet?: boolean
     symbol: string
     kind: string
     tick: string
@@ -49,6 +50,7 @@ export interface Constraints {
   equity: string
   max_risk: string
   max_notional: string
+  max_risk_pct?: string
   min_reward_risk: string
   fee_bps: string
   slippage_bps: string
@@ -132,6 +134,7 @@ export const defaultLimits: Constraints = {
   equity: '1000',
   max_risk: '10',
   max_notional: '100',
+  max_risk_pct: '1',
   min_reward_risk: '0',
   fee_bps: '10',
   slippage_bps: '10',
@@ -140,7 +143,11 @@ export class CloseNotSubmittedError extends Error {
   readonly closeState = 'not_submitted'
 }
 
-export async function futuresAPI<T>(path: string, body?: unknown): Promise<T> {
+export async function futuresAPI<T>(
+  path: string,
+  body?: unknown,
+  method = body === undefined ? 'GET' : 'POST'
+): Promise<T> {
   const action = path.split('?')[0]
   const tradeAction = [
     'approve',
@@ -148,6 +155,8 @@ export async function futuresAPI<T>(path: string, body?: unknown): Promise<T> {
     'stop',
     'reconcile',
     'close-position',
+    'amend-exit',
+    'cancel-order',
   ].includes(action)
   const controller = new AbortController()
   const timer = setTimeout(
@@ -156,7 +165,7 @@ export async function futuresAPI<T>(path: string, body?: unknown): Promise<T> {
   )
   try {
     const r = await fetch('/api/futures/' + path, {
-      method: body === undefined ? 'GET' : 'POST',
+      method,
       headers: getAuthHeaders(),
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: controller.signal,

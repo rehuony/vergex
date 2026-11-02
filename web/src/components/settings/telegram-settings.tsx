@@ -13,6 +13,7 @@ import {
   dialogInputClass,
 } from '@/components/common/dialog'
 import { Button } from '@/components/ui/button'
+import { PanelLoading } from '@/components/common/panel'
 import { SettingActions, SettingRow } from '@/components/common/setting-row'
 
 const ALERT_KINDS = [
@@ -21,6 +22,8 @@ const ALERT_KINDS = [
   'position_closed',
   'plan_attention',
   'forecast',
+  'system',
+  'daily_report',
 ]
 
 const command = (text: string) => (
@@ -208,9 +211,7 @@ export function TelegramSettings({ language }: { language: Language }) {
       </div>
 
       {isLoading ? (
-        <p className="py-8 text-center text-sm text-vergex-muted">
-          {t('telegram.loading', language)}
-        </p>
+        <PanelLoading />
       ) : step === 0 ? (
         <>
           <HowTo

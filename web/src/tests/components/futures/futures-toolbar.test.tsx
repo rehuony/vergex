@@ -43,7 +43,7 @@ it('says there is no account only for a venue with none', () => {
 })
 
 it('claims nothing about accounts before they are read', () => {
-  expect(trigger('binance', '', false)).toHaveTextContent('—')
+  expect(trigger('binance', '', false)).toHaveTextContent('')
   expect(screen.queryByText('No account')).toBeNull()
   expect(screen.queryByRole('link', { name: 'Add an account' })).toBeNull()
 })

@@ -25,7 +25,7 @@ export const fmtPct = (value: number, signed = false, digits = 2) =>
   `${signed && value > 0 ? '+' : ''}${value.toFixed(digits)}%`
 
 export const fmtRate = (rate: number | null | undefined) =>
-  rate === null || rate === undefined ? '—' : `${(rate * 100).toFixed(1)}%`
+  `${((rate ?? 0) * 100).toFixed(1)}%`
 
 export const fmtTime = (ms: number) =>
   new Date(ms).toLocaleString(activeLanguage(), {

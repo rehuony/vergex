@@ -30,7 +30,7 @@ export function SettingRow({
   return (
     <div
       className={cn(
-        'grid gap-2 border-t border-vergex-line py-4 first:border-t-0 sm:grid-cols-[160px_minmax(0,1fr)] sm:gap-6',
+        'grid gap-2 border-t border-vergex-line py-3 first:border-t-0 sm:grid-cols-[160px_minmax(0,1fr)] sm:gap-6',
         top ? 'sm:items-start' : 'sm:items-center',
         className
       )}
@@ -68,7 +68,7 @@ export function SettingItem({
   children?: ReactNode
 }) {
   return (
-    <div className="flex items-center gap-3 border-t border-vergex-line py-4 first:border-t-0">
+    <div className="flex items-center gap-3 border-t border-vergex-line py-3 first:border-t-0">
       <span className="grid size-9 shrink-0 place-items-center rounded-md border border-vergex-line bg-vergex-surface text-vergex-muted">
         {icon}
       </span>
@@ -81,7 +81,7 @@ export function SettingItem({
           {badge}
         </div>
         {detail && (
-          <p className="truncate text-xs text-vergex-muted">{detail}</p>
+          <p className="mt-1 truncate text-xs text-vergex-muted">{detail}</p>
         )}
       </div>
       {children}
@@ -158,12 +158,14 @@ export function SettingBadge({
   )
 }
 
-// Heads a view opened from a list: back to the list, then what it is about.
+// Heads a view opened from a list: back to the list, then what it is about, with its state
+// and what can be opened from it.
 export function SettingBack({
   onBack,
   backLabel,
   icon,
   title,
+  badge,
   detail,
   children,
 }: {
@@ -171,12 +173,14 @@ export function SettingBack({
   backLabel: string
   icon?: ReactNode
   title: ReactNode
+  /** A SettingBadge shown right after the name. */
+  badge?: ReactNode
   detail?: ReactNode
   /** A link or button on the right, such as where to get a key. */
   children?: ReactNode
 }) {
   return (
-    <div className="flex items-center gap-3 py-4">
+    <div className="flex items-center gap-3 py-3">
       <Button
         type="button"
         variant="ghost"
@@ -193,11 +197,15 @@ export function SettingBack({
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <h3 className="truncate text-sm font-medium text-vergex-ink">
-          {title}
-        </h3>
+        {/* Where the name and badge do not fit, the badge drops below. */}
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <h3 className="max-w-full truncate text-sm font-medium text-vergex-ink">
+            {title}
+          </h3>
+          {badge}
+        </div>
         {detail && (
-          <p className="truncate text-xs text-vergex-muted">{detail}</p>
+          <p className="mt-1 truncate text-xs text-vergex-muted">{detail}</p>
         )}
       </div>
       {children}
@@ -231,7 +239,7 @@ export function SettingActions({
   children: ReactNode
 }) {
   return (
-    <div className="flex items-center gap-2 border-t border-vergex-line py-4">
+    <div className="flex items-center gap-2 border-t border-vergex-line py-3">
       <p
         id={messageId}
         aria-live="polite"

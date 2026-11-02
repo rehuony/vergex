@@ -2,7 +2,7 @@
 
 .PHONY: help test test-backend test-frontend test-coverage build build-backend build-frontend \
 	dev run-backend run-frontend run-postgresql fmt fmt-backend fmt-frontend lint lint-backend lint-frontend \
-	init up down restart logs status regen-keys deps deps-backend deps-frontend deps-update clean
+	init up down restart logs status backup restore regen-keys deps deps-backend deps-frontend deps-update clean
 
 # Default target
 help:
@@ -34,6 +34,8 @@ help:
 	@echo "  make restart              - Restart containers"
 	@echo "  make logs [SERVICE=...]   - Follow logs (vergex-backend or vergex-frontend)"
 	@echo "  make status               - Container status and health check"
+	@echo "  make backup               - Back up the database to backups/"
+	@echo "  make restore FILE=x DB=y  - Restore a backup into a new database"
 	@echo "  make regen-keys           - Regenerate encryption keys (destructive)"
 	@echo ""
 	@echo "Dependencies:"
@@ -164,6 +166,14 @@ status:
 	addr=$$(grep -E '^VERGEX_BIND_ADDRESS=' .env 2>/dev/null | cut -d= -f2 | tr -d "\"' "); \
 	url="http://$${addr:-127.0.0.1}:$${port:-8000}/api/health"; \
 	echo "Health: $$url"; curl -fsS "$$url" && echo || echo "Backend not responding"
+
+# Back up the database to backups/
+backup:
+	@scripts/backup.sh backup
+
+# Restore a backup into a new database: make restore FILE=backups/x.sql.gz DB=vergex_restored
+restore:
+	@scripts/backup.sh restore "$(FILE)" "$(DB)"
 
 # Regenerate all encryption keys (asks for confirmation; old encrypted data becomes unreadable)
 regen-keys:

@@ -7,6 +7,8 @@ import { useTraders } from '@/hooks/use-connections'
 import { t, type Language } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { Button } from '@/components/ui/button'
+import { PanelLoading } from '@/components/common/panel'
+import { Skeleton } from '@/components/ui/skeleton'
 import { AppSelect } from '@/components/ui/select'
 
 const PERIODS: { key: AgentCostPeriod; label: string }[] = [
@@ -17,6 +19,8 @@ const PERIODS: { key: AgentCostPeriod; label: string }[] = [
 ]
 
 const tokens = (n: number) => n.toLocaleString('en-US')
+const megabytes = (bytes: number) =>
+  `${(bytes / (1 << 20)).toLocaleString('en-US', { maximumFractionDigits: 1 })} MB`
 const usd = (n: number) =>
   `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`
 
@@ -39,6 +43,10 @@ export function AgentCostPanel() {
   const { data, error, isLoading } = useQuery({
     queryKey: ['agent-costs', period, traderId],
     queryFn: () => api.getAgentCostSummary(period, true, traderId || undefined),
+  })
+  const { data: storage, error: storageError } = useQuery({
+    queryKey: ['agent-storage'],
+    queryFn: () => api.getAgentStorage(true),
   })
   const models = Object.entries(data?.by_model ?? {}).sort(
     ([, a], [, b]) => b.total - a.total || b.count - a.count
@@ -88,7 +96,7 @@ export function AgentCostPanel() {
           {label('loadFailed')}
         </p>
       ) : isLoading || !data ? (
-        <p className={centered}>{label('loading')}</p>
+        <PanelLoading className="flex-1" />
       ) : (
         <>
           <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -152,6 +160,18 @@ export function AgentCostPanel() {
           )}
         </>
       )}
+      <p className="mt-auto flex justify-between gap-3 border-t border-vergex-line pt-3 text-xs text-vergex-muted">
+        <span>{label('storage')}</span>
+        <span className="tabular-nums">
+          {storage ? (
+            megabytes(storage.bytes)
+          ) : storageError ? (
+            '—'
+          ) : (
+            <Skeleton className="w-12" />
+          )}
+        </span>
+      </p>
     </div>
   )
 }

@@ -754,6 +754,7 @@ func (t *Account) GetOpenOrders(symbol string) ([]account.OpenOrder, error) {
 					slPrice, _ := strconv.ParseFloat(order.SlTriggerPx, 64)
 					if slPrice > 0 {
 						result = append(result, account.OpenOrder{
+							Conditional:  true,
 							OrderID:      order.AlgoId + "_sl",
 							Symbol:       symbol,
 							Side:         side,
@@ -772,6 +773,7 @@ func (t *Account) GetOpenOrders(symbol string) ([]account.OpenOrder, error) {
 					tpPrice, _ := strconv.ParseFloat(order.TpTriggerPx, 64)
 					if tpPrice > 0 {
 						result = append(result, account.OpenOrder{
+							Conditional:  true,
 							OrderID:      order.AlgoId + "_tp",
 							Symbol:       symbol,
 							Side:         side,

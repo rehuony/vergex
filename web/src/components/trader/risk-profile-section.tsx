@@ -28,6 +28,7 @@ export function RiskProfileSection({
       risk_control: { ...current.risk_control, ...next },
     }))
   const equity = label('timesEquity')
+  const lossSuffix = (pct: number) => (pct > 0 ? '%' : label('limitOff'))
   const presets = useAgentPresets()
 
   return (
@@ -138,6 +139,28 @@ export function RiskProfileSection({
           min={50}
           max={100}
           onChange={(min_confidence) => patch({ min_confidence })}
+        />
+      </SettingRow>
+      <SettingRow label={label('maxDailyLoss')} htmlFor="risk-daily-loss">
+        <NumberField
+          id="risk-daily-loss"
+          value={risk.max_daily_loss_pct ?? 0}
+          min={0}
+          max={100}
+          step={0.5}
+          suffix={lossSuffix(risk.max_daily_loss_pct ?? 0)}
+          onChange={(max_daily_loss_pct) => patch({ max_daily_loss_pct })}
+        />
+      </SettingRow>
+      <SettingRow label={label('maxDrawdown')} htmlFor="risk-drawdown">
+        <NumberField
+          id="risk-drawdown"
+          value={risk.max_drawdown_pct ?? 0}
+          min={0}
+          max={100}
+          step={0.5}
+          suffix={lossSuffix(risk.max_drawdown_pct ?? 0)}
+          onChange={(max_drawdown_pct) => patch({ max_drawdown_pct })}
         />
       </SettingRow>
     </FieldGrid>

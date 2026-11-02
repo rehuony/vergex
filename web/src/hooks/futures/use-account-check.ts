@@ -4,11 +4,17 @@ import { defaultMarket } from '@/utils/futures/futures-accounts'
 import type { AccountCheck } from '@/utils/futures/futures-workspace'
 
 const RECHECK_MS = 30000
+const RECHECK_IN_VIEW_MS = 10000
 
 // useAccountCheck reads the selected account's balance from the exchange, again
-// every 30 seconds while the page is visible. Saved credentials alone prove
-// nothing, so only a complete answer counts as verified.
-export function useAccountCheck(accountID: string, venue: string) {
+// every 30 seconds while the page is visible, or every 10 while the account is in
+// view. Saved credentials alone prove nothing, so only a complete answer counts as
+// verified.
+export function useAccountCheck(
+  accountID: string,
+  venue: string,
+  inView = false
+) {
   const [check, setCheck] = useState<AccountCheck | null>(null)
   const mounted = useRef(true)
   const request = useRef(0)
@@ -80,7 +86,10 @@ export function useAccountCheck(accountID: string, venue: string) {
     const poll = async (background = false) => {
       if (!document.hidden) await verify(background)
       if (!cancelled && accountID)
-        timer = setTimeout(() => void poll(true), RECHECK_MS)
+        timer = setTimeout(
+          () => void poll(true),
+          inView ? RECHECK_IN_VIEW_MS : RECHECK_MS
+        )
     }
     void poll()
     return () => {
@@ -88,7 +97,7 @@ export function useAccountCheck(accountID: string, venue: string) {
       clearTimeout(timer)
       request.current++
     }
-  }, [verify, accountID])
+  }, [verify, accountID, inView])
 
   return check?.accountID === accountID ? check : null
 }

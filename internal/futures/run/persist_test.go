@@ -3,6 +3,8 @@ package run
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,6 +203,61 @@ func TestAnOrderThatEndedUnfilledIsSettledInTheLedger(t *testing.T) {
 
 // The ledger counts fills by adding them up, and the controller trusts only the
 // exchange's receipts, so neither may write what the other reads.
+// A stop that fires leaves the target to be cancelled, and the run and the ledger both
+// say what became of them.
+func TestAFinishedRunSettlesItsExitsInTheLedger(t *testing.T) {
+	c, b, _, p := setup(t, "limit")
+	v := started(t, c, p)
+	got := protected(t, c, b, v.ID)
+	ledgerOrders(t, c, v.ID, 3)
+	stop := b.orders[got.Orders[1].ClientID]
+	stop.Status, stop.Filled = "FILLED", stop.Quantity
+	b.orders[stop.ClientID] = stop
+	b.account.Position = "0"
+	if done := c.step(context.Background(), testUser, v.ID); !done {
+		t.Fatal("the run did not finish")
+	}
+	out, err := c.Get(testUser, v.ID)
+	if err != nil || out.State != "completed" || out.Orders[2].Status != "CANCELED" {
+		t.Fatalf("run = %s, orders %+v, err %v", out.State, out.Orders, err)
+	}
+	c.ledgerWG.Wait()
+	orders := ledgerOrders(t, c, v.ID, 3)
+	if orders[1].Status != account.OrderFilled || orders[1].ClosedAt == nil {
+		t.Errorf("stop = %+v", orders[1])
+	}
+	if orders[2].Status != account.OrderCanceled || orders[2].ClosedAt == nil {
+		t.Errorf("target = %+v", orders[2])
+	}
+}
+
+// Placing an order and its ending can be written moments apart, and the second has nothing
+// to settle if it gets there first.
+func TestARunsLedgerWritesKeepTheirOrder(t *testing.T) {
+	c, _, _, p := setup(t, "limit")
+	v := started(t, c, p)
+	const orders = 20
+	for i := 0; i < orders; i++ {
+		order := Order{Role: "entry", Symbol: p.Snapshot.Symbol, Side: "long", ClientID: fmt.Sprint("client-", i), OrderID: fmt.Sprint("order-", i), Quantity: "1", Price: "100", Status: "NEW"}
+		placed, ended := v, v
+		placed.Orders = make([]Order, i+1)
+		placed.Orders[i] = order
+		placed.stored.orders = nil
+		ended.Orders = make([]Order, i+1)
+		ended.Orders[i] = order
+		ended.Orders[i].Status = "CANCELED"
+		ended.stored.orders = placed.Orders
+		c.keepInLedger(&placed)
+		c.keepInLedger(&ended)
+	}
+	c.ledgerWG.Wait()
+	for _, order := range ledgerOrders(t, c, v.ID, orders) {
+		if strings.HasPrefix(order.ExchangeOrderID, "order-") && order.Status != account.OrderCanceled {
+			t.Errorf("%s stayed %s", order.ExchangeOrderID, order.Status)
+		}
+	}
+}
+
 func TestALedgerFillLeavesTheRunsOwnStateAlone(t *testing.T) {
 	c, _, _, p := setup(t, "limit")
 	v := started(t, c, p)

@@ -28,15 +28,17 @@ const (
 )
 
 type AccountState struct {
-	AccountID        string    `json:"account_id"`
-	Status           string    `json:"status"`
-	DisplayBalance   string    `json:"display_balance,omitempty"`
-	Asset            string    `json:"asset,omitempty"`
-	TotalEquity      float64   `json:"total_equity,omitempty"`
-	AvailableBalance float64   `json:"available_balance,omitempty"`
-	CheckedAt        time.Time `json:"checked_at"`
-	ErrorCode        string    `json:"error_code,omitempty"`
-	ErrorMessage     string    `json:"error_message,omitempty"`
+	AccountID        string  `json:"account_id"`
+	Status           string  `json:"status"`
+	DisplayBalance   string  `json:"display_balance,omitempty"`
+	Asset            string  `json:"asset,omitempty"`
+	TotalEquity      float64 `json:"total_equity,omitempty"`
+	AvailableBalance float64 `json:"available_balance,omitempty"`
+	// Permissions is what the key may do, absent where the venue did not say.
+	Permissions  *account.Permissions `json:"permissions,omitempty"`
+	CheckedAt    time.Time            `json:"checked_at"`
+	ErrorCode    string               `json:"error_code,omitempty"`
+	ErrorMessage string               `json:"error_message,omitempty"`
 }
 
 type cachedAccountStates struct {
@@ -183,6 +185,9 @@ func probeAccountState(accountCfg *account.Account, userID string) AccountState 
 		return state
 	}
 
+	// Read first: a key the balance read refuses is when what it may do matters most.
+	state.Permissions = readKeyPermissions(tempTrader, accountCfg)
+
 	balanceInfo, err := tempTrader.GetBalance()
 	if err != nil {
 		status, code, message := classifyAccountProbeError(err)
@@ -230,12 +235,29 @@ func probeAccountState(accountCfg *account.Account, userID string) AccountState 
 	return state
 }
 
+// readKeyPermissions asks the venue what the account's key may do. It adds to what the
+// state says and never decides it, so a failure only leaves the permissions out.
+func readKeyPermissions(trading account.Trading, accountCfg *account.Account) *account.Permissions {
+	reader, ok := trading.(account.PermissionReader)
+	if !ok {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	permissions, err := reader.Permissions(ctx)
+	if err != nil {
+		logger.Infof("⚠️ Failed to read the key permissions of account %s (%s): %v", accountCfg.ID, accountCfg.Venue, err)
+		return nil
+	}
+	return permissions
+}
+
 func buildAccountProbe(accountCfg *account.Account, userID string) (account.Trading, error) {
 	switch accountCfg.Venue {
 	case "binance":
-		return binance.NewReadOnlyAccount(context.Background(), string(accountCfg.APIKey), string(accountCfg.SecretKey))
+		return binance.NewReadOnlyAccount(context.Background(), string(accountCfg.APIKey), string(accountCfg.SecretKey), accountCfg.Testnet)
 	case "okx":
-		return okx.NewReadOnlyAccount(string(accountCfg.APIKey), string(accountCfg.SecretKey), string(accountCfg.Passphrase)), nil
+		return okx.NewReadOnlyAccount(string(accountCfg.APIKey), string(accountCfg.SecretKey), string(accountCfg.Passphrase), accountCfg.Testnet), nil
 	default:
 		return nil, fmt.Errorf("unsupported exchange type: %s", accountCfg.Venue)
 	}

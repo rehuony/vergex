@@ -32,13 +32,14 @@ func (s *Server) handleTraderList(c *gin.Context) {
 
 		// The frontend needs the model's ID to verify it exists (consistent with handleGetTraderConfig)
 		result = append(result, map[string]interface{}{
-			"trader_id":       trader.ID,
-			"trader_name":     trader.Name,
-			"agent_model":     trader.AgentModelID, // Use complete ID
-			"account_id":      trader.AccountID,
-			"is_running":      isRunning,
-			"initial_balance": trader.InitialBalance,
-			"kind":            trader.Kind,
+			"trader_id":             trader.ID,
+			"trader_name":           trader.Name,
+			"agent_model":           trader.AgentModelID, // Use complete ID
+			"account_id":            trader.AccountID,
+			"is_running":            isRunning,
+			"initial_balance":       trader.InitialBalance,
+			"kind":                  trader.Kind,
+			"scan_interval_minutes": trader.ScanIntervalMinutes,
 		})
 	}
 
@@ -129,12 +130,10 @@ func (s *Server) handleAccount(c *gin.Context) {
 		return
 	}
 
-	logger.Infof("✓ Returning account info [%s]: equity=%.2f, available=%.2f, pnl=%.2f (%.2f%%)",
+	logger.Infof("✓ Returning account info [%s]: equity=%.2f, available=%.2f",
 		trader.GetName(),
 		account["total_equity"],
-		account["available_balance"],
-		account["total_pnl"],
-		account["total_pnl_pct"])
+		account["available_balance"])
 	c.JSON(http.StatusOK, account)
 }
 
@@ -145,7 +144,22 @@ func (s *Server) handlePositions(c *gin.Context) {
 		SafeBadRequest(c, err.Error())
 		return
 	}
-	s.writePositions(c, reader)
+	positions, err := reader.GetPositions()
+	if err != nil {
+		positionsUnreadable(c, err)
+		return
+	}
+	// A trader runs on a whole account, so say which of these are not its own.
+	marked := make([]map[string]interface{}, 0, len(positions))
+	for _, position := range positions {
+		row := make(map[string]interface{}, len(position)+1)
+		for key, value := range position {
+			row[key] = value
+		}
+		row["foreign"] = !s.traderHolds(c.Param("id"), position)
+		marked = append(marked, row)
+	}
+	c.JSON(http.StatusOK, marked)
 }
 
 // handleAccountPositions Positions open on an account
@@ -161,7 +175,7 @@ func (s *Server) handleAccountPositions(c *gin.Context) {
 func (s *Server) writePositions(c *gin.Context, reader accountReader) {
 	positions, err := reader.GetPositions()
 	if err != nil {
-		SafeInternalError(c, "Get positions", err)
+		positionsUnreadable(c, err)
 		return
 	}
 
@@ -169,6 +183,14 @@ func (s *Server) writePositions(c *gin.Context, reader accountReader) {
 		positions = make([]map[string]interface{}, 0)
 	}
 	c.JSON(http.StatusOK, positions)
+}
+
+// positionsUnreadable says the exchange would not give the positions, and why. Dead keys
+// and a venue that is down are not faults in this server.
+func positionsUnreadable(c *gin.Context, err error) {
+	logger.Warnf("Read positions: %v", err)
+	status, code, message := classifyAccountProbeError(err)
+	c.JSON(http.StatusServiceUnavailable, gin.H{"error": message, "error_key": "accountError." + code, "status": status})
 }
 
 // handlePositionHistory Historical closed positions with statistics

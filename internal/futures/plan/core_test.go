@@ -1,6 +1,8 @@
 package plan
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -134,5 +136,38 @@ func TestFiniteEntryAllocationsAndHash(t *testing.T) {
 				t.Fatal("mutated basket accepted")
 			}
 		})
+	}
+}
+
+func TestAPlanIsBoundToItsEnvironment(t *testing.T) {
+	s, c, i, n := fixture()
+	i.Execution = &Execution{Kind: "limit"}
+	real, e := Compile(s, c, i, n)
+	if e != nil {
+		t.Fatal(e)
+	}
+	raw, e := json.Marshal(real)
+	if e != nil || strings.Contains(string(raw), "testnet") {
+		t.Fatalf("a real plan's bytes changed: %s, %v", raw, e)
+	}
+	s.Testnet = true
+	test, e := Compile(s, c, i, n)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if test.Hash == real.Hash {
+		t.Fatal("the digest does not bind the environment")
+	}
+	if e = test.Verify(n); e != nil {
+		t.Fatal(e)
+	}
+	book := s
+	book.Observed = n
+	if e = CheckBook(test, book, n); e != nil {
+		t.Fatal(e)
+	}
+	book.Testnet = false
+	if e = CheckBook(test, book, n); e == nil {
+		t.Fatal("a testnet plan accepted a real book")
 	}
 }

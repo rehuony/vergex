@@ -46,6 +46,12 @@ func (b *Account) nativeClientID(o account.Order) (string, error) {
 
 func (b *Account) Venue() string { return "binance" }
 
+// Testnet says whether the account is on Binance's test environment.
+func (b *Account) Testnet() bool { return b.testnet }
+
+// testnetBaseURL is Binance's test environment for USD-M futures. Its money is not real.
+const testnetBaseURL = "https://demo-fapi.binance.com"
+
 // NewExecutionTrader initializes Vergex without changing exchange account settings.
 func NewExecutionTrader(key, secret string) *Account {
 	c := futures.NewClient(key, secret)
@@ -53,10 +59,19 @@ func NewExecutionTrader(key, secret string) *Account {
 	return &Account{client: c, cacheDuration: 15 * time.Second}
 }
 
+// onEnvironment points the account at the test environment when it is on one.
+func (b *Account) onEnvironment(testnet bool) *Account {
+	if testnet {
+		b.client.BaseURL = testnetBaseURL
+		b.testnet = true
+	}
+	return b
+}
+
 // NewReadOnlyAccount calibrates signed reads without changing position mode,
 // leverage, margin mode, or orders. Callers replace long-lived cached clients.
-func NewReadOnlyAccount(ctx context.Context, key, secret string) (*Account, error) {
-	b := NewExecutionTrader(key, secret)
+func NewReadOnlyAccount(ctx context.Context, key, secret string, testnet bool) (*Account, error) {
+	b := NewExecutionTrader(key, secret).onEnvironment(testnet)
 	if err := b.calibrateClock(ctx); err != nil {
 		return nil, err
 	}
@@ -90,6 +105,58 @@ func binanceReadError(action string, err error) error {
 	}
 	return fmt.Errorf("Could not %s. Check the Vergex server connection and try again.", action)
 }
+
+// orderStatus is Binance's order status in the terms a run and the ledger know. An order
+// expired in matching, as self-trade prevention does, has ended like any other expiry.
+// Any other status is an error rather than a guess, which callers treat as unconfirmed.
+func orderStatus(status futures.OrderStatusType) (string, error) {
+	switch status {
+	case futures.OrderStatusTypeNew, futures.OrderStatusTypePartiallyFilled, futures.OrderStatusTypeFilled,
+		futures.OrderStatusTypeCanceled, futures.OrderStatusTypeRejected, futures.OrderStatusTypeExpired:
+		return string(status), nil
+	case "EXPIRED_IN_MATCH":
+		return string(futures.OrderStatusTypeExpired), nil
+	}
+	return "", fmt.Errorf("Binance reported an order status Vergex does not know: %s", status)
+}
+
+// binanceNoSuchOrder is how Binance says it has no such order.
+const binanceNoSuchOrder = -2013
+
+// binanceRefusal says whether an error is Binance clearly not taking an order, with its
+// reason. Its own codes for a lost connection, a timeout and an overloaded server leave the
+// order's fate open, and so does any failure to hear from it at all.
+func binanceRefusal(err error) (string, bool) {
+	var apiErr *common.APIError
+	if !errors.As(err, &apiErr) {
+		return "", false
+	}
+	switch apiErr.Code {
+	case 0, -1000, -1001, -1006, -1007, -1008:
+		return "", false
+	}
+	return fmt.Sprintf("%s (Binance code %d)", apiErr.Message, apiErr.Code), true
+}
+
+// CancelOpenOrder cancels an order known only by what the exchange lists. A conditional one
+// lives among Binance's algo orders under its algo ID.
+func (b *Account) CancelOpenOrder(ctx context.Context, symbol, orderID string, conditional bool) error {
+	id, ok := new(big.Int).SetString(orderID, 10)
+	if !ok || !id.IsInt64() {
+		return errors.New("invalid exchange order ID")
+	}
+	var err error
+	if conditional {
+		_, err = b.client.NewCancelAlgoOrderService().AlgoID(id.Int64()).Do(ctx)
+	} else {
+		_, err = b.client.NewCancelOrderService().Symbol(symbol).OrderID(id.Int64()).Do(ctx)
+	}
+	if err != nil {
+		return binanceReadError("cancel the order", err)
+	}
+	return nil
+}
+
 func ratString(s string) (*big.Rat, error) {
 	n, ok := new(big.Rat).SetString(s)
 	if !ok {
@@ -246,8 +313,12 @@ func (b *Account) SubmitOrder(ctx context.Context, o account.Order) (account.Ord
 		if r.OrderID <= 0 || r.ClientOrderID != nativeID || r.Symbol != o.Symbol || !sameNativeDecimal(r.OrigQuantity, string(o.Quantity)) || limitMismatch || r.Side != side || r.Type != orderType || r.PositionSide != positionSide || (o.ReduceOnly && !mode.DualSidePosition && !r.ReduceOnly) {
 			return o, errors.New("invalid Binance order receipt")
 		}
+		status, e := orderStatus(r.Status)
+		if e != nil {
+			return o, e
+		}
 		o.OrderID = fmt.Sprint(r.OrderID)
-		o.Status = string(r.Status)
+		o.Status = status
 		o.Filled = account.Decimal(r.ExecutedQuantity)
 		o.Average = account.Decimal(r.AvgPrice)
 		return o, nil
@@ -264,6 +335,9 @@ func (b *Account) SubmitOrder(ctx context.Context, o account.Order) (account.Ord
 	}
 	r, e := service.Do(ctx)
 	if e != nil {
+		if reason, refused := binanceRefusal(e); refused {
+			return o, account.RefusedOrder{Reason: reason}
+		}
 		return o, errors.New("Binance protective order submission is unconfirmed")
 	}
 	if r.AlgoId <= 0 || r.ClientAlgoId != nativeID || r.Symbol != o.Symbol || !sameNativeDecimal(r.Quantity, string(o.Quantity)) || !sameNativeDecimal(r.TriggerPrice, string(o.Price)) || r.Side != side || r.OrderType != typ || (!mode.DualSidePosition && !r.ReduceOnly) {
@@ -283,6 +357,10 @@ func (b *Account) LookupOrder(ctx context.Context, o account.Order) (account.Ord
 	if o.Role != "entry" {
 		r, e := b.client.NewGetAlgoOrderService().ClientAlgoID(nativeID).Do(ctx)
 		if e != nil {
+			var apiErr *common.APIError
+			if errors.As(e, &apiErr) && apiErr.Code == binanceNoSuchOrder {
+				return o, account.ErrOrderNotFound
+			}
 			return o, errors.New("Binance protective order lookup is unconfirmed")
 		}
 		if r.AlgoId <= 0 || r.ClientAlgoId != nativeID || r.Symbol != o.Symbol || !sameNativeDecimal(r.Quantity, string(o.Quantity)) || !sameNativeDecimal(r.TriggerPrice, string(o.Price)) {
@@ -298,7 +376,11 @@ func (b *Account) LookupOrder(ctx context.Context, o account.Order) (account.Ord
 			if e != nil {
 				return o, errors.New("triggered fill not yet confirmed")
 			}
-			o.Status = string(fill.Status)
+			status, e := orderStatus(fill.Status)
+			if e != nil {
+				return o, e
+			}
+			o.Status = status
 			o.Filled = account.Decimal(fill.ExecutedQuantity)
 			o.Average = account.Decimal(fill.AvgPrice)
 			return o, nil
@@ -326,8 +408,12 @@ func (b *Account) LookupOrder(ctx context.Context, o account.Order) (account.Ord
 	if r.OrderID <= 0 || r.ClientOrderID != nativeID || r.Symbol != o.Symbol || !sameNativeDecimal(r.OrigQuantity, string(o.Quantity)) || priceMismatch || marketMismatch {
 		return o, errors.New("order identity mismatch")
 	}
+	status, e := orderStatus(r.Status)
+	if e != nil {
+		return o, e
+	}
 	o.OrderID = fmt.Sprint(r.OrderID)
-	o.Status = string(r.Status)
+	o.Status = status
 	o.Filled = account.Decimal(r.ExecutedQuantity)
 	o.Average = account.Decimal(r.AvgPrice)
 	return o, nil
@@ -352,4 +438,7 @@ func (b *Account) CancelExecutionOrder(ctx context.Context, o account.Order) err
 	return nil
 }
 
-var _ account.Executor = (*Account)(nil)
+var (
+	_ account.Executor       = (*Account)(nil)
+	_ account.OrderCanceller = (*Account)(nil)
+)

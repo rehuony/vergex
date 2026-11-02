@@ -3,6 +3,7 @@ package trader
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 	"vergex/internal/account"
 	"vergex/internal/agent"
@@ -71,6 +72,11 @@ type AutoTraderConfig struct {
 	// Trading platform selection
 	Venue     string // "binance" or "okx"
 	AccountID string // Account UUID (for multi-account support)
+	Testnet   bool   // The account is on the venue's test environment
+
+	// A hard stop in force when the trader was loaded, and when one last ended by hand
+	Halt      *Halt
+	ResumedAt time.Time
 
 	// Binance API configuration
 	BinanceAPIKey    string
@@ -98,9 +104,6 @@ type AutoTraderConfig struct {
 	InitialBalance float64 // Initial balance (for P&L calculation, must be set manually)
 
 	// Risk control (only as hints, agent can make autonomous decisions)
-	MaxDailyLoss    float64       // Maximum daily loss percentage (hint)
-	MaxDrawdown     float64       // Maximum drawdown percentage (hint)
-	StopTradingTime time.Duration // Pause duration after risk control triggers
 
 	// Position mode
 	IsCrossMargin bool // true=cross margin mode, false=isolated margin mode
@@ -126,9 +129,10 @@ type AutoTrader struct {
 	engine                   *traderagent.Engine // Builds an agent trader's prompts; nil on a grid trader
 	cycleNumber              int                 // Current cycle number
 	initialBalance           float64
-	dailyPnL                 float64
-	lastResetTime            time.Time
-	stopUntil                time.Time
+	halt                     *Halt       // Hard stop in force, under runtimeHealthMu
+	resumedAt                time.Time   // When a halt last ended by hand, under runtimeHealthMu
+	exitPending              atomic.Bool // A grid's emergency exit has not finished yet
+	stopErr                  error       // What the last Stop left undone, under runtimeHealthMu
 	isRunning                bool
 	isRunningMutex           sync.RWMutex       // Mutex to protect isRunning flag
 	startTime                time.Time          // System start time
@@ -138,6 +142,7 @@ type AutoTrader struct {
 	monitorWg                sync.WaitGroup     // Used to wait for monitoring goroutine to finish
 	peakPnLCache             map[string]float64 // Peak profit cache (symbol -> peak P&L percentage)
 	peakPnLCacheMutex        sync.RWMutex       // Cache read-write lock
+	peakPnLSaved             map[string]float64 // The peak last written to the store, under the same lock
 	lastBalanceSyncTime      time.Time          // Last balance sync time
 	userID                   string             // User ID
 	gridState                *GridState         // Grid trading state (only used by a grid trader)
@@ -241,10 +246,10 @@ func NewAutoTrader(config AutoTraderConfig, st *Stores, userID string) (*AutoTra
 	switch config.Venue {
 	case "binance":
 		logger.Infof("🏦 [%s] Using Binance Futures trading", config.Name)
-		trader = binance.NewAccount(config.BinanceAPIKey, config.BinanceSecretKey)
+		trader = binance.NewAccount(config.BinanceAPIKey, config.BinanceSecretKey, config.Testnet)
 	case "okx":
 		logger.Infof("🏦 [%s] Using OKX Futures trading", config.Name)
-		trader = okx.NewAccount(config.OKXAPIKey, config.OKXSecretKey, config.OKXPassphrase)
+		trader = okx.NewAccount(config.OKXAPIKey, config.OKXSecretKey, config.OKXPassphrase, config.Testnet)
 	default:
 		return nil, fmt.Errorf("unsupported trading platform: %s", config.Venue)
 	}
@@ -303,7 +308,6 @@ func NewAutoTrader(config AutoTraderConfig, st *Stores, userID string) (*AutoTra
 		engine:                engine,
 		cycleNumber:           cycleNumber,
 		initialBalance:        config.InitialBalance,
-		lastResetTime:         time.Now(),
 		startTime:             time.Now(),
 		callCount:             0,
 		isRunning:             false,
@@ -312,8 +316,11 @@ func NewAutoTrader(config AutoTraderConfig, st *Stores, userID string) (*AutoTra
 		monitorWg:             sync.WaitGroup{},
 		peakPnLCache:          make(map[string]float64),
 		peakPnLCacheMutex:     sync.RWMutex{},
+		peakPnLSaved:          make(map[string]float64),
 		lastBalanceSyncTime:   time.Now(),
 		userID:                userID,
+		halt:                  config.Halt,
+		resumedAt:             config.ResumedAt,
 	}, nil
 }
 
@@ -385,7 +392,8 @@ func (at *AutoTrader) Run() error {
 	at.monitorWg.Add(1)
 	defer at.monitorWg.Done()
 
-	// Start drawdown monitoring
+	// Start drawdown monitoring, from what it knew before any restart
+	at.loadStoredPeaks()
 	at.startDrawdownMonitor()
 
 	// Check if this is a grid trader
@@ -454,7 +462,30 @@ func (at *AutoTrader) Stop() {
 
 	close(at.stopMonitorCh) // Notify monitoring goroutine to stop
 	at.monitorWg.Wait()     // Wait for monitoring goroutine to finish
+	at.cancelGridOrdersOnStop()
 	logger.Info("⏹ Automatic trading system stopped")
+}
+
+// cancelGridOrdersOnStop takes a grid's resting orders with it: once it stops, nothing
+// watches what they would open. Positions stay, as they do for any trader.
+func (at *AutoTrader) cancelGridOrdersOnStop() {
+	if at.config.Grid == nil || at.gridState == nil {
+		return
+	}
+	err := at.cancelAllGridOrders()
+	if err != nil {
+		logger.Errorf("[Grid] Stopped, but its orders may still be on the exchange: %v", err)
+	}
+	at.runtimeHealthMu.Lock()
+	at.stopErr = err
+	at.runtimeHealthMu.Unlock()
+}
+
+// StopError says what stopping left undone, such as a grid's orders it could not cancel.
+func (at *AutoTrader) StopError() error {
+	at.runtimeHealthMu.RLock()
+	defer at.runtimeHealthMu.RUnlock()
+	return at.stopErr
 }
 
 // GetInitialBalance returns the account baseline used for performance metrics

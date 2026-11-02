@@ -10,7 +10,8 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { FuturesAccount as AccountSection } from '@/components/futures/futures-account'
 import { useAccountWatch } from '@/hooks/futures/use-account-watch'
-import { CloseNotSubmittedError } from '@/api/futures'
+import { QueryWrapper } from '@/tests/query-wrapper'
+import { CloseNotSubmittedError, type LiveRun } from '@/api/futures'
 import { positionDecimal } from '@/utils/futures/futures-account'
 import type { Account } from '@/types'
 
@@ -20,6 +21,7 @@ vi.mock('@/contexts/language-context', () => ({
 const mocks = vi.hoisted(() => ({
   traders: vi.fn(),
   positions: vi.fn(),
+  marks: vi.fn(),
   close: vi.fn(),
   planning: vi.fn(),
 }))
@@ -27,6 +29,7 @@ vi.mock('@/api', () => ({
   api: {
     getTraders: mocks.traders,
     getAccountPositions: mocks.positions,
+    getAccountMarks: mocks.marks,
     closePosition: mocks.close,
   },
 }))
@@ -47,9 +50,11 @@ function FuturesAccount(
 ) {
   const watch = useAccountWatch(props.account?.id ?? '', props.symbol)
   return (
-    <MemoryRouter>
-      <AccountSection {...props} watch={watch} />
-    </MemoryRouter>
+    <QueryWrapper>
+      <MemoryRouter>
+        <AccountSection {...props} watch={watch} />
+      </MemoryRouter>
+    </QueryWrapper>
   )
 }
 const account = {
@@ -78,6 +83,7 @@ const positions = [
   },
 ]
 beforeEach(() => {
+  mocks.marks.mockReset().mockResolvedValue({})
   mocks.traders
     .mockReset()
     .mockResolvedValue([
@@ -157,11 +163,16 @@ it('shows all account positions and native stop/target orders without submitting
 it('flags a live position with no reported exit orders without taking action', async () => {
   vi.mocked(fetch).mockResolvedValue(new Response('[]'))
   open()
-  await screen.findByText(
-    /position is open, but no working orders were reported/
+  // On the panel's title row, with the rest of what there is to say a click away.
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: /position is open, but no working orders were reported/,
+    })
   )
   expect(
-    screen.getByRole('link', { name: /Check protection at the exchange/ })
+    await screen.findByRole('link', {
+      name: /Check protection at the exchange/,
+    })
   ).toHaveAttribute('href', 'https://www.binance.com/en/futures')
   expect(mocks.close).not.toHaveBeenCalled()
   expect(mocks.planning).not.toHaveBeenCalled()
@@ -195,6 +206,33 @@ it('requires an explicit close click, uses the account close API and never repea
   expect(mocks.close).not.toHaveBeenCalled()
 })
 
+it('leaves nothing on the page once a close is accepted', async () => {
+  mocks.planning.mockResolvedValue({ warning: '', order: {} })
+  open()
+  await screen.findByText('ETHUSDT', { selector: 'strong' })
+  fireEvent.click(screen.getAllByRole('button', { name: 'Close position' })[0])
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm market close' }))
+  await waitFor(() => expect(mocks.planning).toHaveBeenCalled())
+  await waitFor(() =>
+    expect(screen.queryByText(/Stopping remaining entries/)).toBeNull()
+  )
+  expect(
+    screen.queryByText(/Close request accepted/, { selector: 'p,div' })
+  ).toBeNull()
+})
+
+it('keeps what still needs checking on the page after a close', async () => {
+  mocks.planning.mockResolvedValue({
+    warning: 'Execution records could not be refreshed.',
+    order: {},
+  })
+  open()
+  await screen.findByText('ETHUSDT', { selector: 'strong' })
+  fireEvent.click(screen.getAllByRole('button', { name: 'Close position' })[0])
+  fireEvent.click(screen.getByRole('button', { name: 'Confirm market close' }))
+  expect(await screen.findByText(/could not be refreshed/)).toBeInTheDocument()
+})
+
 it('does not present a failed exchange read as an empty account', async () => {
   mocks.positions.mockRejectedValue(new Error('network unavailable'))
   open()
@@ -203,6 +241,45 @@ it('does not present a failed exchange read as an empty account', async () => {
     screen.queryByText('No open positions reported by this account.')
   ).toBeNull()
   expect(screen.queryByRole('button', { name: 'Close position' })).toBeNull()
+})
+
+it("offers a cancel only on orders no running plan holds, and moves a plan's exits", async () => {
+  const run = {
+    id: 'run',
+    account_id: 'account',
+    plan_id: 'plan',
+    state: 'position_open',
+    plan: {
+      idea: { name: 'Short', side: 'short' },
+      snapshot: { symbol: 'BTCUSDT', venue: 'binance' },
+    },
+    orders: [{ role: 'sl', order_id: 'sl', status: 'NEW', price: '84000' }],
+  }
+  render(
+    <FuturesAccount
+      account={account}
+      accounts={[account]}
+      venue="binance"
+      symbol="BTCUSDT"
+      runs={[run] as unknown as LiveRun[]}
+      busy={false}
+      onView={vi.fn()}
+      onManual={vi.fn()}
+      onBusy={vi.fn()}
+      onRefresh={async () => {}}
+    />
+  )
+  await screen.findByText('tp')
+  expect(screen.getAllByRole('button', { name: 'Cancel order' })).toHaveLength(
+    1
+  )
+  expect(
+    screen.getAllByRole('button', { name: 'Stop and target' })
+  ).toHaveLength(1)
+  fireEvent.click(screen.getByRole('button', { name: 'Stop and target' }))
+  expect(await screen.findByRole('textbox', { name: 'Stop loss' })).toHaveValue(
+    '84000'
+  )
 })
 
 it('manual entry opens a review form through its callback, never a model or order request', async () => {
@@ -459,8 +536,41 @@ it('offers only a way to add an account when there is none', () => {
     'href',
     '?settings=accounts'
   )
-  for (const name of ['Refresh', 'Buy / Long', 'Sell / Short']) {
+  for (const name of ['Buy / Long', 'Sell / Short']) {
     expect(screen.queryByRole('button', { name })).toBeNull()
   }
   expect(mocks.positions).not.toHaveBeenCalled()
+})
+
+it('keeps its P/L on the live mark price and asks for nothing by hand', async () => {
+  mocks.marks.mockResolvedValue({ BTCUSDT: 90 })
+  const props = {
+    account,
+    accounts: [account],
+    venue: 'binance',
+    symbol: 'BTCUSDT',
+    runs: [],
+    busy: false,
+    onView: vi.fn(),
+    onManual: vi.fn(),
+    onBusy: vi.fn(),
+    onRefresh: async () => {},
+  }
+  mocks.positions.mockResolvedValue([
+    {
+      symbol: 'BTCUSDT',
+      side: 'short',
+      quantity: 2,
+      entry_price: 100,
+      mark_price: 95,
+      unrealized_pnl: 10,
+      leverage: 5,
+    },
+  ])
+  render(<FuturesAccount {...props} />)
+  // Short 2 from 100, now at a mark of 90.
+  expect(await screen.findAllByText('+20.00')).not.toHaveLength(0)
+  expect(mocks.marks).toHaveBeenCalledWith('account', 'BTCUSDT')
+  expect(screen.queryByRole('button', { name: /Refresh/ })).toBeNull()
+  expect(screen.queryByRole('link', { name: /Open exchange/ })).toBeNull()
 })

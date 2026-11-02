@@ -134,12 +134,6 @@ export function DryRunDialog({
           </p>
         )}
 
-        {!result && !failure && (
-          <p className="flex flex-1 items-center justify-center text-center text-sm text-vergex-muted">
-            {label('testEmpty')}
-          </p>
-        )}
-
         {result && (
           <div>
             <dl className="flex flex-wrap gap-x-6 gap-y-1 pb-3 text-[13px]">

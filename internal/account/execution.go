@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"math/big"
 	"strings"
 )
@@ -57,7 +58,33 @@ type Order struct {
 	Filled        Decimal `json:"filled"`
 	Average       Decimal `json:"average,omitempty"`
 	Error         string  `json:"error,omitempty"`
+	// Replaces is the order this stop or target takes over from, when its price was changed
+	// after approval. The exchange never sees it.
+	Replaces string `json:"replaces,omitempty"`
 }
+
+// RefusedOrder is an exchange saying clearly that it did not take an order, as against a
+// result nobody can be sure of. Nothing can be working on the exchange after it.
+type RefusedOrder struct{ Reason string }
+
+func (r RefusedOrder) Error() string { return r.Reason }
+
+// ErrOrderNotFound is an exchange saying clearly that it has no such order, as against a
+// read that failed.
+var ErrOrderNotFound = errors.New("the exchange has no such order")
+
+// OrderCanceller cancels an order placed by something other than a run, known only by what
+// the exchange lists. conditional says it is a stop or target rather than a resting order.
+type OrderCanceller interface {
+	CancelOpenOrder(ctx context.Context, symbol, orderID string, conditional bool) error
+}
+
+// PlainOrderID is the exchange's ID for an order, without the part OpenOrder lists add to
+// tell an algo order's stop from its target.
+func PlainOrderID(id string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(id, "_sl"), "_tp")
+}
+
 type Snapshot struct {
 	Equity, Available, FeeBPS Decimal
 	Position                  Decimal

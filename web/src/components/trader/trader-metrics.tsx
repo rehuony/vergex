@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import type { AgentCostSummary } from '@/api/agent'
+import { useEffect, useState, type ReactNode } from 'react'
 import type {
   AccountInfo,
   Position,
@@ -7,6 +8,7 @@ import type {
 } from '@/types'
 import { t, type Language } from '@/i18n'
 import { FigureGrid, StatStrip } from '@/components/common/figures'
+import { Skeleton } from '@/components/ui/skeleton'
 import { fmtCountdown, fmtPct, fmtTime, fmtUsd } from '@/utils/trader-format'
 
 interface TraderMetricsProps {
@@ -15,7 +17,11 @@ interface TraderMetricsProps {
   accountFailed: boolean
   /** What the trader last stored, to show when the account has never been read. */
   stored?: StoredMetrics
+  statsFailed?: boolean
   stats?: TraderFullStats
+  /** What its model calls have cost since it began. */
+  costs?: AgentCostSummary
+  costsFailed?: boolean
   positions?: Position[]
   running?: boolean
   nextCycleMs: number | null
@@ -56,12 +62,17 @@ function exposure(positions: Position[], account?: AccountInfo) {
 }
 
 // TraderMetrics is the headline readout: what it holds and what it has made first, then
-// the figures behind them. A figure with no trades behind it is a dash, not a zero.
+// the figures behind them. A figure being read is a bar, and one with no trades behind it
+// is 0. A read that failed with nothing to fall back on stays a dash, as 0 would say the
+// money is gone.
 export function TraderMetrics({
   account,
   accountFailed,
   stored,
   stats,
+  statsFailed,
+  costs,
+  costsFailed,
   positions,
   running,
   nextCycleMs,
@@ -80,25 +91,44 @@ export function TraderMetrics({
       : useStored
         ? label('equityAsOf', { time: fmtTime(stored?.equity_at) })
         : undefined
-  const traded = stats && stats.total_trades > 0 ? stats : undefined
+  const equity = useStored ? stored?.equity : account?.total_equity
+  // A figure from the trader's record, being read or, with no trades behind it, 0.
+  const traded = (
+    value: (row: TraderFullStats) => ReactNode,
+    size?: string
+  ): ReactNode =>
+    stats ? value(stats) : statsFailed ? '—' : <Skeleton className={size} />
   const book = exposure(positions ?? [], account)
-  const percent = (n?: number) => (n == null ? '—' : `${n.toFixed(1)}%`)
+  const held = (value: ReactNode) =>
+    positions || accountFailed ? value : <Skeleton />
+  const percent = (n?: number | null) => `${(n ?? 0).toFixed(1)}%`
   return (
     <>
       <StatStrip
         stats={[
           {
             name: label('equity'),
-            value: fmtUsd(useStored ? stored?.equity : account?.total_equity),
+            value:
+              equity != null ? (
+                fmtUsd(equity)
+              ) : accountFailed ? (
+                '—'
+              ) : (
+                <Skeleton className="w-28" />
+              ),
             note: staleNote && <span role="status">{staleNote}</span>,
           },
           {
             name: label('totalPnl'),
-            value: useStored
-              ? fmtPct(stored?.return_pct)
-              : pnl == null
-                ? '—'
-                : fmtUsd(pnl, true),
+            value: useStored ? (
+              fmtPct(stored?.return_pct)
+            ) : pnl != null ? (
+              fmtUsd(pnl, true)
+            ) : accountFailed ? (
+              '—'
+            ) : (
+              <Skeleton className="w-24" />
+            ),
             note:
               !useStored && pnl != null
                 ? fmtPct(account?.total_pnl_pct)
@@ -107,16 +137,21 @@ export function TraderMetrics({
           },
           {
             name: label('realizedPnl'),
-            value: traded ? fmtUsd(traded.total_pnl, true) : '—',
-            gain: traded?.total_pnl,
+            value: traded((row) => fmtUsd(row.total_pnl, true), 'h-[1em] w-24'),
+            note: statsFailed ? (
+              <span role="status">{label('notUpdating')}</span>
+            ) : undefined,
+            gain: stats?.total_pnl,
           },
           {
             name: label('maxDrawdown'),
-            value: !traded
-              ? '—'
-              : traded.max_drawdown_pct >= 0.05
-                ? `-${traded.max_drawdown_pct.toFixed(1)}%`
-                : '0.0%',
+            value: traded(
+              (row) =>
+                row.max_drawdown_pct >= 0.05
+                  ? `-${row.max_drawdown_pct.toFixed(1)}%`
+                  : '0.0%',
+              'h-[1em] w-20'
+            ),
           },
         ]}
       />
@@ -124,38 +159,64 @@ export function TraderMetrics({
         figures={[
           {
             name: label('profitFactor'),
-            value: traded ? traded.profit_factor.toFixed(2) : '—',
+            value: traded((row) => row.profit_factor.toFixed(2)),
           },
           {
             name: label('winRate'),
-            value: traded ? `${traded.win_rate.toFixed(1)}%` : '—',
+            value: traded((row) => `${row.win_rate.toFixed(1)}%`),
           },
           {
             name: label('trades'),
-            value: stats ? stats.total_trades : '—',
+            value: traded((row) => row.total_trades),
           },
           {
             name: label('fees'),
-            value: traded ? fmtUsd(traded.total_fee) : '—',
+            value: traded((row) => fmtUsd(row.total_fee)),
+          },
+          {
+            name: label('modelCost'),
+            value: !costs ? (
+              costsFailed ? (
+                '—'
+              ) : (
+                <Skeleton />
+              )
+            ) : costs.count > 0 && costs.unpriced_count === costs.count ? (
+              label('unpriced')
+            ) : (
+              `${costs.unpriced_count > 0 ? '≥ ' : ''}${fmtUsd(costs.total)}`
+            ),
+          },
+          {
+            name: label('netAfterCosts'),
+            value: traded((row) =>
+              costs ? (
+                `${costs.unpriced_count > 0 ? '≤ ' : ''}${fmtUsd(row.total_pnl - row.total_fee - costs.total, true)}`
+              ) : costsFailed ? (
+                '—'
+              ) : (
+                <Skeleton />
+              )
+            ),
           },
           {
             name: label('sharpe'),
-            value: traded ? traded.sharpe_ratio.toFixed(2) : '—',
+            value: traded((row) => row.sharpe_ratio.toFixed(2)),
           },
           {
             name: label('avgWinLoss'),
-            value: traded
-              ? `${traded.avg_win.toFixed(2)} / ${traded.avg_loss.toFixed(2)}`
-              : '—',
+            value: traded(
+              (row) => `${row.avg_win.toFixed(2)} / ${row.avg_loss.toFixed(2)}`
+            ),
           },
-          { name: label('long'), value: fmtUsd(book.long) },
-          { name: label('short'), value: fmtUsd(book.short) },
-          { name: label('marginUsed'), value: percent(book.margin) },
+          { name: label('long'), value: held(fmtUsd(book.long)) },
+          { name: label('short'), value: held(fmtUsd(book.short)) },
+          { name: label('marginUsed'), value: held(percent(book.margin)) },
           {
             name: label('avgLeverage'),
-            value: book.leverage == null ? '—' : `${book.leverage.toFixed(1)}×`,
+            value: held(`${(book.leverage ?? 0).toFixed(1)}×`),
           },
-          { name: label('largest'), value: percent(book.largest) },
+          { name: label('largest'), value: held(percent(book.largest)) },
           {
             name: label('nextCycle'),
             value: running ? <NextCycle at={nextCycleMs} /> : '—',

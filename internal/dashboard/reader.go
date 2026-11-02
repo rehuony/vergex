@@ -8,6 +8,7 @@ import (
 
 	"vergex/internal/account"
 	"vergex/internal/agent"
+	"vergex/internal/database"
 	"vergex/internal/forecast"
 	"vergex/internal/logger"
 	"vergex/internal/market/feed"
@@ -71,13 +72,38 @@ type reader struct {
 
 func newReader(sources Sources, now func() time.Time) *reader {
 	started := now().Add(-window)
-	return &reader{
+	r := &reader{
 		sources:   sources,
 		now:       now,
 		started:   started,
 		orders:    started.UnixMilli(),
 		positions: started.UnixMilli(),
 		refused:   started,
+	}
+	r.startCursors()
+	return r
+}
+
+// startCursors puts each ID where the window starts. An ID only moves on a row it reads,
+// so from 0 every round would walk all the old rows again until a new one came. A cursor
+// it cannot read stays at 0, which is only slower.
+func (r *reader) startCursors() {
+	start := func(name string, read func() (int64, error), cursor *int64) {
+		id, err := read()
+		if err != nil {
+			logger.Warnf("Activity: start reading %s: %v", name, err)
+			return
+		}
+		*cursor = id
+	}
+	stores := r.sources.Stores
+	start("model calls", func() (int64, error) { return stores.Calls.CursorAt(r.started) }, &r.calls)
+	start("cycles", func() (int64, error) { return stores.Decisions.CycleCursorAt(r.started) }, &r.cycles)
+	start("fills", func() (int64, error) { return stores.Orders.FillCursorAt(r.started) }, &r.fills)
+	if r.sources.Forecasts != nil {
+		start("forecasts", func() (int64, error) {
+			return database.CursorAt(stores.DB, "forecast.signals", "open_at", r.started)
+		}, &r.records)
 	}
 }
 

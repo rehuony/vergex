@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Check, ChevronDown } from 'lucide-react'
 import { futuresAPI } from '@/api/futures'
 import { dialogInputClass } from '@/components/common/dialog'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
 import {
   Popover,
@@ -62,14 +62,12 @@ export function MarketPicker({
   const [open, setOpen] = useState(false)
   const [board, setBoard] = useState<Board | null>(null)
   const [error, setError] = useState(false)
-  const [loading, setLoading] = useState(false)
   const [search, setSearch] = useState('')
   const [revision, setRevision] = useState(0)
 
   useEffect(() => {
     if (!open) return
     let active = true
-    setLoading(true)
     setError(false)
     futuresAPI<Board>('markets?venue=' + encodeURIComponent(venue))
       .then((next) => {
@@ -88,9 +86,6 @@ export function MarketPicker({
       })
       .catch(() => {
         if (active) setError(true)
-      })
-      .finally(() => {
-        if (active) setLoading(false)
       })
     return () => {
       active = false
@@ -164,9 +159,7 @@ export function MarketPicker({
             </Button>
           </PanelState>
         ) : !current ? (
-          <PanelState role="status">
-            {loading ? label('loadingMarkets') : ''}
-          </PanelState>
+          <PanelLoading />
         ) : rows.length === 0 ? (
           <PanelState role="status">
             {search.trim() ? label('openTyped') : label('noMarkets')}

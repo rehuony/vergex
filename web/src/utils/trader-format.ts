@@ -1,15 +1,18 @@
 // Number, symbol and time formats for trader data.
 
 export function fmtUsd(n: number | undefined, signed = false): string {
-  if (n == null || Number.isNaN(n)) return '—'
+  if (n == null || Number.isNaN(n)) return '$0'
   const sign = signed && n > 0 ? '+' : n < 0 ? '-' : ''
   return `${sign}$${Math.abs(n).toLocaleString('en-US', { maximumFractionDigits: 2 })}`
 }
 export function fmtPct(n: number | undefined): string {
-  if (n == null || Number.isNaN(n)) return '—'
+  if (n == null || Number.isNaN(n)) return '0.00%'
   return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`
 }
-/** Price with magnitude-aware precision: 64,416 · 184.2 · 2.3775 · 0.0067 */
+/**
+ * Price with magnitude-aware precision: 64,416 · 184.2 · 2.3775 · 0.0067. An order or
+ * position with no price has none, rather than a price of 0.
+ */
 export function fmtPx(n: number | undefined): string {
   if (n == null || Number.isNaN(n) || n === 0) return '—'
   const dp = n >= 1000 ? 0 : n >= 100 ? 1 : n >= 1 ? 2 : 4

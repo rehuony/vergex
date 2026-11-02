@@ -202,3 +202,30 @@ func TestOverviewNamesTradesTheLedgerIsMissing(t *testing.T) {
 		t.Fatalf("attention: %+v", out.Attention)
 	}
 }
+
+func TestOverviewLeavesTestMoneyOutOfItsTotals(t *testing.T) {
+	st := NewStores(testdb.Open(t))
+	s := &Server{stores: st, traderManager: trader.NewManager(trader.NewStores(st.DB)), accountStateCache: NewAccountStateCache()}
+	demo := &account.Account{ID: "demo", UserID: "alice", Venue: "binance", Name: "Demo", Testnet: true}
+	main := &account.Account{ID: "main", UserID: "alice", Venue: "binance", Name: "Main"}
+	s.accountStateCache.Set("alice", map[string]AccountState{
+		"demo": {AccountID: "demo", Status: accountStatusOK, TotalEquity: 5000},
+		"main": {AccountID: "main", Status: accountStatusOK, TotalEquity: 100},
+	})
+	var out overviewResponse
+	ready := s.addOverviewAccounts("alice", []*account.Account{demo, main}, &out)
+	if len(ready) != 2 {
+		t.Fatalf("ready: %d", len(ready))
+	}
+	if out.Accounts[0].TotalEquity != nil || out.Accounts[0].Name != "Demo (testnet)" {
+		t.Fatalf("testnet row: %+v", out.Accounts[0])
+	}
+	if out.Accounts[1].TotalEquity == nil || *out.Accounts[1].TotalEquity != 100 || out.Accounts[1].Name != "Main" {
+		t.Fatalf("real row: %+v", out.Accounts[1])
+	}
+	out = overviewResponse{}
+	s.addOverviewRealized([]*account.Account{demo}, &out)
+	if out.RealizedToday != nil {
+		t.Fatalf("realized on testnet alone: %v", *out.RealizedToday)
+	}
+}

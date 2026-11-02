@@ -147,6 +147,8 @@ type OpenOrder struct {
 	StopPrice    float64 `json:"stop_price"`    // Trigger price (for stop orders)
 	Quantity     float64 `json:"quantity"`
 	Status       string  `json:"status"` // NEW
+	// Conditional says it is a stop or target, which venues keep apart from resting orders.
+	Conditional bool `json:"conditional,omitempty"`
 }
 
 // LimitOrderRequest represents a limit order request for grid trading

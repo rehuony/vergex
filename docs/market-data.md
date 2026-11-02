@@ -84,6 +84,8 @@ The drawdown monitor reads positions from the exchange every minute, as the chec
 
 The Futures chart gets what the exchange has when it opens, then the stream, and polls every 3 seconds while no stream is up. Plan snapshots and execution do not read any of this.
 
+A [testnet](accounts.md#testnet) account changes none of this: all of it stays on the real market. Only the account's own balance, positions, orders and fills, and the book a Futures plan on it reads, come from the test environment.
+
 ## Rate limits
 
 | Protection | Behaviour |
@@ -92,6 +94,7 @@ The Futures chart gets what the exchange has when it opens, then the stream, and
 | Used weight | Reads `X-MBX-USED-WEIGHT-1M`, which includes live trading on this IP, and above 1200 pauses background requests to the next minute. Trading's reads carry on |
 | 429, 403 | Pauses everything, using `Retry-After` or else 60 seconds doubling up to 30 minutes |
 | 418 | Pauses everything for `Retry-After` or at least an hour, and the Dashboard shows the service as failed |
+| Public reads | The order books, chart history and data plugins Futures reads don't wait for any budget, so a long catch-up cannot hold up someone planning a trade. Their responses still reach the limiter, so the weight they use and any 429 or 418 pause background requests |
 | 5xx, timeouts | Backs off that series only |
 | Retries | None within a request; the series goes back in the queue |
 | Silent connections | Every REST request to a venue, trading included, goes through `service.VenueTransport`. A connection that has received nothing for 10 seconds gets an HTTP/2 ping, and is closed if no answer comes within 5. That fails the requests waiting on it, and the next one opens a new connection |

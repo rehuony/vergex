@@ -12,6 +12,7 @@ import {
   wideTableClass,
 } from '@/components/common/figures'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { baseLabel, fmtHold, fmtTime, fmtUsd } from '@/utils/trader-format'
 
 /** How many closed trades the page reads first, and each older page after that. */
@@ -131,7 +132,7 @@ export function RecentCloses({
       </table>
       {!trades ? (
         <EmptyLine role={failed ? 'alert' : 'status'}>
-          {failed ? label('closedTradesFailed') : t('loading', language)}
+          {failed ? label('closedTradesFailed') : <Skeleton className="w-40" />}
         </EmptyLine>
       ) : (
         rows.length === 0 && (

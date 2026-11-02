@@ -1,12 +1,14 @@
 import type {
   Account,
+  AccountFill,
   AccountState,
   AccountStateResponse,
   CreateAccountRequest,
   Position,
+  TraderOrder,
   UpdateAccountConfigRequest,
 } from '@/types'
-import { API_BASE, httpClient, sealCredentials } from './helpers'
+import { API_BASE, httpClient, sealCredentials, serverError } from './helpers'
 import { normalizePosition } from './trader'
 
 export const accountApi = {
@@ -62,6 +64,55 @@ export const accountApi = {
     if (!result.success) throw new Error('Failed to update accounts')
   },
 
+  async renameAccount(accountId: string, name: string): Promise<void> {
+    const result = await httpClient.put(
+      `${API_BASE}/accounts/${encodeURIComponent(accountId)}/name`,
+      { name }
+    )
+    if (!result.success) throw new Error('Failed to rename account')
+  },
+
+  /** Live mark prices by symbol. A coin is left out while none is known. */
+  async getAccountMarks(
+    accountId: string,
+    symbols: string
+  ): Promise<Record<string, number>> {
+    const result = await httpClient.request<{
+      marks: Record<string, number>
+    }>(
+      `${API_BASE}/accounts/${encodeURIComponent(accountId)}/marks?symbols=${encodeURIComponent(symbols)}`,
+      { silent: true }
+    )
+    if (!result.success) throw new Error('Failed to fetch mark prices')
+    return result.data?.marks ?? {}
+  },
+
+  async getAccountOrders(
+    accountId: string,
+    limit: number,
+    silent?: boolean
+  ): Promise<TraderOrder[]> {
+    const result = await httpClient.request<TraderOrder[]>(
+      `${API_BASE}/accounts/${encodeURIComponent(accountId)}/orders?limit=${limit}`,
+      { silent }
+    )
+    if (!result.success) throw serverError(result, 'Failed to fetch orders')
+    return result.data ?? []
+  },
+
+  async getAccountFills(
+    accountId: string,
+    limit: number,
+    silent?: boolean
+  ): Promise<AccountFill[]> {
+    const result = await httpClient.request<AccountFill[]>(
+      `${API_BASE}/accounts/${encodeURIComponent(accountId)}/fills?limit=${limit}`,
+      { silent }
+    )
+    if (!result.success) throw serverError(result, 'Failed to fetch fills')
+    return result.data ?? []
+  },
+
   async getAccountPositions(
     accountId: string,
     silent?: boolean
@@ -70,7 +121,7 @@ export const accountApi = {
       `${API_BASE}/accounts/${encodeURIComponent(accountId)}/positions`,
       { silent }
     )
-    if (!result.success) throw new Error('Failed to fetch positions')
+    if (!result.success) throw serverError(result, 'Failed to fetch positions')
     return result.data!.map(normalizePosition)
   },
 }

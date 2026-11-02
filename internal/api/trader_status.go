@@ -162,12 +162,13 @@ func (s *Server) handleClosePosition(c *gin.Context) {
 	// Convert EncryptedString fields to string
 	switch accountCfg.Venue {
 	case "binance":
-		tempTrader = binance.NewAccount(string(accountCfg.APIKey), string(accountCfg.SecretKey))
+		tempTrader = binance.NewAccount(string(accountCfg.APIKey), string(accountCfg.SecretKey), accountCfg.Testnet)
 	case "okx":
 		tempTrader = okx.NewReadOnlyAccount(
 			string(accountCfg.APIKey),
 			string(accountCfg.SecretKey),
 			string(accountCfg.Passphrase),
+			accountCfg.Testnet,
 		)
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unsupported exchange type"})

@@ -248,7 +248,7 @@ it('shows how a strategy has done live, and how far it is from a curve', async (
   expect(rail()).toBeVisible()
 })
 
-it('says when no calls have been judged, with dashes for what is unknown', async () => {
+it('says when no calls have been judged, with 0 for what has nothing behind it', async () => {
   mocks.performance.mockResolvedValue({
     overall: {
       judged: 0,
@@ -269,7 +269,8 @@ it('says when no calls have been judged, with dashes for what is unknown', async
   expect(
     await screen.findByText('No calls have been judged yet.')
   ).toBeVisible()
-  expect(screen.getAllByText('—').length).toBeGreaterThan(3)
+  expect(screen.getAllByText('0.0%').length).toBeGreaterThan(1)
+  expect(screen.queryByText('—')).toBeNull()
   expect(screen.queryByText('NaN')).toBeNull()
 })
 

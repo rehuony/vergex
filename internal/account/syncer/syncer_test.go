@@ -82,7 +82,7 @@ func newFixture(t *testing.T) (*Service, *testStores, *account.Account, *fakeSou
 	t.Helper()
 	st := newTestStores(testdb.Open(t))
 	user := testdb.AddUser(t, st.DB)
-	id, err := st.Accounts.Create(user, "binance", "Main", "key", "secret", "")
+	id, err := st.Accounts.Create(user, "binance", "Main", "key", "secret", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

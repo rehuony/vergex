@@ -1,5 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery } from '@tanstack/react-query'
 import { api } from '@/api'
+import { AGENT_PROVIDER_CONFIG } from '@/constants/model-providers'
 import type { AgentModel, Account } from '@/types'
 
 // models and exchange accounts are edited in settings, over whatever page
@@ -18,6 +19,33 @@ export const useSupportedModels = () =>
     queryFn: () => api.getSupportedModels(),
     refetchOnWindowFocus: false,
   })
+
+export const MODEL_CATALOG_KEY = 'model-catalog'
+
+// The model a connection is set to: the name given to it, else its provider's default.
+export const connectionModel = (model: AgentModel) =>
+  model.customModelName ||
+  AGENT_PROVIDER_CONFIG[model.provider]?.defaultModel ||
+  model.name
+
+// What each connection's provider offers, its own model first. Providers rarely change
+// this, and a provider that will not say leaves just the model it is set to.
+export function useModelChoices(models: AgentModel[]) {
+  const catalogs = useQueries({
+    queries: models.map((model) => ({
+      queryKey: [MODEL_CATALOG_KEY, model.id],
+      queryFn: () => api.getAvailableModels(model.id),
+      staleTime: 60 * 60 * 1000,
+      refetchOnWindowFocus: false,
+      retry: false,
+    })),
+  })
+  return models.flatMap((model, index) => {
+    const own = connectionModel(model)
+    const others = (catalogs[index].data ?? []).filter((name) => name !== own)
+    return [own, ...others].map((name) => ({ id: model.id, name }))
+  })
+}
 
 export const useAccounts = () =>
   useQuery({ queryKey: ['accounts'], queryFn: () => api.getAccounts() })

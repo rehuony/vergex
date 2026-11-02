@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
 import { QueryWrapper } from '@/tests/query-wrapper'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   verify: vi.fn(),
   create: vi.fn(),
   update: vi.fn(),
+  rename: vi.fn(),
   remove: vi.fn(),
   traders: vi.fn(),
   confirm: vi.fn(),
@@ -26,6 +28,7 @@ vi.mock('@/api', () => ({
     verifyAccount: mocks.verify,
     createAccountEncrypted: mocks.create,
     updateAccountsEncrypted: mocks.update,
+    renameAccount: mocks.rename,
     deleteAccount: mocks.remove,
     getTraders: mocks.traders,
     getServerIP: async () => ({ public_ip: '203.0.113.7', message: '' }),
@@ -57,6 +60,7 @@ beforeEach(() => {
   mocks.states.mockResolvedValue({ states: {} })
   mocks.create.mockResolvedValue({ id: 'new' })
   mocks.update.mockResolvedValue(undefined)
+  mocks.rename.mockResolvedValue(undefined)
   mocks.traders.mockResolvedValue([])
   mocks.confirm.mockResolvedValue(true)
 })
@@ -87,7 +91,7 @@ it('checks a newly added account and shows its balance once, with the currency',
     },
   })
   fireEvent.click(screen.getByRole('button', { name: 'Add account' }))
-  const save = screen.getByRole('button', { name: 'Save Configuration' })
+  const save = screen.getByRole('button', { name: 'Save' })
   fireEvent.change(screen.getByLabelText('Account name'), {
     target: { value: 'Second' },
   })
@@ -102,10 +106,11 @@ it('checks a newly added account and shows its balance once, with the currency',
   fireEvent.click(save)
 
   expect(await screen.findByText('Connected')).toBeVisible()
-  expect(screen.getByText('Binance · 321.97 USDT')).toBeVisible()
+  expect(screen.getByText('321.97 USDT')).toBeVisible()
   expect(mocks.create).toHaveBeenCalledWith({
     venue: 'binance',
     name: 'Second',
+    testnet: false,
     api_key: 'fixture-key',
     secret_key: 'fixture-secret',
     passphrase: '',
@@ -114,7 +119,7 @@ it('checks a newly added account and shows its balance once, with the currency',
 
   fireEvent.click(screen.getByRole('button', { name: 'Edit Main' }))
   expect(screen.getByText('321.97 USDT')).toBeVisible()
-  expect(screen.getByText('available 300.50 USDT')).toBeVisible()
+  expect(screen.getByText('300.50 USDT')).toBeVisible()
 })
 
 it('checks one account again after the list check fails', async () => {
@@ -132,7 +137,7 @@ it('checks one account again after the list check fails', async () => {
   expect(mocks.states).toHaveBeenCalledTimes(1)
   fireEvent.click(screen.getByRole('button', { name: 'Edit Main' }))
   expect(
-    screen.getByText('Check Futures permissions and IP allowlist')
+    screen.getByText(/Check Futures permissions and IP allowlist/)
   ).toBeVisible()
   expect(mocks.update).not.toHaveBeenCalled()
   expect(mocks.create).not.toHaveBeenCalled()
@@ -141,7 +146,7 @@ it('checks one account again after the list check fails', async () => {
 it('replaces only the keys typed into an edit', async () => {
   show()
   fireEvent.click(await screen.findByRole('button', { name: 'Edit Main' }))
-  const save = screen.getByRole('button', { name: 'Save Configuration' })
+  const save = screen.getByRole('button', { name: 'Save' })
   expect(save).toBeDisabled()
   fireEvent.change(screen.getByLabelText('Secret Key'), {
     target: { value: 'new-secret' },
@@ -159,6 +164,108 @@ it('replaces only the keys typed into an edit', async () => {
       },
     })
   )
+})
+
+it('heads an account with its state, what is wrong and its ledger', async () => {
+  mocks.states.mockResolvedValue({
+    states: {
+      exchange: {
+        account_id: 'exchange',
+        status: 'permission_denied',
+        error_message: 'The key cannot trade',
+      },
+    },
+  })
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Main' }))
+  const heading = screen.getByRole('heading', { name: 'Main' }).parentElement
+    ?.parentElement as HTMLElement
+  expect(within(heading).getByText('Check permissions')).toBeVisible()
+  expect(within(heading).getByText(/The key cannot trade/)).toBeVisible()
+  expect(screen.queryByText('Status')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Ledger' }))
+  expect(await screen.findByRole('button', { name: 'Fills' })).toBeVisible()
+})
+
+it('lists what a key may do, and marks what it should not', async () => {
+  mocks.states.mockResolvedValue({
+    states: {
+      exchange: {
+        account_id: 'exchange',
+        status: 'ok',
+        display_balance: '100 USDT',
+        asset: 'USDT',
+        permissions: {
+          read: true,
+          trade: false,
+          withdraw: true,
+          ip_restricted: true,
+        },
+      },
+    },
+  })
+  show()
+  expect(
+    await screen.findByText(/· Read · Withdrawals · IP restricted$/)
+  ).toBeVisible()
+  expect(screen.getByText('Can withdraw')).toBeVisible()
+})
+
+it('renames an account without touching its keys or checking it again', async () => {
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit Main' }))
+  const checks = mocks.states.mock.calls.length
+  fireEvent.change(screen.getByLabelText('Account name'), {
+    target: { value: 'Second' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(mocks.rename).toHaveBeenCalledWith('exchange', 'Second')
+  )
+  expect(mocks.update).not.toHaveBeenCalled()
+  await screen.findByRole('button', { name: 'Add account' })
+  expect(mocks.states.mock.calls.length).toBe(checks)
+})
+
+it('adds a testnet account with the pill beside the venue', async () => {
+  show()
+  await screen.findByRole('button', { name: 'Edit Main' })
+  fireEvent.click(screen.getByRole('button', { name: 'Add account' }))
+  const pill = screen.getByRole('button', { name: 'Testnet' })
+  expect(pill).toHaveAttribute('aria-pressed', 'false')
+  fireEvent.click(pill)
+  expect(pill).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.change(screen.getByLabelText('Account name'), {
+    target: { value: 'Practice' },
+  })
+  fireEvent.change(screen.getByLabelText('API Key'), {
+    target: { value: 'key' },
+  })
+  fireEvent.change(screen.getByLabelText('Secret Key'), {
+    target: { value: 'secret' },
+  })
+  const save = screen.getByRole('button', { name: 'Save' })
+  await waitFor(() => expect(save).toBeEnabled())
+  fireEvent.click(save)
+  await waitFor(() =>
+    expect(mocks.create).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'Practice', testnet: true })
+    )
+  )
+})
+
+it('lists the accounts under their venue and environment', async () => {
+  mocks.accounts.mockResolvedValue([
+    account,
+    { ...account, id: 'practice', name: 'Practice', testnet: true },
+    { ...account, id: 'okx', name: 'Swap', venue: 'okx' },
+  ])
+  show()
+  await screen.findByRole('button', { name: 'Edit Main' })
+  const groups = screen
+    .getAllByRole('region')
+    .map((group) => group.getAttribute('aria-label'))
+  expect(groups).toEqual(['Binance', 'Binance · Testnet', 'OKX'])
 })
 
 it('will not delete an account a trader trades on', async () => {

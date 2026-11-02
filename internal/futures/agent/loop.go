@@ -68,22 +68,26 @@ type outcome struct {
 	Waiting    bool     `json:"waiting,omitempty"`
 }
 
-func (o outcome) summary() string {
+func (o outcome) summary(code string) string {
+	l, ok := languages[code]
+	if !ok {
+		l = languages["en"]
+	}
 	if o.Drafts > 0 {
-		return fmt.Sprintf("Saved %d unapproved drafts. Review the chart and child orders; separate explicit approval is required to execute.", o.Drafts)
+		return fmt.Sprintf(l.saved, o.Drafts)
 	}
 	if o.Waiting {
-		return "No new entry selected. Review the conditions to watch for each entry type. No orders were submitted."
+		return l.waiting
 	}
-	text := "No trade plan passed validation. No trade will be placed."
+	text := l.noTrade
 	if len(o.Rejections) > 0 {
-		text += "\nConstraints checked:\n" + strings.Join(o.Rejections[max(0, len(o.Rejections)-4):], "\n")
+		text += "\n" + l.checked + "\n" + strings.Join(o.Rejections[max(0, len(o.Rejections)-4):], "\n")
 	}
 	if o.StopReason == "model_unavailable" {
-		text += "\nThe model did not complete its explanation. Validated results are retained for further discussion."
+		text += "\n" + l.modelUnavailable
 	}
 	if o.StopReason == "budget" {
-		text += "\nThe planning budget is exhausted. Results are retained. Continue with more context if needed; risk standards are unchanged and no orders are placed automatically."
+		text += "\n" + l.outOfBudget
 	}
 	return text
 }
@@ -104,9 +108,9 @@ func (e *Engine) record(role string, message Message) {
 	}
 }
 
-func (e *Engine) finishTurn(ctx context.Context, messages []Message, result outcome, emit Emit, explain bool) error {
+func (e *Engine) finishTurn(ctx context.Context, messages []Message, result outcome, code string, emit Emit, explain bool) error {
 	if explain && ctx.Err() == nil {
-		prompt := Message{Role: "user", Content: "Planning is finished. Briefly explain validated results, assumptions and rejection reasons in English. Do not call tools, promise profit or claim approval/execution. If no draft passed, explicitly state no trade."}
+		prompt := Message{Role: "user", Content: "Planning is finished. Briefly explain validated results, assumptions and rejection reasons. Do not call tools, promise profit or claim approval/execution. If no draft passed, explicitly state no trade. " + replyLanguage(code) + "."}
 		messages = append(messages, prompt)
 		e.record(RoleContext, prompt)
 		answer, err := chatWithProgress(ctx, e.Model, messages, nil, emit)
@@ -119,8 +123,9 @@ func (e *Engine) finishTurn(ctx context.Context, messages []Message, result outc
 		}
 	}
 	// The user reads this as the answer, so it counts as one.
-	e.record(RoleAssistant, Message{Role: "assistant", Content: result.summary()})
-	if err := emit(Event{"assistant", map[string]string{"message": result.summary()}}); err != nil {
+	summary := result.summary(code)
+	e.record(RoleAssistant, Message{Role: "assistant", Content: summary})
+	if err := emit(Event{"assistant", map[string]string{"message": summary}}); err != nil {
 		return err
 	}
 	return emit(Event{"outcome", result})

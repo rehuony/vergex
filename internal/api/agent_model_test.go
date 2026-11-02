@@ -102,3 +102,73 @@ func TestModelTestUsesFormValuesAndSavedKey(t *testing.T) {
 		}
 	}
 }
+
+func TestModelListAnswersWithTheProvidersNames(t *testing.T) {
+	t.Setenv("JWT_SECRET", strings.Repeat("model-list-secret-", 4))
+	var key string
+	answer, status := `{"data":[{"id":"b-model"},{"id":"a-model"},{"id":"an-embedding"}]}`, http.StatusOK
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key = r.Header.Get("Authorization")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(answer))
+	}))
+	defer server.Close()
+	st := NewStores(testdb.Open(t))
+	owner := testdb.AddUser(t, st.DB)
+	if err := st.Models.Save(owner, "deepseek", "DeepSeek", true, "sk-saved-key", server.URL, ""); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := st.Models.Find(owner, "deepseek")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The real client refuses to reach a private address such as the fixture's.
+	orig := newModelListClient
+	newModelListClient = func(p string) agent.Client {
+		return agent.NewClientByProvider(p, agent.WithHTTPClient(server.Client()))
+	}
+	t.Cleanup(func() { newModelListClient = orig })
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) { c.Set("user_id", c.GetHeader("Test-User")) })
+	s := &Server{stores: st}
+	router.GET("/models/:id/available", s.handleSavedModelList)
+	router.POST("/models/available", s.handleModelFormList)
+	call := func(method, path, as, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Test-User", as)
+		router.ServeHTTP(w, r)
+		return w
+	}
+
+	w := call(http.MethodGet, "/models/"+saved.ID+"/available", owner, "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `{"models":["a-model","b-model"]}`) {
+		t.Fatalf("saved list = %d %s", w.Code, w.Body)
+	}
+	if key != "Bearer sk-saved-key" {
+		t.Errorf("asked with %q", key)
+	}
+	if w := call(http.MethodGet, "/models/"+saved.ID+"/available", testdb.AddOtherUser(t, st.DB), ""); w.Code != http.StatusNotFound {
+		t.Errorf("another user got %d", w.Code)
+	}
+
+	// What goes wrong comes back as the provider's message, without the key.
+	answer, status = `{"error":{"message":"sk-saved-key is not valid"}}`, http.StatusUnauthorized
+	w = call(http.MethodGet, "/models/"+saved.ID+"/available", owner, "")
+	if w.Code != http.StatusBadGateway || strings.Contains(w.Body.String(), "sk-saved-key") || !strings.Contains(w.Body.String(), "HTTP 401") {
+		t.Errorf("failed list = %d %s", w.Code, w.Body)
+	}
+
+	// The form's endpoint is held to the same rules as saving one.
+	w = call(http.MethodPost, "/models/available", owner, `{"agent_model_id":"deepseek","api_key":"sk-typed","custom_api_url":"http://127.0.0.1:1/v1"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("a private endpoint got %d", w.Code)
+	}
+	w = call(http.MethodPost, "/models/available", owner, `{"agent_model_id":"nope","api_key":"sk-typed"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("an unknown provider got %d", w.Code)
+	}
+}

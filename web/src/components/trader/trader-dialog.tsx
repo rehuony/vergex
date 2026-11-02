@@ -10,6 +10,7 @@ import { NumberField } from '@/components/common/form-fields'
 import { Segmented } from '@/components/common/segmented'
 import { Button } from '@/components/ui/button'
 import { AppSelect } from '@/components/ui/select'
+import { testnetMark } from '@/constants/model-providers'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
 import type {
@@ -25,7 +26,8 @@ export const MAX_INTERVAL = 60
 
 export function accountLabel(account: Account) {
   const venue = account.venue_name || account.venue
-  return account.name ? `${venue} · ${account.name}` : venue
+  const name = account.name ? `${venue} · ${account.name}` : venue
+  return name + testnetMark(account)
 }
 
 export function modelLabel(model: AgentModel) {

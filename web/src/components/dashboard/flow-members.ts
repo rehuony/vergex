@@ -41,6 +41,13 @@ export function totalEquity(overview: Overview) {
   return known.reduce((sum, row) => sum + (row.total_equity ?? 0), 0)
 }
 
+// The total as a figure. With accounts but none readable there is no total, and 0 would
+// say the money is gone.
+export const equityText = (overview: Overview) => {
+  const total = totalEquity(overview)
+  return total === undefined && overview.accounts.length ? '—' : fmtUsd(total)
+}
+
 // What each block of the scene is made of. Every dot is a real member; the phone's
 // groups and the scene read the same list.
 export function blockViews(
@@ -161,9 +168,7 @@ export function blockViews(
       })),
     },
     accounts: {
-      sub: overview.accounts.length
-        ? fmtUsd(totalEquity(overview))
-        : label('flow.none'),
+      sub: overview.accounts.length ? equityText(overview) : label('flow.none'),
       members: overview.accounts.map((row) => ({
         id: row.id,
         tone: row.status === 'ok' ? 'on' : 'off',

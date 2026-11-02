@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import type { ActivityEvent, ActivityKind } from '@/api/dashboard'
 import type { Overview } from '@/api/dashboard'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { Segmented } from '@/components/common/segmented'
 import { SettingsLink } from '@/components/settings/settings-link'
 import { buttonVariants } from '@/components/ui/button'
@@ -167,12 +167,16 @@ export function FlowEvents({
           {positions}
         </div>
       ) : !loaded ? (
-        <PanelState
-          role={stale ? 'alert' : 'status'}
-          className="flex-1 border-t border-vergex-line"
-        >
-          {label(stale ? 'flow.loadFailed' : 'flow.loading')}
-        </PanelState>
+        stale ? (
+          <PanelState
+            role="alert"
+            className="flex-1 border-t border-vergex-line"
+          >
+            {label('flow.loadFailed')}
+          </PanelState>
+        ) : (
+          <PanelLoading className="flex-1 border-t border-vergex-line" />
+        )
       ) : shown.length === 0 ? (
         <PanelState
           role="status"

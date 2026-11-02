@@ -1,6 +1,7 @@
 package trader
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -47,25 +48,6 @@ func (at *AutoTrader) runCycle() error {
 		return fmt.Errorf("trading authorization check failed: %w", err)
 	}
 
-	// 1. Check if trading needs to be stopped
-	if time.Now().Before(at.stopUntil) {
-		remaining := at.stopUntil.Sub(time.Now())
-		at.logWarnf("⏸ Risk control: Trading paused, remaining %.0f minutes", remaining.Minutes())
-		record.Success = false
-		record.ErrorMessage = fmt.Sprintf("Risk control paused, remaining %.0f minutes", remaining.Minutes())
-		if err := at.saveDecision(record); err != nil {
-			at.logWarnf("⚠ Failed to save decision record: %v", err)
-		}
-		return nil
-	}
-
-	// 2. Reset daily P&L (reset every day)
-	if time.Since(at.lastResetTime) > 24*time.Hour {
-		at.dailyPnL = 0
-		at.lastResetTime = time.Now()
-		logger.Info("📅 Daily P&L reset")
-	}
-
 	// 4. Collect trading context
 	ctx, err := at.buildTradingContext()
 	if err != nil {
@@ -88,6 +70,19 @@ func (at *AutoTrader) runCycle() error {
 		PositionCount:         ctx.Account.PositionCount,
 		MarginUsedPct:         ctx.Account.MarginUsedPct,
 		InitialBalance:        at.initialBalance,
+	}
+
+	// A halted trader opens nothing. It still asks the model about what it holds, so a
+	// position can be closed, and with nothing held there is nothing to ask.
+	at.checkLossLimits(ctx.Account.TotalEquity)
+	halt := at.ActiveHalt()
+	if halt != nil && len(ctx.Positions) == 0 {
+		at.logWarnf("⏸ Halted with nothing held, skipping this cycle: %s", halt.Reason)
+		record.ExecutionLog = append(record.ExecutionLog, "Halted with nothing held, cycle skipped: "+halt.Reason)
+		if err := at.saveDecision(record); err != nil {
+			at.logWarnf("⚠ Failed to save decision record: %v", err)
+		}
+		return nil
 	}
 
 	// If no candidate coins available, log but do not error
@@ -268,7 +263,14 @@ func (at *AutoTrader) runCycle() error {
 			Success:    false,
 		}
 
-		if reason := at.tradeThrottleReason(d, ctx); reason != "" {
+		reason := d.Rejected
+		if reason == "" && halt != nil && isOpenAction(d.Action) {
+			reason = "halted: " + halt.Reason
+		}
+		if reason == "" {
+			reason = at.tradeThrottleReason(d, ctx)
+		}
+		if reason != "" {
 			at.logWarnf("🧊 %s %s blocked: %s", d.Symbol, d.Action, reason)
 			actionRecord.Error = reason
 			actionRecord.Blocked = true
@@ -277,9 +279,17 @@ func (at *AutoTrader) runCycle() error {
 			continue
 		}
 		if err := at.executeDecisionWithRecord(&d, &actionRecord); err != nil {
-			at.logErrorf("❌ Failed to execute decision (%s %s): %v", d.Symbol, d.Action, err)
-			actionRecord.Error = err.Error()
-			record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf("❌ %s %s failed: %v", d.Symbol, d.Action, err))
+			var block riskBlock
+			if errors.As(err, &block) {
+				at.logWarnf("🧊 %s %s blocked: %s", d.Symbol, d.Action, block.reason)
+				actionRecord.Error = block.reason
+				actionRecord.Blocked = true
+				record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf("🧊 %s %s blocked: %s", d.Symbol, d.Action, block.reason))
+			} else {
+				at.logErrorf("❌ Failed to execute decision (%s %s): %v", d.Symbol, d.Action, err)
+				actionRecord.Error = err.Error()
+				record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf("❌ %s %s failed: %v", d.Symbol, d.Action, err))
+			}
 		} else {
 			actionRecord.Success = true
 			record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf("✓ %s %s succeeded", d.Symbol, d.Action))

@@ -32,7 +32,7 @@ type Ledger struct {
 func NewLedger(t testing.TB, db *gorm.DB) *Ledger {
 	t.Helper()
 	testdb.AddUser(t, db)
-	id, err := account.NewStore(db).Create(testdb.UserID, "binance", "Ledger", uuid.NewString(), "ledger-secret", "")
+	id, err := account.NewStore(db).Create(testdb.UserID, "binance", "Ledger", uuid.NewString(), "ledger-secret", "", false)
 	if err != nil {
 		t.Fatalf("create account: %v", err)
 	}

@@ -97,6 +97,7 @@ func main() {
 		marketData = feed.NewService(marketStore)
 		marketData.Start(marketCtx)
 		market.SetLiveSource(marketData)
+		market.ObservePublicResponses(marketData.Client().Limiter().Observe)
 	}
 
 	// Create Manager
@@ -167,7 +168,10 @@ func main() {
 				}
 				return trader.GetStatus()
 			},
-			PlanRuns: server.PlanRunsForAlerts,
+			PlanRuns:        server.PlanRunsForAlerts,
+			Problems:        server.ProblemsForAlerts,
+			FailingAccounts: accountSync.Failing,
+			AccountEquity:   server.AccountEquityForAlerts,
 		})
 	})
 

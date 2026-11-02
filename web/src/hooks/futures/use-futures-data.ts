@@ -6,6 +6,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { type FuturesState, futuresAPI } from '@/api/futures'
 import { preserveFuturesPlans } from '@/utils/futures/futures-presentation'
 
@@ -19,8 +20,12 @@ export interface FuturesConversation {
 }
 
 // useFuturesData keeps the server's planning state (plans, approvals and
-// runs) polled every 4 seconds, plus saved conversations and preferences.
-export function useFuturesData(setError: Dispatch<SetStateAction<string>>) {
+// runs) polled every 4 seconds, plus preferences and the account's saved
+// conversations.
+export function useFuturesData(
+  setError: Dispatch<SetStateAction<string>>,
+  accountId: string
+) {
   const [data, setData] = useState<FuturesState>({
     records: {},
     accounts: {},
@@ -28,9 +33,17 @@ export function useFuturesData(setError: Dispatch<SetStateAction<string>>) {
     mode: 'live',
     now: '',
   })
-  const [preferences, setPreferences] = useState(''),
-    [history, setHistory] = useState<FuturesConversation[]>([])
+  const [preferences, setPreferences] = useState('')
   const active = useRef(true)
+  const client = useQueryClient()
+  const historyKey = ['futures-conversations', accountId]
+  const { data: history = [], refetch: refetchHistory } = useQuery({
+    queryKey: historyKey,
+    queryFn: () =>
+      futuresAPI<FuturesConversation[]>(
+        `conversations?account_id=${encodeURIComponent(accountId)}`
+      ),
+  })
   const reload = useCallback(async () => {
     const next = await futuresAPI<FuturesState>('state')
     if (active.current)
@@ -42,13 +55,34 @@ export function useFuturesData(setError: Dispatch<SetStateAction<string>>) {
       )
   }, [])
   const refreshHistory = useCallback(async () => {
-    const rows = await futuresAPI<typeof history>('conversations')
-    if (active.current) setHistory(rows)
-  }, [])
+    await refetchHistory()
+  }, [refetchHistory])
+  const renameConversation = async (id: string, title: string) => {
+    const saved = await futuresAPI<{ title: string }>(
+      `conversations/${id}`,
+      { title },
+      'PUT'
+    )
+    client.setQueryData<FuturesConversation[]>(historyKey, (rows) =>
+      rows?.map((row) => (row.id === id ? { ...row, ...saved } : row))
+    )
+  }
+  const deleteConversation = async (id: string) => {
+    await futuresAPI(`conversations/${id}`, undefined, 'DELETE')
+    client.setQueryData<FuturesConversation[]>(historyKey, (rows) =>
+      rows?.filter((row) => row.id !== id)
+    )
+  }
+  const deletePlan = useCallback(
+    async (id: string) => {
+      await futuresAPI(`plans/${encodeURIComponent(id)}`, undefined, 'DELETE')
+      await reload()
+    },
+    [reload]
+  )
   useEffect(() => {
     active.current = true
     reload().catch((e) => setError(e.message))
-    refreshHistory().catch(() => {})
     futuresAPI<{ text: string }>('preferences')
       .then((p) => setPreferences(p.text))
       .catch(() => {})
@@ -57,12 +91,15 @@ export function useFuturesData(setError: Dispatch<SetStateAction<string>>) {
       active.current = false
       clearInterval(timer)
     }
-  }, [reload, refreshHistory])
+  }, [reload])
   return {
     data,
     reload,
     history,
     refreshHistory,
+    renameConversation,
+    deleteConversation,
+    deletePlan,
     preferences,
     setPreferences,
   }

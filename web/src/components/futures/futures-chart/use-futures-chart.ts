@@ -29,8 +29,11 @@ export function useFuturesChart(
   const [resolution, setResolution] = useState('60')
   // Goes up each time the chart starts a new scene, which clears what was drawn on it.
   const [scene, setScene] = useState(0)
+  // Whether the market's real candles are on the chart yet.
+  const [candlesReady, setCandlesReady] = useState(false)
   useEffect(() => {
     let cancelled = false
+    setCandlesReady(false)
     let chartFailure = ''
     const reportChartFailure = (message: string) => {
       if (cancelled) return
@@ -55,6 +58,7 @@ export function useFuturesChart(
           onError: reportChartFailure,
           onAvailability: (available: boolean) => {
             if (cancelled) return
+            setCandlesReady(available)
             if (available && chartFailure)
               setError((message) => (message === chartFailure ? '' : message))
           },
@@ -97,5 +101,6 @@ export function useFuturesChart(
     resolution,
     changeResolution,
     scene,
+    candlesReady,
   }
 }

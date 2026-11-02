@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   models: vi.fn(),
   update: vi.fn(),
   test: vi.fn(),
+  list: vi.fn(),
   traders: vi.fn(),
   confirm: vi.fn(),
 }))
@@ -20,17 +21,29 @@ vi.mock('@/api', () => ({
   api: {
     getModelConfigs: mocks.models,
     getSupportedModels: async () => [
-      { id: 'deepseek', name: 'DeepSeek AI', provider: 'deepseek' },
-      { id: 'openai', name: 'OpenAI', provider: 'openai' },
+      {
+        id: 'deepseek',
+        name: 'DeepSeek AI',
+        provider: 'deepseek',
+        defaultBaseUrl: 'https://api.deepseek.com',
+      },
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        provider: 'openai',
+        defaultBaseUrl: 'https://api.openai.com/v1',
+      },
     ],
     getTraders: mocks.traders,
     updateModelConfigs: mocks.update,
     testModelConfig: mocks.test,
+    listAvailableModels: mocks.list,
   },
 }))
 vi.mock('@/components/common/notify', () => ({ confirmToast: mocks.confirm }))
 
 beforeEach(() => {
+  Element.prototype.scrollIntoView = vi.fn()
   mocks.models.mockResolvedValue([
     {
       id: 'agent',
@@ -42,6 +55,7 @@ beforeEach(() => {
     },
   ])
   mocks.update.mockResolvedValue(undefined)
+  mocks.list.mockResolvedValue([])
   mocks.traders.mockResolvedValue([])
   mocks.confirm.mockResolvedValue(true)
 })
@@ -57,6 +71,12 @@ const show = () =>
     </QueryWrapper>
   )
 
+const nameField = () => screen.getByLabelText('Model name')
+const typeModel = (name: string) =>
+  fireEvent.change(nameField(), { target: { value: name } })
+const openList = () =>
+  fireEvent.click(screen.getByRole('button', { name: 'Model list' }))
+
 it('adds a provider that is not connected yet and sends only that one', async () => {
   show()
   expect(await screen.findByText('configured-model')).toBeVisible()
@@ -67,7 +87,7 @@ it('adds a provider that is not connected yet and sends only that one', async ()
   expect(screen.getByRole('combobox', { name: 'Provider' })).toHaveTextContent(
     'OpenAI'
   )
-  const save = screen.getByRole('button', { name: 'Save Configuration' })
+  const save = screen.getByRole('button', { name: 'Save' })
   expect(save).toBeDisabled()
   fireEvent.change(screen.getByLabelText('API Key'), {
     target: { value: 'fixture-key' },
@@ -92,11 +112,9 @@ it('adds a provider that is not connected yet and sends only that one', async ()
 it('keeps the saved key when an edit leaves it blank', async () => {
   show()
   fireEvent.click(await screen.findByRole('button', { name: 'Edit My AI' }))
-  expect(screen.getByLabelText('Model name')).toHaveValue('configured-model')
-  fireEvent.change(screen.getByLabelText('Model name'), {
-    target: { value: 'deepseek-reasoner' },
-  })
-  fireEvent.click(screen.getByRole('button', { name: 'Save Configuration' }))
+  expect(nameField()).toHaveValue('configured-model')
+  typeModel('deepseek-reasoner')
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() =>
     expect(mocks.update).toHaveBeenCalledWith({
       models: {
@@ -156,9 +174,7 @@ it('tests the form values without saving and clears the result on edit', async (
   ).toBeVisible()
   expect(mocks.update).not.toHaveBeenCalled()
 
-  fireEvent.change(screen.getByLabelText('Model name'), {
-    target: { value: 'other-model' },
-  })
+  typeModel('other-model')
   expect(
     screen.queryByText('Connected · configured-model · 0.8 s')
   ).not.toBeInTheDocument()
@@ -170,4 +186,140 @@ it('tests the form values without saving and clears the result on edit', async (
   })
   fireEvent.click(screen.getByRole('button', { name: 'Test' }))
   expect(await screen.findByText('HTTP 404: model not found')).toBeVisible()
+})
+
+it("fills in the provider's endpoint, and saves it as none", async () => {
+  show()
+  const add = await screen.findByRole('button', { name: 'Add model' })
+  await waitFor(() => expect(add).toBeEnabled())
+  fireEvent.click(add)
+  const url = screen.getByLabelText('Base URL')
+  expect(url).toHaveValue('https://api.openai.com/v1')
+  fireEvent.change(screen.getByLabelText('API Key'), {
+    target: { value: 'sk-new' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(mocks.update).toHaveBeenCalledWith({
+      models: {
+        openai: {
+          enabled: true,
+          api_key: 'sk-new',
+          custom_api_url: '',
+          custom_model_name: '',
+        },
+      },
+    })
+  )
+})
+
+it('keeps a different endpoint, and shows it again', async () => {
+  mocks.models.mockResolvedValue([
+    {
+      id: 'agent',
+      name: 'My AI',
+      provider: 'deepseek',
+      enabled: true,
+      has_api_key: true,
+      customApiUrl: 'https://proxy.example.com/v1',
+    },
+  ])
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit My AI' }))
+  expect(screen.getByLabelText('Base URL')).toHaveValue(
+    'https://proxy.example.com/v1'
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(mocks.update).toHaveBeenCalledWith({
+      models: {
+        agent: expect.objectContaining({
+          custom_api_url: 'https://proxy.example.com/v1',
+        }),
+      },
+    })
+  )
+})
+
+it('takes a name from the list or as typed, and holds only the one in the field', async () => {
+  mocks.list.mockResolvedValue(['listed-a', 'listed-b'])
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit My AI' }))
+  // It asks with the saved key, which it never sees.
+  await waitFor(() =>
+    expect(mocks.list).toHaveBeenCalledWith({
+      agent_model_id: 'agent',
+      api_key: '',
+      custom_api_url: '',
+    })
+  )
+  openList()
+  expect(await screen.findByRole('option', { name: 'listed-b' })).toBeVisible()
+  // The list holds what the provider has and the provider's default, and nothing else:
+  // not a search box, and not a name of the user's own.
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual(['deepseek-v4-pro', 'listed-a', 'listed-b'])
+  expect(screen.getAllByRole('combobox')).toEqual([nameField()])
+
+  fireEvent.click(screen.getByRole('option', { name: 'listed-b' }))
+  expect(nameField()).toHaveValue('listed-b')
+
+  typeModel('my-proxy')
+  openList()
+  expect(screen.queryByRole('option', { name: 'my-proxy' })).toBeNull()
+  fireEvent.click(screen.getByRole('option', { name: 'listed-a' }))
+  expect(nameField()).toHaveValue('listed-a')
+
+  // Picked and typed names are gone once replaced.
+  openList()
+  expect(screen.queryByRole('option', { name: 'my-proxy' })).toBeNull()
+  expect(screen.getByRole('option', { name: 'listed-a' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  fireEvent.keyDown(nameField(), { key: 'ArrowDown' })
+  fireEvent.keyDown(nameField(), { key: 'Enter' })
+  expect(nameField()).toHaveValue('listed-b')
+
+  typeModel('my-proxy')
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(mocks.update).toHaveBeenCalledWith({
+      models: {
+        agent: expect.objectContaining({ custom_model_name: 'my-proxy' }),
+      },
+    })
+  )
+})
+
+it('fills in the provider default, and saves it as no name of its own', async () => {
+  mocks.models.mockResolvedValue([
+    {
+      id: 'agent',
+      name: 'My AI',
+      provider: 'deepseek',
+      enabled: true,
+      has_api_key: true,
+    },
+  ])
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit My AI' }))
+  expect(nameField()).toHaveValue('deepseek-v4-pro')
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await waitFor(() =>
+    expect(mocks.update).toHaveBeenCalledWith({
+      models: { agent: expect.objectContaining({ custom_model_name: '' }) },
+    })
+  )
+})
+
+it('still takes a typed name when the provider will not list', async () => {
+  mocks.list.mockRejectedValue(new Error('no list'))
+  show()
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit My AI' }))
+  await waitFor(() => expect(mocks.list).toHaveBeenCalled())
+  typeModel('typed-model')
+  expect(nameField()).toHaveValue('typed-model')
+  expect(screen.queryByRole('alert')).toBeNull()
 })

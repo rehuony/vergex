@@ -339,6 +339,12 @@ func (s *DecisionStore) FailedActionsSince(traderIDs []string, sinceMs int64, li
 	return out, nil
 }
 
+// CycleCursorAt returns where to read on from with CyclesAfter to see the cycles from a
+// time on.
+func (s *DecisionStore) CycleCursorAt(at time.Time) (int64, error) {
+	return database.CursorAt(s.db, "trader.cycles", "finished_at", at)
+}
+
 // CyclesAfter returns the records past an ID and no older than since, oldest first,
 // without their prompts and model output.
 func (s *DecisionStore) CyclesAfter(id int64, since time.Time, limit int) ([]*DecisionRecord, error) {

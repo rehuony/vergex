@@ -362,7 +362,7 @@ func (t *Account) SubmitOrder(ctx context.Context, o account.Order) (account.Ord
 	}
 	r := rows[0]
 	if r.SCode != "0" {
-		return o, fmt.Errorf("OKX order rejected (%s): %s", r.SCode, r.SMsg)
+		return o, account.RefusedOrder{Reason: fmt.Sprintf("OKX order rejected (%s): %s", r.SCode, r.SMsg)}
 	}
 	id, cid := r.OrdId, r.ClOrdId
 	if o.Role != "entry" {
@@ -390,6 +390,9 @@ func (t *Account) LookupOrder(ctx context.Context, o account.Order) (account.Ord
 		return o, e
 	}
 	if len(rows) != 1 {
+		if len(rows) == 0 && o.Role != "entry" {
+			return o, account.ErrOrderNotFound
+		}
 		return o, errors.New("OKX order not found; submission remains unconfirmed")
 	}
 	r := rows[0]
@@ -577,6 +580,35 @@ func (t *Account) CancelExecutionOrder(ctx context.Context, o account.Order) err
 	var rows []struct{ SCode, OrdId, AlgoId string }
 	if json.Unmarshal(raw, &rows) != nil || len(rows) != 1 || rows[0].SCode != "0" || (rows[0].OrdId != o.OrderID && rows[0].AlgoId != o.OrderID) {
 		return errors.New("OKX cancellation unconfirmed; reconcile order")
+	}
+	return nil
+}
+
+// CancelOpenOrder cancels an order known only by what the exchange lists.
+func (t *Account) CancelOpenOrder(ctx context.Context, symbol, orderID string, conditional bool) error {
+	inst := InstrumentID(symbol)
+	// GetOpenOrders lists an algo order's stop and target apart, under one algo ID.
+	orderID = account.PlainOrderID(orderID)
+	path, field := okxCancelOrderPath, "ordId"
+	var body any = map[string]string{"instId": inst, "ordId": orderID}
+	if conditional {
+		path, field = okxCancelAlgoPath, "algoId"
+		body = []map[string]string{{"instId": inst, "algoId": orderID}}
+	}
+	raw, err := t.doRequestContext(ctx, "POST", path, body)
+	if err != nil {
+		return err
+	}
+	var rows []struct{ SCode, SMsg, OrdId, AlgoId string }
+	if json.Unmarshal(raw, &rows) != nil || len(rows) != 1 {
+		return errors.New("OKX cancellation unconfirmed; check the order")
+	}
+	got := rows[0].OrdId
+	if field == "algoId" {
+		got = rows[0].AlgoId
+	}
+	if rows[0].SCode != "0" || got != orderID {
+		return fmt.Errorf("OKX did not cancel the order (%s): %s", rows[0].SCode, rows[0].SMsg)
 	}
 	return nil
 }

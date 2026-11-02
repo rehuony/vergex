@@ -235,6 +235,9 @@ func (s *Server) addOverviewTraders(user string, traders []*trader.Trader, out *
 				detail, _ := status["safe_mode_reason"].(string)
 				out.Attention = append(out.Attention, overviewAttention{Kind: "trader_safe_mode", Name: trader.Name, Detail: detail, TraderID: trader.ID})
 			}
+			if halt := at.ActiveHalt(); halt != nil {
+				out.Attention = append(out.Attention, overviewAttention{Kind: "trader_halted", Name: trader.Name, Detail: halt.Reason, TraderID: trader.ID})
+			}
 		} else if loadErr := s.traderManager.GetLoadError(trader.ID); loadErr != nil && trader.IsRunning {
 			out.Attention = append(out.Attention, overviewAttention{Kind: "trader_load_failed", Name: trader.Name, Detail: loadErr.Error(), TraderID: trader.ID})
 		}
@@ -243,14 +246,17 @@ func (s *Server) addOverviewTraders(user string, traders []*trader.Trader, out *
 }
 
 // addOverviewRealized sums today's realized P/L on the user's accounts, whoever traded:
-// a trader, Futures or a manual close. With no account there is nothing to report.
+// a trader, Futures or a manual close. Test money does not count, and with no real account
+// there is nothing to report.
 func (s *Server) addOverviewRealized(accounts []*account.Account, out *overviewResponse) {
-	if len(accounts) == 0 {
-		return
-	}
 	ids := make([]string, 0, len(accounts))
 	for _, account := range accounts {
-		ids = append(ids, account.ID)
+		if !account.Testnet {
+			ids = append(ids, account.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return
 	}
 	startOfDay := time.Now().UTC().Truncate(24 * time.Hour).UnixMilli()
 	if realized, err := s.stores.Positions.RealizedOnAccounts(ids, startOfDay); err == nil {
@@ -276,6 +282,43 @@ func (s *Server) PlanRunsForAlerts(ctx context.Context, user string) ([]telegram
 		out = append(out, telegram.PlanRun{ID: run.ID, Symbol: run.Plan.Snapshot.Symbol, State: run.State, Error: run.Error})
 	}
 	return out, nil
+}
+
+// AccountEquityForAlerts is what an account holds, for the Telegram daily report. It reads
+// the exchange past the cache, as its figure should be today's.
+func (s *Server) AccountEquityForAlerts(user, accountID string) (float64, bool) {
+	row, err := s.stores.Accounts.GetByID(user, accountID)
+	if err != nil {
+		return 0, false
+	}
+	state := probeAccountState(row, user)
+	return state.TotalEquity, state.Status == accountStatusOK
+}
+
+// ProblemsForAlerts lists what Needs attention says that has no Telegram alert of its own.
+// It runs every half minute whether or not anyone is looking, so none of it asks the
+// exchange.
+func (s *Server) ProblemsForAlerts(user string) []telegram.Problem {
+	var out overviewResponse
+	traders, _ := s.stores.Traders.List(user)
+	s.addOverviewTraders(user, traders, &out)
+	s.addOverviewServices(&out)
+	problems := []telegram.Problem{}
+	for _, row := range out.Attention {
+		switch row.Kind {
+		case telegram.ProblemService, telegram.ProblemTraderHalt, telegram.ProblemTraderLoad:
+			problems = append(problems, telegram.Problem{Key: row.Kind + ":" + row.Name, Kind: row.Kind, Name: row.Name, Detail: row.Detail})
+		}
+	}
+	// One line per trade, while it is under a day old, so history is not told again.
+	fills, err := s.stores.Ledger.SkippedFillsSince(user, time.Now().Add(-24*time.Hour), 20)
+	if err != nil {
+		logger.Warnf("Alerts: read skipped fills: %v", err)
+	}
+	for _, fill := range fills {
+		problems = append(problems, telegram.Problem{Key: telegram.ProblemFillSkipped + ":" + fill.ExchangeTradeID, Kind: telegram.ProblemFillSkipped, Name: fill.NativeSymbol, Detail: fill.Detail})
+	}
+	return problems
 }
 
 func (s *Server) addOverviewRuns(user string, out *overviewResponse) {
@@ -322,11 +365,15 @@ func (s *Server) addOverviewAccounts(user string, accounts []*account.Account, o
 		if row.Name == "" {
 			row.Name = account.VenueName()
 		}
+		if account.Testnet {
+			row.Name += " (testnet)"
+		}
 		if known {
 			row.Status = state.Status
 			row.Asset = state.Asset
 			row.ErrorMessage = state.ErrorMessage
-			if state.Status == accountStatusOK {
+			// Test money counts towards nothing the page adds up.
+			if state.Status == accountStatusOK && !account.Testnet {
 				equity := state.TotalEquity
 				row.TotalEquity = &equity
 			}

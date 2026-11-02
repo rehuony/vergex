@@ -8,6 +8,7 @@ import (
 	"time"
 	"vergex/internal/account"
 	"vergex/internal/agent"
+	"vergex/internal/trader"
 	"vergex/internal/trader/kind"
 
 	"github.com/gin-gonic/gin"
@@ -35,6 +36,9 @@ const (
 	launchCheckAccountConfig = "account_config"
 	launchCheckAccountState  = "account_state"
 	launchCheckAccountFunds  = "account_funds"
+	// What starting it should say, without stopping it from starting.
+	launchCheckHalted           = "halted"
+	launchCheckAccountPositions = "account_positions"
 )
 
 type LaunchCheck struct {
@@ -42,6 +46,8 @@ type LaunchCheck struct {
 	Status  string `json:"status"`
 	Code    string `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
+	// Params fills in the interface's wording for Code.
+	Params map[string]string `json:"params,omitempty"`
 	// Numeric context so the UI can render progress like "8.40 / 12 USDC".
 	Required float64  `json:"required,omitempty"`
 	Actual   *float64 `json:"actual,omitempty"`
@@ -137,7 +143,47 @@ func (s *Server) handleTraderPreflight(c *gin.Context) {
 	}
 
 	result := s.runLaunchPreflight(userID, fullCfg.AgentModel, fullCfg.Account, checkLaunchConfig(fullCfg.Trader.Kind, fullCfg.Trader.Config))
+	result.Checks = append(result.Checks, s.checkLaunchNotices(userID, fullCfg.Trader)...)
 	c.JSON(http.StatusOK, result)
+}
+
+// checkLaunchNotices is what starting this trader should say: a halt still in force, and
+// positions on its account that the ledger does not give to it, which it will treat as its
+// own. Reading positions is best effort, as the account checks above already say if it fails.
+func (s *Server) checkLaunchNotices(userID string, row *trader.Trader) []LaunchCheck {
+	var notices []LaunchCheck
+	if halt := row.Halt(); halt != nil {
+		notices = append(notices, LaunchCheck{ID: launchCheckHalted, Status: launchCheckStatusWarning, Message: halt.Reason})
+	}
+	reader, err := s.accountReadClient(userID, "", row.AccountID)
+	if err != nil {
+		return notices
+	}
+	positions, err := reader.GetPositions()
+	if err != nil {
+		return notices
+	}
+	var others []string
+	for _, position := range positions {
+		if !s.traderHolds(row.ID, position) {
+			symbol, _ := position["symbol"].(string)
+			side, _ := position["side"].(string)
+			others = append(others, strings.TrimSpace(symbol+" "+side))
+		}
+	}
+	if len(others) > 0 {
+		notices = append(notices, LaunchCheck{ID: launchCheckAccountPositions, Status: launchCheckStatusWarning, Message: strings.Join(others, ", ")})
+	}
+	return notices
+}
+
+// traderHolds says whether the ledger gives a position on the exchange to this trader. A
+// new position can read as not yet, until its fill is booked, within 30 seconds.
+func (s *Server) traderHolds(traderID string, position map[string]interface{}) bool {
+	symbol, _ := position["symbol"].(string)
+	side, _ := position["side"].(string)
+	held, err := s.stores.Positions.GetOpenPositionBySymbol(traderID, symbol, side)
+	return err == nil && held != nil
 }
 
 // runLaunchPreflight composes every launch readiness check. A check that
@@ -180,10 +226,12 @@ func checkLaunchAgentModel(model *agent.Model) LaunchCheck {
 		check.Status = launchCheckStatusFailed
 		check.Code = "MODEL_DISABLED"
 		check.Message = fmt.Sprintf("Model \"%s\" is disabled. Enable it first.", model.Name)
+		check.Params = map[string]string{"name": model.Name}
 	case strings.TrimSpace(model.APIKey.String()) == "":
 		check.Status = launchCheckStatusFailed
 		check.Code = "MODEL_MISSING_CREDENTIALS"
 		check.Message = fmt.Sprintf("Model \"%s\" has no credential saved. Add the API key first.", model.Name)
+		check.Params = map[string]string{"name": model.Name}
 	default:
 		check.Status = launchCheckStatusOK
 		check.Message = model.Name
@@ -217,6 +265,9 @@ func (s *Server) checkLaunchAccount(userID string, account *account.Account) []L
 		configCheck.Status = launchCheckStatusFailed
 		configCheck.Code = code
 		configCheck.Message = msg
+		if account != nil {
+			configCheck.Params = map[string]string{"name": accountDisplayName(account), "fields": strings.Join(missingAccountFields(account), ", ")}
+		}
 		accountCheck.Status = launchCheckStatusSkipped
 		fundsCheck.Status = launchCheckStatusSkipped
 		return []LaunchCheck{configCheck, accountCheck, fundsCheck}
@@ -275,6 +326,12 @@ func (s *Server) checkLaunchAccount(userID string, account *account.Account) []L
 		fundsCheck.Status = launchCheckStatusFailed
 		fundsCheck.Code = "EXCHANGE_INSUFFICIENT_FUNDS"
 		fundsCheck.Message = message
+		fundsCheck.Params = map[string]string{
+			"name":     accountDisplayName(account),
+			"funded":   fmt.Sprintf("%.2f", funded),
+			"required": fmt.Sprintf("%.0f", MinTradingUSDC),
+			"asset":    fundsCheck.Asset,
+		}
 	} else {
 		fundsCheck.Status = launchCheckStatusOK
 	}

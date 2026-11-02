@@ -1,5 +1,6 @@
 import { apiKeyVenues, venueName } from '@/utils/futures/futures-accounts'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { ChevronRight, TriangleAlert } from 'lucide-react'
 import { api } from '@/api'
 import {
@@ -10,12 +11,14 @@ import {
 } from '@/api/futures'
 import {
   accountPositions,
+  atMark,
   closeAccountPosition,
   positionDecimal,
   nativeMarket,
   type AccountPosition,
 } from '@/utils/futures/futures-account'
 import { accountLabel } from '@/utils/futures/futures-accounts'
+import { pollEvery } from '@/utils/poll'
 import { Dialog } from '@/components/common/dialog'
 import {
   cellClass,
@@ -26,33 +29,50 @@ import {
   StatStrip,
   tableClass,
 } from '@/components/common/figures'
+import { confirmToast, notify } from '@/components/common/notify'
 import { Panel, PanelState } from '@/components/common/panel'
 import { SettingsLink } from '@/components/settings/settings-link'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import type { AccountWatch } from '@/hooks/futures/use-account-watch'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import { Skeleton } from '@/components/ui/skeleton'
+import type { AccountWatch, OpenOrder } from '@/hooks/futures/use-account-watch'
+import { activeLanguage } from '@/i18n'
 import type { Account } from '@/types'
 import { cn } from '@/utils/cn'
 import type { AccountCheck } from '@/utils/futures/futures-workspace'
+import { ExitDialog } from './exit-dialog'
 import { useFuturesLabel } from './use-futures-label'
 
 const format = (value: number | string) =>
   Number(value).toLocaleString('en-US', { maximumFractionDigits: 8 })
 const amount = (value: number) =>
-  Number.isFinite(value)
-    ? value.toLocaleString('en-US', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits:
-          Math.abs(value) > 0 && Math.abs(value) < 0.01 ? 4 : 2,
-      })
-    : '—'
+  (Number.isFinite(value) ? value : 0).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits:
+      Math.abs(value) > 0 && Math.abs(value) < 0.01 ? 4 : 2,
+  })
 const signed = (value: number) => `${value > 0 ? '+' : ''}${amount(value)}`
 // On a phone the panel's tables keep their columns, and scroll sideways with it.
 const narrowTable = 'max-sm:min-w-[520px]'
-const venueURL = (venue: string) =>
+// OKX keeps demo trading behind a switch on the same pages.
+const venueURL = (venue: string, testnet?: boolean) =>
   venue === 'okx'
     ? 'https://www.okx.com/trade-swap/btc-usdt-swap'
-    : 'https://www.binance.com/en/futures'
+    : testnet
+      ? 'https://demo.binance.com/en/futures'
+      : 'https://www.binance.com/en/futures'
+// Mark prices come with more digits than anyone reads.
+const markPrice = (value: string | number) => {
+  const price = Number(value)
+  return price.toLocaleString('en-US', {
+    maximumFractionDigits: price >= 1000 ? 2 : price >= 1 ? 4 : 8,
+  })
+}
+const MARK_POLL_MS = 1000
 const liveStates = new Set([
   'starting',
   'running',
@@ -70,6 +90,7 @@ export function FuturesAccount({
   symbol,
   runs,
   busy,
+  active = true,
   onView,
   onManual,
   onBusy,
@@ -84,6 +105,8 @@ export function FuturesAccount({
   symbol: string
   runs: LiveRun[]
   busy: boolean
+  // Whether the section is on screen, which is when its P/L follows the mark price.
+  active?: boolean
   onView: (run: LiveRun) => void
   onManual: (side: 'long' | 'short') => void
   onBusy: (value: boolean) => void
@@ -97,9 +120,57 @@ export function FuturesAccount({
   const [attempted, setAttempted] = useState<Set<string>>(new Set())
   const attemptLatch = useRef(new Set<string>())
   const accountID = account?.id || ''
-  const { snapshot, orders, binding, loading, error, ordersFailed, refresh } =
-    watch
+  const { snapshot, orders, binding, error, ordersFailed, refresh } = watch
   const orderError = ordersFailed ? label('ordersUnverified') : ''
+  const [moving, setMoving] = useState<AccountPosition | null>(null)
+  // A plan's position, whose stop and target are the plan's to change.
+  const runHolding = (position: AccountPosition) =>
+    runs.find(
+      (run) =>
+        run.account_id === accountID &&
+        run.state === 'position_open' &&
+        run.plan.snapshot.symbol === position.symbol &&
+        run.plan.idea.side === position.side
+    )
+  // The orders a plan that has not finished is responsible for.
+  const planOrderIDs = new Set(
+    runs
+      .filter(
+        (run) =>
+          run.account_id === accountID &&
+          !['completed', 'cancelled', 'expired'].includes(run.state)
+      )
+      .flatMap((run) => run.orders.map((order) => order.order_id))
+  )
+  const cancelOrder = async (order: OpenOrder) => {
+    const ok = await confirmToast(
+      label('cancelOrderMessage', {
+        symbol: order.symbol,
+        price: format(order.stop_price || order.price),
+      }),
+      {
+        title: label('cancelOrder'),
+        okText: label('cancelOrder'),
+        cancelText: label('exitsCancel'),
+        tone: 'danger',
+      }
+    )
+    if (!ok) return
+    onBusy(true)
+    try {
+      await futuresAPI('cancel-order', {
+        account_id: accountID,
+        symbol: order.symbol,
+        order_id: order.order_id,
+      })
+      notify.success(label('orderCancelled'))
+    } catch (e) {
+      notify.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      onBusy(false)
+      await Promise.allSettled([refresh(), onRefresh()])
+    }
+  }
 
   useEffect(() => {
     setConfirm(null)
@@ -122,6 +193,15 @@ export function FuturesAccount({
   }, [snapshot, accountID])
 
   const positions = snapshot?.accountID === accountID ? snapshot.positions : []
+  // The exchange is read every few seconds. Between reads, P/L follows the live mark price.
+  const heldSymbols = positions.map((p) => p.symbol).join(',')
+  const { data: marks } = useQuery({
+    queryKey: ['account-marks', accountID, heldSymbols],
+    queryFn: () => api.getAccountMarks(accountID, heldSymbols),
+    enabled: active && Boolean(heldSymbols),
+    ...pollEvery(MARK_POLL_MS),
+  })
+  const shown = positions.map((p) => atMark(p, marks?.[p.symbol]))
   const currentBinding = binding?.accountID === accountID ? binding : null
   const hasPosition = positions.some(
     (p) => nativeMarket(p.symbol, venue) === nativeMarket(symbol, venue)
@@ -157,7 +237,7 @@ export function FuturesAccount({
     onBusy(true)
     setNotice(label('stoppingEntries'))
     let closeSent = false
-    let closeMessage = ''
+    let closeWarning = ''
     try {
       const traders = await api.getTraders(true)
       if (
@@ -190,7 +270,7 @@ export function FuturesAccount({
             const quantity = positionDecimal(fresh.quantity)
             const entryPrice = positionDecimal(fresh.entry)
             closeSent = true
-            const result = await futuresAPI<{ message: string }>(
+            const result = await futuresAPI<{ warning?: string }>(
               'close-position',
               {
                 account_id: accountID,
@@ -201,7 +281,7 @@ export function FuturesAccount({
                 entry_price: entryPrice,
               }
             )
-            closeMessage = result.message
+            closeWarning = result.warning ?? ''
             return result
           }
           closeSent = true
@@ -212,7 +292,9 @@ export function FuturesAccount({
           )
         },
       })
-      setNotice(closeMessage || label('closeAccepted'))
+      // It worked, so it passes. Only something left to check stays on the page.
+      setNotice(closeWarning && `${label('closeAccepted')} ${closeWarning}`)
+      if (!closeWarning) notify.success(label('closeAccepted'))
     } catch (e) {
       const notSubmitted = !closeSent || e instanceof CloseNotSubmittedError
       if (notSubmitted) {
@@ -253,12 +335,16 @@ export function FuturesAccount({
     accountCheck?.accountID === accountID && accountCheck.status === 'verified'
       ? accountCheck
       : null
-  const unrealized = positions.reduce((sum, p) => sum + p.pnl, 0)
+  // A read that failed has no figure to show, and 0 would say there is no money.
+  const checkFailed =
+    accountCheck?.accountID === accountID &&
+    accountCheck.status === 'unavailable'
+  const unrealized = shown.reduce((sum, p) => sum + p.pnl, 0)
   const cantEnter = busy || !!currentBinding?.running || hasPosition
   const ordersRead = orders?.accountID === accountID && orders.symbol === symbol
   const exchangeLink = (text: string) => (
     <a
-      href={venueURL(venue)}
+      href={venueURL(venue, account?.testnet)}
       target="_blank"
       rel="noreferrer"
       className="text-vergex-ink underline"
@@ -271,41 +357,57 @@ export function FuturesAccount({
     <div
       role="region"
       aria-label={label('heading')}
-      className="flex min-h-0 flex-col max-lg:h-[80dvh] max-lg:min-h-96 lg:h-[max(520px,calc(100dvh-181px))]"
+      className="flex flex-col max-lg:min-h-96 lg:min-h-[max(520px,calc(100dvh-181px))]"
     >
       <Panel
-        className="flex min-h-0 flex-1 flex-col overflow-hidden"
+        className="flex flex-1 flex-col overflow-hidden"
         title={accountLabel(account, accounts)}
         meta={[
           venueName(venue),
           read
             ? label(error ? 'lastReceived' : 'received', {
-                time: new Date(snapshot.at).toLocaleTimeString(),
+                time: new Date(snapshot.at).toLocaleTimeString(
+                  activeLanguage()
+                ),
               })
             : label('waiting'),
         ].join(' · ')}
+        status={
+          <AccountNotes
+            notes={[
+              ...(notice ? [{ text: notice }] : []),
+              ...(error
+                ? [
+                    {
+                      alert: true,
+                      text: label(
+                        snapshot ? 'positionsStale' : 'positionsUnread',
+                        { error }
+                      ),
+                    },
+                  ]
+                : []),
+              ...(hasPosition &&
+              !error &&
+              !orderError &&
+              ordersRead &&
+              open.length === 0
+                ? [
+                    {
+                      alert: true,
+                      text: label('noProtection', { symbol }),
+                      more: exchangeLink(label('checkProtection')),
+                    },
+                  ]
+                : []),
+              ...(currentBinding?.running
+                ? [{ text: label('traderRunning') }]
+                : []),
+            ]}
+          />
+        }
         actions={
           <>
-            <a
-              href={venueURL(venue)}
-              target="_blank"
-              rel="noreferrer"
-              className={buttonVariants({
-                variant: 'ghost',
-                size: 'sm',
-                className: 'max-sm:hidden',
-              })}
-            >
-              {label('openAccount')}
-            </a>
-            <Button
-              size="sm"
-              className="max-sm:h-10"
-              disabled={busy || loading}
-              onClick={() => void refresh()}
-            >
-              {loading ? label('checking') : label('refresh')}
-            </Button>
             <Button
               variant="success"
               size="sm"
@@ -334,52 +436,54 @@ export function FuturesAccount({
           stats={[
             {
               name: label('equity'),
-              value: verified ? amount(Number(verified.equity)) : '—',
+              value: verified ? (
+                amount(Number(verified.equity))
+              ) : checkFailed ? (
+                '—'
+              ) : (
+                <Skeleton className="w-28" />
+              ),
               note: 'USDT',
             },
             {
               name: label('available'),
-              value: verified ? amount(Number(verified.available)) : '—',
+              value: verified ? (
+                amount(Number(verified.available))
+              ) : checkFailed ? (
+                '—'
+              ) : (
+                <Skeleton className="w-28" />
+              ),
               note: 'USDT',
             },
             {
               name: label('unrealized'),
-              value: read ? signed(unrealized) : '—',
+              value: read ? (
+                signed(unrealized)
+              ) : error ? (
+                '—'
+              ) : (
+                <Skeleton className="w-24" />
+              ),
               note: 'USDT',
               gain: read ? unrealized : null,
             },
             {
               name: label('openPositions'),
-              value: read ? positions.length : '—',
+              value: read ? (
+                positions.length
+              ) : error ? (
+                '—'
+              ) : (
+                <Skeleton className="w-10" />
+              ),
               note: label('allMarkets'),
             },
           ]}
         />
-        <ScrollArea
-          className="min-h-0 flex-1 rounded-b-2xl"
-          viewportClassName="max-sm:overflow-x-auto"
-        >
-          {currentBinding?.running && <Note>{label('traderRunning')}</Note>}
-          {hasPosition &&
-            !error &&
-            !orderError &&
-            ordersRead &&
-            open.length === 0 && (
-              <Note alert>
-                {label('noProtection', { symbol })}{' '}
-                {exchangeLink(label('checkProtection'))}
-              </Note>
-            )}
-          {notice && <Note status>{notice}</Note>}
-          {error && (
-            <Note alert>
-              {label(snapshot ? 'positionsStale' : 'positionsUnread', {
-                error,
-              })}
-            </Note>
-          )}
+        <div className="relative max-sm:overflow-x-auto">
           <table className={cn(tableClass, narrowTable)}>
-            <thead className="sticky top-0 z-10">
+            <thead>
               <tr>
                 <th className={headClass}>{label('market')}</th>
                 <th className={cn(headClass, 'w-20')}>{label('side')}</th>
@@ -404,13 +508,13 @@ export function FuturesAccount({
                 <th className={cn(headClass, 'w-24 text-right')}>
                   {label('unrealized')}
                 </th>
-                <th className={cn(headClass, 'w-28')}>
+                <th className={cn(headClass, 'w-44 max-sm:w-28')}>
                   <span className="sr-only">{label('closePosition')}</span>
                 </th>
               </tr>
             </thead>
             <tbody>
-              {positions.map((p) => (
+              {shown.map((p) => (
                 <tr key={p.symbol + p.side}>
                   <td className={cellClass}>
                     <strong className="block truncate font-medium text-vergex-ink">
@@ -452,7 +556,7 @@ export function FuturesAccount({
                     {format(p.entry)}
                   </td>
                   <td className={cn(cellClass, numberClass, 'max-sm:hidden')}>
-                    {format(p.mark)}
+                    {markPrice(p.mark)}
                   </td>
                   <td className={cn(cellClass, numberClass, gainTone(p.pnl))}>
                     {signed(p.pnl)}
@@ -461,31 +565,53 @@ export function FuturesAccount({
                     {!currentBinding && !apiKeyVenues.includes(venue) ? (
                       exchangeLink(label('closeOnExchange'))
                     ) : (
-                      <Button
-                        variant="danger"
-                        size="sm"
-                        className="h-7 px-2.5 text-xs max-sm:h-10"
-                        disabled={
-                          busy ||
-                          !!error ||
-                          !!currentBinding?.running ||
-                          attempted.has(key(p))
-                        }
-                        onClick={() => setConfirm(p)}
-                      >
-                        {attempted.has(key(p))
-                          ? label('verifyClose')
-                          : label('closePosition')}
-                      </Button>
+                      <span className="flex justify-end gap-1.5 max-sm:flex-col">
+                        {runHolding(p) && (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="h-7 px-2.5 text-xs max-sm:h-10"
+                            disabled={busy || !!error}
+                            onClick={() => setMoving(p)}
+                          >
+                            {label('exitsMove')}
+                          </Button>
+                        )}
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          className="h-7 px-2.5 text-xs max-sm:h-10"
+                          disabled={
+                            busy ||
+                            !!error ||
+                            !!currentBinding?.running ||
+                            attempted.has(key(p))
+                          }
+                          onClick={() => setConfirm(p)}
+                        >
+                          {attempted.has(key(p))
+                            ? label('verifyClose')
+                            : label('closePosition')}
+                        </Button>
+                      </span>
                     )}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-          {positions.length === 0 && (read ? !error : loading) && (
+          {positions.length === 0 && (
             <EmptyLine>
-              {read ? label('noPositions') : label('readingPositions')}
+              {read ? (
+                label('noPositions')
+              ) : error ? (
+                '—'
+              ) : (
+                <>
+                  <Skeleton className="w-40" />
+                  <span className="sr-only">{label('readingPositions')}</span>
+                </>
+              )}
             </EmptyLine>
           )}
           <table className={cn(tableClass, narrowTable, 'mt-4')}>
@@ -508,6 +634,9 @@ export function FuturesAccount({
                 </th>
                 <th className={cn(headClass, 'w-40 border-t max-md:hidden')}>
                   {label('orderId')}
+                </th>
+                <th className={cn(headClass, 'w-20 border-t')}>
+                  <span className="sr-only">{label('cancelOrder')}</span>
                 </th>
               </tr>
             </thead>
@@ -542,6 +671,21 @@ export function FuturesAccount({
                     >
                       {o.order_id}
                     </td>
+                    <td className={cn(cellClass, 'text-right')}>
+                      {!planOrderIDs.has(
+                        o.order_id.replace(/_(sl|tp)$/, '')
+                      ) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs text-vergex-danger max-sm:h-10"
+                          disabled={busy || !!currentBinding?.running}
+                          onClick={() => void cancelOrder(o)}
+                        >
+                          {label('cancelOrder')}
+                        </Button>
+                      )}
+                    </td>
                   </tr>
                 ))}
             </tbody>
@@ -549,7 +693,10 @@ export function FuturesAccount({
           {orderError ? (
             <EmptyLine>{orderError}</EmptyLine>
           ) : !ordersRead ? (
-            <EmptyLine>{label('ordersNotVerified')}</EmptyLine>
+            <EmptyLine>
+              <Skeleton className="w-40" />
+              <span className="sr-only">{label('ordersNotVerified')}</span>
+            </EmptyLine>
           ) : (
             open.length === 0 && (
               <EmptyLine>{label('noOpenOrders', { symbol })}</EmptyLine>
@@ -590,13 +737,23 @@ export function FuturesAccount({
           {importantRuns.length === 0 && (
             <EmptyLine>{label('noActive')}</EmptyLine>
           )}
-        </ScrollArea>
+        </div>
       </Panel>
+      {moving && runHolding(moving) && (
+        <ExitDialog
+          run={runHolding(moving)!}
+          position={moving}
+          onClose={() => setMoving(null)}
+          onDone={() => Promise.allSettled([refresh(), onRefresh()])}
+        />
+      )}
       {confirm && (
         <Dialog
           title={label('closeTitle', {
             market: nativeMarket(confirm.symbol, venue),
-            side: confirm.side,
+            side: label(
+              confirm.side.toLowerCase() === 'short' ? 'short' : 'long'
+            ),
           })}
           description={label('closeDescription', {
             account: account ? accountLabel(account, accounts) : '',
@@ -631,31 +788,53 @@ export function FuturesAccount({
 }
 
 // A line above the tables, for what is going on with the account.
-function Note({
-  alert,
-  status,
-  children,
+// What is wrong or worth knowing about the account, on the panel's title row: its first
+// line there, and all of it in a popover, so nothing below moves when one comes or goes.
+function AccountNotes({
+  notes,
 }: {
-  alert?: boolean
-  status?: boolean
-  children: ReactNode
+  notes: { text: string; alert?: boolean; more?: ReactNode }[]
 }) {
+  if (notes.length === 0) return null
+  const alert = notes.some((note) => note.alert)
   return (
-    <p
-      role={alert ? 'alert' : status ? 'status' : undefined}
-      className={cn(
-        'flex items-start gap-2 border-b border-vergex-line px-4 py-2 text-xs leading-relaxed',
-        alert ? 'text-vergex-warning' : 'text-vergex-muted'
-      )}
+    <div
+      role={alert ? 'alert' : 'status'}
+      className="flex min-w-0 flex-1 basis-0 max-sm:flex-none"
     >
-      {alert && (
-        <TriangleAlert
-          className="mt-0.5 size-3.5 shrink-0"
-          aria-hidden="true"
-        />
-      )}
-      <span className="min-w-0">{children}</span>
-    </p>
+      <Popover>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              'flex h-8 min-w-0 items-center gap-1.5 text-left text-xs max-sm:h-10',
+              alert ? 'text-vergex-warning' : 'text-vergex-muted'
+            )}
+          >
+            {alert && (
+              <TriangleAlert className="size-3.5 shrink-0" aria-hidden="true" />
+            )}
+            <span className="min-w-0 truncate">{notes[0].text}</span>
+            {notes.length > 1 && (
+              <span className="mono shrink-0">+{notes.length - 1}</span>
+            )}
+          </button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-[min(380px,calc(100vw-32px))] space-y-2 p-3 text-[13px] leading-relaxed text-vergex-ink"
+        >
+          {notes.map((note) => (
+            <p
+              key={note.text}
+              className={cn('break-words', note.alert && 'text-vergex-warning')}
+            >
+              {note.text} {note.more}
+            </p>
+          ))}
+        </PopoverContent>
+      </Popover>
+    </div>
   )
 }
 
@@ -756,9 +935,7 @@ function RunRows({
         >
           {headline}
         </td>
-        <td className={cn(cellClass, numberClass)}>
-          {filled > 0 ? format(filled) : '—'}
-        </td>
+        <td className={cn(cellClass, numberClass)}>{format(filled)}</td>
         <td className={cn(cellClass, 'text-right')}>
           <span className="flex justify-end gap-2">
             {onCheck &&
@@ -827,7 +1004,7 @@ function RunRows({
                           : label('takeProfit')}
                     </td>
                     <td className={cn(cellClass, numberClass)}>
-                      {format(o.average || o.price)}
+                      {format(Number(o.average) > 0 ? o.average! : o.price)}
                     </td>
                     <td className={cn(cellClass, numberClass)}>
                       {format(o.filled)} / {format(o.quantity)}
@@ -846,9 +1023,6 @@ function RunRows({
                 ))}
               </tbody>
             </table>
-            <p className="px-4 py-2 text-[11px] text-vergex-muted">
-              {label('recordsNote')}
-            </p>
           </td>
         </tr>
       )}

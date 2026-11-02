@@ -1,7 +1,7 @@
 package trader
 
 import (
-	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -35,13 +35,12 @@ type GridState struct {
 	IsInitialized bool
 
 	// Performance tracking
-	TotalProfit    float64
-	TotalTrades    int
-	WinningTrades  int
-	MaxDrawdown    float64
-	PeakEquity     float64
-	DailyPnL       float64
-	LastDailyReset time.Time
+	TotalProfit   float64
+	TotalTrades   int
+	WinningTrades int
+	MaxDrawdown   float64
+	PeakEquity    float64
+	DailyPnL      float64 // Realized today (UTC), from the ledger
 
 	// Order tracking
 	OrderBook map[string]int // OrderID -> LevelIndex
@@ -180,23 +179,22 @@ func (at *AutoTrader) checkMaxDrawdown() (bool, float64) {
 	return drawdown >= gridConfig.MaxDrawdownPct, drawdown
 }
 
-// checkDailyLossLimit checks if daily loss exceeds limit
+// checkDailyLossLimit checks if what the ledger has realized today (UTC) exceeds the limit
 // Returns: (exceeded bool, dailyLossPct float64)
 func (at *AutoTrader) checkDailyLossLimit() (bool, float64) {
 	gridConfig := at.config.Grid
-	if gridConfig.DailyLossLimitPct <= 0 {
+	if gridConfig.DailyLossLimitPct <= 0 || at.stores == nil {
 		return false, 0
 	}
 
-	at.gridState.mu.Lock()
-	// Reset daily PnL if new day
-	now := time.Now()
-	if now.YearDay() != at.gridState.LastDailyReset.YearDay() ||
-		now.Year() != at.gridState.LastDailyReset.Year() {
-		at.gridState.DailyPnL = 0
-		at.gridState.LastDailyReset = now
+	startOfDay := time.Now().UTC().Truncate(24 * time.Hour).UnixMilli()
+	dailyPnL, err := at.stores.Positions.RealizedOfTrader(at.id, startOfDay)
+	if err != nil {
+		logger.Warnf("[Grid] Failed to read today's realized P/L: %v", err)
+		return false, 0
 	}
-	dailyPnL := at.gridState.DailyPnL
+	at.gridState.mu.Lock()
+	at.gridState.DailyPnL = dailyPnL
 	at.gridState.mu.Unlock()
 
 	// Calculate daily loss as percentage of total investment
@@ -208,28 +206,37 @@ func (at *AutoTrader) checkDailyLossLimit() (bool, float64) {
 	return dailyLossPct >= gridConfig.DailyLossLimitPct, dailyLossPct
 }
 
-// emergencyExit closes all positions and cancels all orders
+// emergencyExit cancels the grid's orders and closes its positions. It reports what it
+// could not do, and is run again until it has done it all.
 func (at *AutoTrader) emergencyExit(reason string) error {
 	gridConfig := at.config.Grid
 
 	logger.Errorf("[Grid] EMERGENCY EXIT: %s", reason)
 
+	var failures []error
 	// Cancel all orders
 	if err := at.cancelAllGridOrders(); err != nil {
 		logger.Errorf("[Grid] Failed to cancel orders in emergency: %v", err)
+		failures = append(failures, err)
 	}
 
 	// Close all positions
 	positions, err := at.trader.GetPositions()
-	if err == nil {
-		for _, pos := range positions {
-			if sym, ok := pos["symbol"].(string); ok && sym == gridConfig.Symbol {
-				if size, ok := pos["positionAmt"].(float64); ok && size != 0 {
-					if size > 0 {
-						at.trader.CloseLong(gridConfig.Symbol, size)
-					} else {
-						at.trader.CloseShort(gridConfig.Symbol, -size)
-					}
+	if err != nil {
+		failures = append(failures, err)
+	}
+	for _, pos := range positions {
+		if sym, ok := pos["symbol"].(string); ok && sym == gridConfig.Symbol {
+			if size, ok := pos["positionAmt"].(float64); ok && size != 0 {
+				var closeErr error
+				if size > 0 {
+					_, closeErr = at.trader.CloseLong(gridConfig.Symbol, size)
+				} else {
+					_, closeErr = at.trader.CloseShort(gridConfig.Symbol, -size)
+				}
+				if closeErr != nil {
+					logger.Errorf("[Grid] Failed to close position in emergency: %v", closeErr)
+					failures = append(failures, closeErr)
 				}
 			}
 		}
@@ -240,7 +247,8 @@ func (at *AutoTrader) emergencyExit(reason string) error {
 	at.gridState.IsPaused = true
 	at.gridState.mu.Unlock()
 
-	return nil
+	at.exitPending.Store(len(failures) > 0)
+	return errors.Join(failures...)
 }
 
 // handleBreakout handles price breakout from grid range
@@ -285,6 +293,12 @@ func (at *AutoTrader) InitializeGrid() error {
 
 	gridConfig := at.config.Grid
 	at.gridState = NewGridState(gridConfig)
+	at.gridState.PeakEquity = at.storedPeakEquity()
+
+	// A crash leaves its orders behind, and a new grid knows nothing of them.
+	if err := at.cancelAllGridOrders(); err != nil {
+		return fmt.Errorf("failed to clear orders left from before: %w", err)
+	}
 
 	// Get current market price
 	price, err := at.trader.GetMarketPrice(gridConfig.Symbol)
@@ -352,6 +366,17 @@ func (at *AutoTrader) RunGridCycle() error {
 		return nil
 	}
 
+	at.saveGridEquity()
+
+	// A hard stop in force holds across restarts: nothing below runs until it ends.
+	if halt := at.ActiveHalt(); halt != nil {
+		logger.Infof("[Grid] Halted, skipping cycle: %s", halt.Reason)
+		if at.exitPending.Load() {
+			return at.emergencyExit(halt.Reason)
+		}
+		return nil
+	}
+
 	if at.gridState == nil || !at.gridState.IsInitialized {
 		if err := at.InitializeGrid(); err != nil {
 			return fmt.Errorf("failed to initialize grid: %w", err)
@@ -369,17 +394,21 @@ func (at *AutoTrader) RunGridCycle() error {
 	// CRITICAL: Check max drawdown
 	exceeded, drawdown := at.checkMaxDrawdown()
 	if exceeded {
-		return at.emergencyExit(fmt.Sprintf("max drawdown exceeded: %.2f%%", drawdown))
+		reason := fmt.Sprintf("max drawdown exceeded: %.2f%%", drawdown)
+		at.tripHalt(reason, nil)
+		return at.emergencyExit(reason)
 	}
 
 	// CRITICAL: Check daily loss limit
 	dailyExceeded, dailyLossPct := at.checkDailyLossLimit()
 	if dailyExceeded {
-		logger.Errorf("[Grid] Daily loss limit exceeded: %.2f%%", dailyLossPct)
-		at.gridState.mu.Lock()
-		at.gridState.IsPaused = true
-		at.gridState.mu.Unlock()
-		return fmt.Errorf("daily loss limit exceeded: %.2f%%", dailyLossPct)
+		// Open orders could only add to today's loss. Positions stay, with their stops.
+		until := nextUTCDay(time.Now())
+		at.tripHalt(fmt.Sprintf("daily loss limit exceeded: %.2f%%", dailyLossPct), &until)
+		if err := at.cancelAllGridOrders(); err != nil {
+			return fmt.Errorf("daily loss limit exceeded, but orders remain: %w", err)
+		}
+		return nil
 	}
 
 	// Check multi-period box breakout
@@ -426,26 +455,30 @@ func (at *AutoTrader) RunGridCycle() error {
 	}
 
 	// Execute decisions
-	for _, d := range decision.Decisions {
+	actions := make([]DecisionAction, 0, len(decision.Decisions))
+	for i := range decision.Decisions {
+		d := &decision.Decisions[i]
 		// Check if trader is still running before each decision
 		at.isRunningMutex.RLock()
 		running := at.isRunning
 		at.isRunningMutex.RUnlock()
 		if !running {
-			logger.Infof("[Grid] Trader stopped, skipping remaining %d decisions", len(decision.Decisions))
+			logger.Infof("[Grid] Trader stopped, skipping remaining %d decisions", len(decision.Decisions)-i)
 			break
 		}
 
-		if err := at.executeGridDecision(&d); err != nil {
+		err := at.executeGridDecision(d)
+		if err != nil {
 			logger.Warnf("[Grid] Failed to execute decision %s: %v", d.Action, err)
 		}
+		actions = append(actions, gridDecisionAction(d, err))
 	}
 
 	// Sync state with exchange
 	at.syncGridState()
 
 	// Save decision record
-	at.saveGridDecisionRecord(decision)
+	at.saveGridDecisionRecord(decision, actions)
 
 	return nil
 }
@@ -553,47 +586,40 @@ func (at *AutoTrader) IsGrid() bool {
 	return at.config.Grid != nil
 }
 
-// saveGridDecisionRecord saves the grid decision to database
-func (at *AutoTrader) saveGridDecisionRecord(decision *traderagent.FullDecision) {
-	if at.stores == nil {
-		return
+// gridDecisionAction is how a decision turned out, for the record. A rule stopping it is
+// not a failure: nothing reached the exchange.
+func gridDecisionAction(d *traderagent.Decision, err error) DecisionAction {
+	action := DecisionAction{
+		Action:     d.Action,
+		Symbol:     d.Symbol,
+		Quantity:   d.Quantity,
+		Leverage:   d.Leverage,
+		Price:      d.Price,
+		StopLoss:   d.StopLoss,
+		TakeProfit: d.TakeProfit,
+		Confidence: d.Confidence,
+		Reasoning:  d.Reasoning,
+		Timestamp:  time.Now().UTC(),
+		Success:    err == nil,
 	}
+	if err != nil {
+		action.Error = err.Error()
+		action.Blocked = errors.As(err, new(riskBlock))
+	}
+	return action
+}
 
-	at.cycleNumber++
-
+// saveGridDecisionRecord saves the grid decision and what became of it to database
+func (at *AutoTrader) saveGridDecisionRecord(decision *traderagent.FullDecision, actions []DecisionAction) {
 	record := &DecisionRecord{
-		TraderID:        at.id,
-		CycleNumber:     at.cycleNumber,
 		Timestamp:       time.Now().UTC(),
 		ConversationID:  decision.ConversationID,
 		AgentDurationMs: decision.AgentDurationMs,
-		Limits:          at.limits(),
 		Success:         true,
+		Decisions:       actions,
 	}
-
-	// Convert traderagent.Decision to DecisionAction for frontend display
-	for _, d := range decision.Decisions {
-		actionRecord := DecisionAction{
-			Action:     d.Action,
-			Symbol:     d.Symbol,
-			Quantity:   d.Quantity,
-			Leverage:   d.Leverage,
-			Price:      d.Price,
-			StopLoss:   d.StopLoss,
-			TakeProfit: d.TakeProfit,
-			Confidence: d.Confidence,
-			Reasoning:  d.Reasoning,
-			Timestamp:  time.Now().UTC(),
-			Success:    true, // Grid decisions are executed inline
-		}
-		record.Decisions = append(record.Decisions, actionRecord)
-	}
-
-	record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf("Grid cycle completed with %d decisions", len(decision.Decisions)))
-
-	ctx, cancel := context.WithTimeout(context.Background(), cycleSaveWait)
-	defer cancel()
-	if err := at.stores.Decisions.WithContext(ctx).LogDecision(record); err != nil {
+	record.ExecutionLog = append(record.ExecutionLog, fmt.Sprintf("Grid cycle completed with %d decisions", len(actions)))
+	if err := at.saveDecision(record); err != nil {
 		logger.Warnf("[Grid] Failed to save decision record: %v", err)
 	}
 }
@@ -628,4 +654,38 @@ type GridRiskInfo struct {
 	CurrentGridDirection  string `json:"current_grid_direction"`
 	DirectionChangeCount  int    `json:"direction_change_count"`
 	EnableDirectionAdjust bool   `json:"enable_direction_adjust"`
+}
+
+// saveGridEquity stores what the account holds each cycle, as an agent trader does.
+func (at *AutoTrader) saveGridEquity() {
+	if at.stores == nil {
+		return
+	}
+	balance, err := at.trader.GetBalance()
+	if err != nil {
+		logger.Warnf("[Grid] Failed to read balance for equity snapshot: %v", err)
+		return
+	}
+	positions, err := at.trader.GetPositions()
+	if err != nil {
+		logger.Warnf("[Grid] Failed to read positions for equity snapshot: %v", err)
+		return
+	}
+	wallet, _ := balance["totalWalletBalance"].(float64)
+	unrealized, _ := balance["totalUnrealizedProfit"].(float64)
+	available, _ := balance["availableBalance"].(float64)
+	equity, ok := balance["totalEquity"].(float64)
+	if !ok || equity <= 0 {
+		equity = wallet + unrealized
+	}
+	if equity <= 0 {
+		return
+	}
+	snapshot := &EquitySnapshot{
+		TraderID: at.id, TotalEquity: equity, Balance: equity - unrealized, AvailableBalance: available, UnrealizedPnL: unrealized,
+		PositionCount: len(positions), MarginUsedPct: marginInUse(positions) / equity * 100,
+	}
+	if err := at.stores.Equity.Save(snapshot); err != nil {
+		logger.Warnf("[Grid] Failed to save equity snapshot: %v", err)
+	}
 }

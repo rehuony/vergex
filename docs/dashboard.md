@@ -4,8 +4,8 @@ The Dashboard is a read-only view of the whole system, built around where things
 
 | Area | Shows | Opens |
 | :--- | :---- | :---- |
-| Figures | Total equity, what was realized today, traders running and open positions, above the scene | |
-| Needs attention | The last of the figures, always there. It says None, or how many problems there are and opens a list of them: blocked or safe-mode traders, traders that could not load, accounts that cannot be read, Futures plans needing reconciliation, stopped services. One row per kind of problem, leading to the first | The trader, Futures, or the matching Settings section |
+| Figures | Total equity, what was realized today, traders running and open positions, above the scene. [Testnet](accounts.md#testnet) money is left out of the first two | |
+| Needs attention | The last of the figures, always there. It says None, or how many problems there are and opens a list of them: halted, blocked or safe-mode traders, traders that could not load, accounts that cannot be read, trades the ledger could not book, Futures plans needing reconciliation, stopped services. One row per kind of problem, leading to the first | The trader, Futures, or the matching Settings section |
 | Scene | Every block of the system, its members as dots on top, and the routes between them | Filters the events |
 | Events | What happened in the last 24 hours, newest first, up to 200 | The decision, the trader's Orders or Positions section, the Futures plan, Forecast, or Settings |
 | Positions | The last choice beside the event filter: every open position across accounts, and what holds it | The trader's Positions section, or Futures |

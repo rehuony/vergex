@@ -18,7 +18,7 @@ const okxInstrumentFixture = `[{"instId":"BTC-USDT-SWAP","instType":"SWAP","stat
 
 func okxFixture(t *testing.T, mode, positions string, handle func(*http.Request) string) *Account {
 	t.Helper()
-	client := NewReadOnlyAccount("key", "secret", "pass")
+	client := NewReadOnlyAccount("key", "secret", "pass", false)
 	if !client.accountOnly {
 		t.Fatal("unsafe account client")
 	}
@@ -239,7 +239,7 @@ func TestFuturesBalancesAcceptExchangePrecision(t *testing.T) {
 }
 
 func TestSignedRequestRejectsRedirects(t *testing.T) {
-	client := NewReadOnlyAccount("test-key", "test-secret", "test-passphrase")
+	client := NewReadOnlyAccount("test-key", "test-secret", "test-passphrase", false)
 	requests := 0
 	client.httpClient.Transport = executionTransport(func(r *http.Request) (*http.Response, error) {
 		requests++
@@ -253,5 +253,42 @@ func TestSignedRequestRejectsRedirects(t *testing.T) {
 	}
 	if requests != 1 {
 		t.Fatalf("unexpected request count: %d", requests)
+	}
+}
+
+func TestEveryRequestSaysWhichEnvironmentItIsFor(t *testing.T) {
+	var sent string
+	transport := executionTransport(func(r *http.Request) (*http.Response, error) {
+		sent = r.Header.Get("x-simulated-trading")
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"code":"0","data":[]}`))}, nil
+	})
+	for _, tt := range []struct {
+		testnet bool
+		want    string
+	}{{false, "0"}, {true, "1"}} {
+		client := NewReadOnlyAccount("key", "secret", "pass", tt.testnet)
+		client.httpClient = &http.Client{Transport: transport}
+		if _, err := client.doRequest(http.MethodGet, okxAccountPath, nil); err != nil {
+			t.Fatal(err)
+		}
+		if sent != tt.want || client.Testnet() != tt.testnet {
+			t.Fatalf("testnet %v sent %q", tt.testnet, sent)
+		}
+	}
+
+	var out any
+	public := NewPublicClient(&http.Client{Transport: transport})
+	if err := public.request(context.Background(), okxBaseURL+"/api/v5/market/books", &out); err != nil {
+		t.Fatal(err)
+	}
+	if sent != "" {
+		t.Fatalf("real book sent %q", sent)
+	}
+	public = NewTestnetPublicClient(&http.Client{Transport: transport})
+	if err := public.request(context.Background(), okxBaseURL+"/api/v5/market/books", &out); err != nil {
+		t.Fatal(err)
+	}
+	if sent != "1" {
+		t.Fatalf("testnet book sent %q", sent)
 	}
 }

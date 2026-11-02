@@ -2,8 +2,11 @@ package api
 
 import (
 	"testing"
+	"time"
 	"vergex/internal/account"
+	"vergex/internal/account/accounttest"
 	"vergex/internal/agent"
+	"vergex/internal/database/testdb"
 	"vergex/internal/security/crypto"
 	"vergex/internal/trader/kind"
 )
@@ -168,5 +171,23 @@ func TestRunLaunchPreflightWarningsDoNotBlock(t *testing.T) {
 	result := server.runLaunchPreflight("user-1", model, account, LaunchCheck{ID: launchCheckConfig, Status: launchCheckStatusSkipped})
 	if !result.Ready {
 		t.Fatalf("warnings must not block launch, got %+v", result)
+	}
+}
+
+func TestAPositionTheLedgerGivesToAnotherIsNotTheTraders(t *testing.T) {
+	st := NewStores(testdb.Open(t))
+	s := &Server{stores: st}
+	ledger := accounttest.NewLedger(t, st.DB)
+	ledger.Open("mine", "BTCUSDT", account.SideLong, 1, 100, time.Now())
+	ledger.Open("other", "ETHUSDT", account.SideLong, 1, 100, time.Now())
+
+	if !s.traderHolds("mine", map[string]interface{}{"symbol": "BTCUSDT", "side": "long"}) {
+		t.Fatal("its own position")
+	}
+	if s.traderHolds("mine", map[string]interface{}{"symbol": "ETHUSDT", "side": "long"}) {
+		t.Fatal("another trader's position")
+	}
+	if s.traderHolds("mine", map[string]interface{}{"symbol": "SOLUSDT", "side": "long"}) {
+		t.Fatal("a position the ledger has never heard of")
 	}
 }

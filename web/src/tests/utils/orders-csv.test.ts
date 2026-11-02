@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
-import { ordersToCsv } from '@/components/trader/orders-csv'
-import type { TraderOrder } from '@/types'
+import { accountOrdersToCsv, fillsToCsv, ordersToCsv } from '@/utils/orders-csv'
+import type { AccountFill, TraderOrder } from '@/types'
 
 const order = (fields: Partial<TraderOrder>) =>
   ({
@@ -35,4 +35,27 @@ it('quotes separators and defuses spreadsheet formulas', () => {
   ]).split('\n')[1]
   expect(row).toContain('"A,B"')
   expect(row).toContain("'=SUM(A1)")
+})
+
+it("says who placed an account's orders and who a fill belongs to", () => {
+  const [head, row] = accountOrdersToCsv([order({ source: 'manual' })]).split(
+    '\n'
+  )
+  expect(head.startsWith('source,created_at')).toBe(true)
+  expect(row.startsWith('manual,2026-01-02')).toBe(true)
+  const fill = {
+    id: 1,
+    source: 'external',
+    symbol: 'ETHUSDT',
+    side: 'SELL',
+    quantity: 2,
+    price: 3000,
+    commission: 0.4,
+    commission_asset: 'USDT',
+    realized_pnl: -12.5,
+    created_at: Date.UTC(2026, 0, 2),
+  } as AccountFill
+  expect(fillsToCsv([fill]).split('\n')[1]).toBe(
+    '2026-01-02T00:00:00.000Z,external,ETHUSDT,SELL,2,3000,0.4,USDT,-12.5'
+  )
 })

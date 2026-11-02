@@ -4,10 +4,51 @@ import {
   logicalAt,
 } from '@/components/futures/futures-chart/futures-chart-data'
 import {
+  comparisonShapes,
   holdingLines,
   selectAnnotations,
 } from '@/components/futures/futures-chart/futures-chart-shapes'
-import type { Drawing } from '@/api/futures'
+import type { Drawing, Plan } from '@/api/futures'
+
+it('heads each comparison lane with its way of entering, over prices that fit it', () => {
+  const lane = (id: string, kind: string, entry: string, orders: string[]) =>
+    ({
+      id,
+      quantity: '1',
+      snapshot: { tick: '0.1' },
+      orders: orders.map((price) => ({ price, quantity: '1' })),
+      idea: {
+        side: 'long',
+        entry,
+        stop: '100',
+        target: '200',
+        execution: { kind },
+      },
+    }) as unknown as Plan
+  const texts = comparisonShapes(
+    [
+      lane('a', 'limit', '150', ['150']),
+      // A market order's price is its bound, and a ladder goes by its average.
+      lane('b', 'market', '160', ['152']),
+      lane('c', 'ladder', '140', ['140', '141', '141']),
+    ],
+    undefined
+  ).flatMap((shape) => (shape.type === 'text' ? [shape.text] : []))
+  expect(texts).toEqual([
+    'Limit',
+    '200',
+    '150',
+    '100',
+    'Market',
+    '200',
+    '≈160',
+    '100',
+    'Ladder',
+    '200',
+    '≈140.7',
+    '100',
+  ])
+})
 
 it('draws only what the account holds on this market', () => {
   const position = {

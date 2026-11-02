@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 	"vergex/internal/account"
+	traderagent "vergex/internal/trader/agent"
 )
 
 type rejectedAuthorizationTrader struct{ account.Trading }
@@ -24,6 +25,19 @@ func TestCycleChecksAuthorizationBeforeFetchingDataOrCallingAgent(t *testing.T) 
 	}
 }
 
+func TestGridDecisionRecordsWhatBecameOfIt(t *testing.T) {
+	d := &traderagent.Decision{Action: "place_buy_limit", Symbol: "BTCUSDT", Quantity: 0.2}
+	if got := gridDecisionAction(d, nil); !got.Success || got.Error != "" || got.outcome() != OutcomeExecuted {
+		t.Errorf("placed = %+v", got)
+	}
+	if got := gridDecisionAction(d, errors.New("rejected")); got.Success || got.Blocked || got.Error != "rejected" || got.outcome() != OutcomeFailed {
+		t.Errorf("failed = %+v", got)
+	}
+	if got := gridDecisionAction(d, riskBlock{"over the limit"}); got.Success || !got.Blocked || got.outcome() != OutcomeBlocked {
+		t.Errorf("blocked = %+v", got)
+	}
+}
+
 func TestDecisionExecutionOutcome(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
@@ -35,6 +49,8 @@ func TestDecisionExecutionOutcome(t *testing.T) {
 		{"partial failure", []DecisionAction{{Action: "open_long", Success: true}, {Action: "close_long"}}, true, false},
 		{"filled", []DecisionAction{{Action: "open_long", Success: true}}, true, true},
 		{"preserve upstream fault", nil, false, false},
+		{"a rule stopping it is no fault", []DecisionAction{{Action: "open_long", Blocked: true}, {Action: "close_long", Success: true}}, true, true},
+		{"a failure beside a block still is", []DecisionAction{{Action: "open_long", Blocked: true}, {Action: "close_long"}}, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			record := &DecisionRecord{Success: tc.initial, Decisions: tc.actions}

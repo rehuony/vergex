@@ -12,7 +12,7 @@ Each module has a schema, and holds its own tables in its own Go package. `publi
 | `agent` | `models`, `conversations`, `messages`, `calls` | The models a user can call, everything said to and by them, and each request's tokens, cost and time |
 | `market` | `instruments`, `series`, `candles`, `candle_gaps`, `derivative_metrics` | What can be traded and its local market history |
 | `account` | `accounts`, `leases`, `orders`, `fills`, `positions`, `skipped_fills` | Accounts on a venue and the ledger of real orders, whichever feature placed them |
-| `trader` | `traders`, `cycles`, `decisions`, `equity_snapshots` | Automatic traders with their kind and config, and what each cycle did |
+| `trader` | `traders`, `cycles`, `decisions`, `equity_snapshots`, `position_peaks` | Automatic traders with their kind and config, what each cycle did, and the best each held position has done |
 | `futures` | `plans`, `calculators`, `runs`, `run_orders`, `account_closes` | Futures plans, the entry calculators written in its conversations, and execution state |
 | `forecast` | `strategies`, `backtests`, `signals`, `outcome_stats`, `calibrations`, `alert_states` | Forecast's saved strategies, their backtests, forecasts, how they turned out, and calibration |
 | `telegram` | `bot`, `alert_marks` | The bot and what its alerts have already said |

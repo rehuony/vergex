@@ -35,3 +35,18 @@ export function formatRequestError(
   return text.length > 500 ? `${text.slice(0, 500)}…` : text
 }
 import { t, type Language } from '@/i18n'
+
+// What the server said in the user's language, where it gave a code the interface has
+// wording for, and in the server's own words otherwise.
+export function codedText(
+  section: string,
+  code: string | undefined,
+  fallback: string,
+  language: Language,
+  params?: Record<string, string | number>
+): string {
+  if (!code) return fallback
+  const key = `${section}.${code}`
+  const text = t(key, language, params)
+  return text === key ? fallback : text
+}

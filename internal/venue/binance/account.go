@@ -46,6 +46,8 @@ func getBrOrderID() string {
 // Account Binance futures trader
 type Account struct {
 	client *futures.Client
+	// testnet says the client is on Binance's test environment.
+	testnet bool
 
 	// Balance cache
 	cachedBalance     map[string]interface{}
@@ -62,8 +64,8 @@ type Account struct {
 }
 
 // NewAccount creates futures trader
-func NewAccount(apiKey, secretKey string) *Account {
-	trader := NewExecutionTrader(apiKey, secretKey)
+func NewAccount(apiKey, secretKey string, testnet bool) *Account {
+	trader := NewExecutionTrader(apiKey, secretKey).onEnvironment(testnet)
 	syncBinanceServerTime(trader.client)
 
 	// Set dual-side position mode (Hedge Mode)

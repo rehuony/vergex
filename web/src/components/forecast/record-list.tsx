@@ -106,9 +106,7 @@ export function RecordList({
                     ±{fmtPct(signal.expected_move_pct)}
                   </td>
                   <td className={cn(cellClass, 'text-right font-mono text-xs')}>
-                    {signal.status === 'verified'
-                      ? fmtPct(signal.actual_move_pct ?? 0, true)
-                      : '—'}
+                    {fmtPct(signal.actual_move_pct ?? 0, true)}
                   </td>
                   <td
                     className={cn(

@@ -2,7 +2,7 @@
 
 Auto trading, shown in Chinese as `自动交易`, is made of traders (`交易员`). A trader runs on a schedule: it reads the market, asks the model for decisions and places orders within the limits in its settings. It binds a model and an account, and carries its own settings: a kind, fixed when it is created, and a config that belongs to that kind. There are two kinds, `agent` and `grid`.
 
-The **Traders** tab lists each trader, running ones first, with its kind, model and stored return, and opens one beside the list in place. From 8 traders on a search box filters by name. The address says what is open, as `/traders?id=&tab=`, and without it the page opens the last one looked at. **Overview** adds up the traders and compares them in a table a column header sorts: how many run, the equity of the accounts they use, counting an account once however many traders share it, and each trader's equity, return, win rate, drawdown and trades, read from the database. **Stop all** stops every running trader without closing positions. Until both a model and an account exist, the page says what is missing and links to it in Settings.
+The **Traders** tab lists each trader, running ones first, with its kind, model and stored return, and opens one beside the list in place. From 8 traders on a search box filters by name. The address says what is open, as `/traders?id=&tab=`, and without it the page opens the last one looked at. **Overview** adds up the traders and compares them in a table a column header sorts: how many run, the equity of the accounts they use, counting an account once however many traders share it and leaving [testnet](accounts.md#testnet) accounts out, and each trader's account equity, return, win rate, drawdown and trades, read from the database. Equity is the whole account's, in the list and on the curve under Performance. Return and total P/L are the trader's own, from the ledger: what it realized after fees and what its open positions stand at, against the balance it started with. Other traders on the account, Futures and transfers don't touch them. **Stop all** stops every running trader without closing positions. Until both a model and an account exist, the page says what is missing and links to it in Settings.
 
 **Create trader** asks for the name, kind, a preset, the model, the account, the scan interval and the margin mode, then opens the new trader. The presets are starting points written in code: `careful`, `balanced` and `active` for an agent trader, one `default` for a grid. Nothing is seeded when you register.
 
@@ -10,7 +10,7 @@ A trader is started and stopped from its header, and what else can be done to it
 
 | Tab | Shows |
 | :-- | :---- |
-| Performance | Equity, P/L, exposure, the equity curve (from the snapshot each cycle stores), results by symbol, hold time and side |
+| Performance | Account equity, P/L, exposure, the account's equity curve (from the snapshot each cycle stores), results by symbol, hold time and side, and what its model calls have cost, with what it realized net of fees and that cost. A read that fails keeps the last values and says they are not updating |
 | Positions | Open positions, closing one or all of them, and closed trades, with older ones on request |
 | Decisions | The latest cycle, and a log of every cycle. Opening one shows its prompts, reasoning and raw response |
 | Orders | Recorded orders and their fills, with CSV export |
@@ -28,10 +28,10 @@ Starting a trader opens a confirmation with what will run and the launch checks:
 
 `runCycle` in `internal/trader/auto_trader_loop.go` runs every `scan_interval_minutes` (15 by default):
 
-1. Check the running state, reload the settings if they changed, and check risk pauses and safe mode.
-2. Build the context: account, open positions, candidate coins.
+1. Check the running state and reload the settings if they changed.
+2. Build the context: account, open positions, candidate coins, and store an equity snapshot. Check the loss limits: a [halted](#halts) trader holding nothing stops here.
 3. Fetch market data, build the prompts, call the model, and parse and validate the decisions (`internal/trader/agent/`).
-4. Drop decisions outside the trader's coins, execute closes before opens, and store the cycle, agent usage and an equity snapshot.
+4. Drop decisions outside the trader's coins, and opens while halted, execute closes before opens, and store the cycle and agent usage.
 
 A cycle is a row in `trader.cycles`, with the limits it ran under in `limits` and what the model decided in `trader.decisions`, each pointing at the order it became. What was sent to the model and what it said, with its own thinking where the provider returns it and otherwise the reasoning in its reply, are a conversation in `agent.messages`; a call that failed keeps what was sent.
 
@@ -89,10 +89,14 @@ These bounds are applied whenever settings are saved or loaded (`Validate` in `i
 | Min position size | 12 USDT | 10–1000 USDT |
 | Min risk/reward | 3:1 | 1–10 |
 | Min confidence | 75 | 50–100 |
+| Max daily loss | 5% | 0 is off, 0.5–100% |
+| Max drawdown | 15% | 0 is off, 0.5–100% |
 | Candidate coins | | at most 10 per source |
 | Timeframes, bars | 3 timeframes, 20 bars | at most 4, 10–30 bars |
 
-Position count, position value, margin usage and minimum size are enforced in code. Leverage, risk/reward and confidence are given to the model as rules, and decisions are validated before execution.
+The model is told all of these, and code holds it to them just before an order. Leverage above its limit is lowered to it, and a position too large for the margin left under the usage limit is cut down. An open is refused if it is over its value limit, if it would then be under the minimum size, if it would pass the position count, if its confidence is too low, or if its reward to risk, worked out from the current price, is too low.
+
+A refused decision is only that decision: the rest of the reply still happens, including closes, it shows as blocked in the Decisions log, and it raises no alert and does not count towards safe mode.
 
 ### Token budget
 
@@ -103,10 +107,13 @@ Position count, position value, margin usage and minimum size are enforced in co
 - **Opens** enforce the limits above, set leverage and margin mode, place the order, then place stop-loss and take-profit. If protection cannot be placed, the position is closed.
 - **Hold times** apply to agent-initiated closes (`auto_trader_throttle.go`). A position is held for at least 90 minutes unless price has moved past -3% or +8%. Between 90 minutes and 3 hours, a close while price is between -2% and +3% also waits.
 - **Re-entry** into a just-closed symbol waits 4 hours.
-- **Drawdown monitor** (`auto_trader_risk.go`): once price has moved 5% in the position's favour, it closes the position if it gives back 40% of its peak profit. It reads positions every minute and follows the live mark price between reads ([market-data.md](market-data.md#what-trading-reads)).
+- **Drawdown monitor** (`auto_trader_risk.go`): once price has moved 5% in the position's favour, it closes the position if it gives back 40% of its peak profit. It reads positions every minute and follows the live mark price between reads ([market-data.md](market-data.md#what-trading-reads)). A position's peak is stored, so a restart does not forget what has been given back.
+- **Loss limits**: losing `max_daily_loss_pct` of equity since 00:00 UTC [halts](#halts) the trader until the next UTC day, and equity `max_drawdown_pct` below its peak halts it until you resume it. A halted agent trader opens nothing. It keeps asking the model about what it holds, so a position can still be closed, and its stops stay. Equity is the whole account's, so another trader's loss or a withdrawal counts.
 - **Safe mode**: after 3 consecutive model failures the trader opens no new positions until a call succeeds. Existing positions keep their protection.
 
 An account leased by an unresolved [Futures](futures.md) plan cannot start a trader.
+
+A trader reads the whole account, so it treats every position there as its own: one you opened by hand counts towards its position limit, reaches its model, can be closed by the model or the drawdown monitor. Starting it lists the positions the ledger does not give to it, and its Positions tab marks them. Keep a trader on an account of its own if that matters. A new position can read as not its own until its fill is booked, within 30 seconds.
 
 ## Orders, fills and positions
 
@@ -138,6 +145,22 @@ Regime checks use three Donchian boxes on 1h candles: short (72 bars), mid (240)
 | Mid box | Pause the grid and cancel its orders |
 | Long box | Pause, cancel and close all positions |
 
-With `enable_direction_adjust`, breakouts can instead shift the grid to a long or short bias (`direction_bias_ratio`). `max_drawdown_pct`, `daily_loss_limit_pct` and `stop_loss_pct` act as hard stops.
+With `enable_direction_adjust`, breakouts can instead shift the grid to a long or short bias (`direction_bias_ratio`).
+
+Three hard stops apply, and each cycle checks them before anything else:
+
+| Setting | Measures | Then |
+| :------ | :------- | :--- |
+| `max_drawdown_pct` | The account's equity against its peak since the trader was last resumed | Cancels the grid's orders, closes its positions and [halts](#halts) until you resume it |
+| `daily_loss_limit_pct` | What the ledger has realized for this trader today (UTC), against `total_investment` | Cancels its orders and halts until the next UTC day. Positions stay |
+| `stop_loss_pct` | One filled level's loss against its entry | Closes that level |
+
+Equity is the whole account's, so a withdrawal counts as a loss.
+
+Stopping a grid trader cancels every order on its symbol, since nothing would watch what they open, and says so if it could not. Its positions stay. Starting one clears what a crash left behind in the same way, so keep other orders on that symbol on another account.
 
 The trader's page shows the grid's risk (leverage, position, regime and boxes) only while it runs. A stopped trader has no reading, even with a position still open on the exchange, which the Positions tab shows.
+
+## Halts
+
+A hard stop that trips halts the trader. The halt is stored with it, so a restart or a change of settings does not start trading again. It shows beside the trader's name and under **Needs attention** on the Dashboard, with the reason. **Resume**, in what opens from there, ends it, and peak equity starts over from that moment. A halt with an end time ends by itself then.

@@ -50,6 +50,8 @@ export type Shape =
       color: string
       size: number
       bold: boolean
+      // How far above its price it sits, in pixels.
+      raise?: number
     }
 
 type RenderTarget = Parameters<IPrimitivePaneRenderer['draw']>[0]
@@ -136,8 +138,9 @@ export class OverlayPrimitive implements ISeriesPrimitive<Time> {
           ctx.setLineDash([])
         } else {
           const tx = x(s.x),
-            ty = y(s.p)
-          if (tx === null || ty === null) continue
+            py = y(s.p)
+          if (tx === null || py === null) continue
+          const ty = py - (s.raise ?? 0)
           const style = overlayStyle()
           ctx.font = `${s.bold ? 600 : 400} ${s.size}px ${style.font}`
           ctx.textBaseline = 'bottom'

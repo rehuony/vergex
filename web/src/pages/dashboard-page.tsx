@@ -4,7 +4,7 @@ import { api } from '@/api'
 import type { ActivityEvent, ActivityStream } from '@/api/dashboard'
 import { AppChrome } from '@/components/common/app-chrome'
 import { Page } from '@/components/common/page'
-import { Panel, PanelState } from '@/components/common/panel'
+import { Panel, PanelLoading, PanelState } from '@/components/common/panel'
 import { AttentionList } from '@/components/dashboard/attention-list'
 import { FirstRun } from '@/components/dashboard/first-run'
 import { FlowEvents, type FlowKind } from '@/components/dashboard/flow-events'
@@ -91,9 +91,7 @@ export function DashboardPage() {
                 {label('loadFailed')}
               </PanelState>
             ) : (
-              <PanelState role="status" className="h-full">
-                {t('loading', language)}
-              </PanelState>
+              <PanelLoading className="h-full" />
             )}
           </Panel>
         ) : overview.models.length === 0 || overview.accounts.length === 0 ? (

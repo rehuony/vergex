@@ -24,7 +24,7 @@ export function SplitView({
 }
 
 // The list side: its entries on the page itself, with what adds one, if anything does,
-// pinned underneath.
+// pinned underneath. The scrollbar floats in a gutter beside the entries, never over them.
 export function SplitRail({
   label,
   addLabel,
@@ -40,9 +40,9 @@ export function SplitRail({
   children: ReactNode
 }) {
   return (
-    <nav aria-label={label} className="hidden min-h-0 flex-col lg:flex">
+    <nav aria-label={label} className="hidden min-h-0 flex-col pr-3 lg:flex">
       {top && <div className="shrink-0 pb-3">{top}</div>}
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="-mr-3 min-h-0 flex-1 pr-3">
         <ul className="space-y-0.5">{children}</ul>
       </ScrollArea>
       {onAdd && (

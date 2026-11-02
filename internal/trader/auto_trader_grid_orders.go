@@ -3,6 +3,7 @@ package trader
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"vergex/internal/account"
@@ -109,7 +110,7 @@ func (at *AutoTrader) placeGridLimitOrder(d *traderagent.Decision, side string) 
 		if positionValue > absoluteMaxValue {
 			logger.Errorf("[Grid] CRITICAL: Position value $%.2f exceeds absolute max $%.2f! Rejecting order.",
 				positionValue, absoluteMaxValue)
-			return fmt.Errorf("position value $%.2f exceeds safety limit $%.2f", positionValue, absoluteMaxValue)
+			return riskBlock{fmt.Sprintf("position value $%.2f exceeds safety limit $%.2f", positionValue, absoluteMaxValue)}
 		}
 	}
 
@@ -119,7 +120,15 @@ func (at *AutoTrader) placeGridLimitOrder(d *traderagent.Decision, side string) 
 	if !allowed {
 		logger.Errorf("[Grid] TOTAL POSITION LIMIT EXCEEDED: current=$%.2f + order=$%.2f > max=$%.2f. Rejecting order.",
 			currentValue, orderValue, maxValue)
-		return fmt.Errorf("total position value $%.2f would exceed limit $%.2f", currentValue+orderValue, maxValue)
+		return riskBlock{fmt.Sprintf("total position value $%.2f would exceed limit $%.2f", currentValue+orderValue, maxValue)}
+	}
+
+	// The record and the level say what the exchange takes: capped, on the market's step.
+	d.Quantity = quantity
+	if formatted, err := at.trader.FormatQuantity(d.Symbol, quantity); err == nil {
+		if rounded, err := strconv.ParseFloat(formatted, 64); err == nil && rounded > 0 {
+			d.Quantity = rounded
+		}
 	}
 
 	req := &account.LimitOrderRequest{
@@ -414,8 +423,6 @@ func (at *AutoTrader) checkAndExecuteStopLoss() {
 				realizedLoss := -lossPct * level.AllocatedUSD / 100
 				level.UnrealizedPnL = realizedLoss
 				at.gridState.TotalTrades++
-				// Update daily PnL tracking (lock already held, update directly)
-				at.gridState.DailyPnL += realizedLoss
 				at.gridState.TotalProfit += realizedLoss
 				logger.Infof("[Grid] Stop loss executed: Level %d closed at $%.2f (loss %.2f%%)",
 					i, currentPrice, lossPct)

@@ -9,10 +9,12 @@ import (
 	"os"
 	"os/signal"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"vergex/internal/agent"
 	"vergex/internal/config"
 	"vergex/internal/database"
 	"vergex/internal/forecast"
@@ -58,6 +60,9 @@ func runCLISubcommand(args []string) bool {
 		return true
 	case "forecast-backtest":
 		runForecastBacktest(args[1:])
+		return true
+	case "prune":
+		runPrune(args[1:])
 		return true
 	default:
 		return false
@@ -304,7 +309,7 @@ func runResetPassword(args []string) {
 // them; cli_test.go fails when a table is missing here.
 var resetTables = []string{
 	"futures.account_closes", "futures.run_orders", "futures.runs", "futures.plans", "futures.calculators",
-	"trader.decisions", "trader.cycles", "trader.equity_snapshots", "trader.traders",
+	"trader.decisions", "trader.cycles", "trader.position_peaks", "trader.equity_snapshots", "trader.traders",
 	"account.skipped_fills", "account.fills", "account.positions", "account.orders", "account.leases", "core.users", "agent.models", "agent.calls", "agent.conversations", "agent.messages", "account.accounts",
 	"telegram.bot", "telegram.alert_marks",
 }
@@ -349,6 +354,67 @@ func runResetUser(args []string) {
 
 	fmt.Println("✓ Vergex wiped. Restart the backend so running traders stop, then open\n" +
 		"  the web app to create the user again.")
+}
+
+// parseAge reads an age such as 90d, or anything time.ParseDuration takes. It must be at
+// least a day, so a mistyped unit cannot empty what is in use.
+func parseAge(text string) (time.Duration, error) {
+	age, err := time.ParseDuration(text)
+	if strings.HasSuffix(text, "d") {
+		var days int
+		days, err = strconv.Atoi(strings.TrimSuffix(text, "d"))
+		age = time.Duration(days) * 24 * time.Hour
+	}
+	if err != nil {
+		return 0, fmt.Errorf("%q is not an age such as 90d", text)
+	}
+	if age < 24*time.Hour {
+		return 0, fmt.Errorf("%q is under a day", text)
+	}
+	return age, nil
+}
+
+// pruneBatch is how many messages one delete takes.
+const pruneBatch = 5000
+
+// runPrune removes what the models were sent and said, once it is old. By default it only
+// reports. Usage: `vergex prune --before 90d [--yes]`.
+func runPrune(args []string) {
+	fs := flag.NewFlagSet("prune", flag.ExitOnError)
+	before := fs.String("before", "", "how old a message must be, such as 90d")
+	yes := fs.Bool("yes", false, "delete them rather than only reporting")
+	_ = fs.Parse(args)
+
+	age, err := parseAge(*before)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: --before: %v\n", err)
+		os.Exit(1)
+	}
+	db, err := openDatabaseForCLI()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer database.Close(db)
+
+	cutoff := time.Now().Add(-age)
+	store := agent.NewConversationStore(db)
+	count, size, err := store.MessagesBefore(cutoff)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("%d messages from before %s, holding %.1f MB of text.\n", count, cutoff.Format("2006-01-02 15:04"), float64(size)/(1<<20))
+	if !*yes {
+		fmt.Println("Nothing was deleted. Run again with --yes to delete them.")
+		return
+	}
+	deleted, err := store.DeleteMessagesBefore(cutoff, pruneBatch)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: stopped after deleting %d messages: %v\n", deleted, err)
+		os.Exit(1)
+	}
+	fmt.Printf("✓ Deleted %d messages. PostgreSQL reuses the space for new ones; the files on disk do not shrink.\n", deleted)
 }
 
 // wipeAllData empties every table in resetTables.

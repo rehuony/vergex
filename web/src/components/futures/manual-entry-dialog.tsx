@@ -173,10 +173,6 @@ export function ManualEntryDialog({
           </>
         )}
       </div>
-      <div className="mt-4 space-y-2 text-[13px] text-vergex-muted">
-        {idea.execution.kind === 'market' && <p>{label('marketNote')}</p>}
-        <p>{label('draftNote')}</p>
-      </div>
     </Dialog>
   )
 }

@@ -23,7 +23,7 @@ type ledgerChange struct {
 	seq   int
 	order Order
 	// placed is when the order has just become known to the exchange, ended when it has
-	// just stopped there without filling.
+	// just stopped there.
 	placed, ended bool
 }
 
@@ -39,7 +39,9 @@ func ledgerChanges(v *View) []ledgerChange {
 			before = v.stored.orders[i]
 		}
 		placed := before.OrderID == ""
-		ended := order.Status != before.Status && order.Status != "FILLED" && OrderEnded(order.Status)
+		// An entry's fills settle it. A stop or target that fires fills under a new order
+		// ID, so nothing else would.
+		ended := order.Status != before.Status && OrderEnded(order.Status) && (order.Status != "FILLED" || order.Role != "entry")
 		if placed || ended {
 			changes = append(changes, ledgerChange{seq: i, order: order, placed: placed, ended: ended})
 		}
@@ -63,12 +65,31 @@ func (c *Controller) keepInLedger(v *View) {
 		return
 	}
 	c.ledgerWG.Add(1)
-	c.mu.Unlock()
 	run := v.Run
+	// A run's writes go in the order they happened, or an order could be settled before
+	// the ledger knows it, and stay open there for good.
+	before := c.ledgerLast[run.ID]
+	done := make(chan struct{})
+	if c.ledgerLast == nil {
+		c.ledgerLast = map[string]<-chan struct{}{}
+	}
+	c.ledgerLast[run.ID] = done
+	c.mu.Unlock()
 	venue := v.Plan.Snapshot.Venue
 	leverage := v.Plan.Constraints.EffectiveLeverage()
 	service.Go("futures-ledger", func() {
 		defer c.ledgerWG.Done()
+		defer func() {
+			close(done)
+			c.mu.Lock()
+			defer c.mu.Unlock()
+			if c.ledgerLast[run.ID] == (<-chan struct{})(done) {
+				delete(c.ledgerLast, run.ID)
+			}
+		}()
+		if before != nil {
+			<-before
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), ledgerWait)
 		defer cancel()
 		db := c.DB.WithContext(ctx)

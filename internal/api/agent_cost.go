@@ -47,6 +47,16 @@ func (s *Server) handleGetAgentCosts(c *gin.Context) {
 	})
 }
 
+// handleGetAgentStorage says how much disk what the models were sent and said takes up.
+func (s *Server) handleGetAgentStorage(c *gin.Context) {
+	size, err := s.stores.Conversations.MessageStorage()
+	if err != nil {
+		SafeInternalError(c, "Read agent storage", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"bytes": size})
+}
+
 // handleGetAgentCostsSummary returns agent cost summary across all traders, or for
 // one with ?trader_id=.
 func (s *Server) handleGetAgentCostsSummary(c *gin.Context) {

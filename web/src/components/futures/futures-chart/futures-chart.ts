@@ -15,6 +15,7 @@ import type {
   FuturesChart,
 } from '@/api/futures'
 import { THEME_EVENT } from '@/contexts/theme-context'
+import { activeLanguage, t } from '@/i18n'
 import {
   type CandleResponse,
   type CandleRow,
@@ -58,6 +59,8 @@ import {
 
 const initialBars = 500
 const maxBars = 4800
+const retryAfterMs = 3000
+const retryAtMostMs = 30000
 
 export interface WorkspaceChartOptions {
   venue: string
@@ -98,6 +101,7 @@ export class WorkspaceChart implements FuturesChart {
   private source: EventSource | null = null
   private lastReceived = 0
   private ageTimer: ReturnType<typeof setInterval> | undefined
+  private retryTimer: ReturnType<typeof setTimeout> | undefined
   private plan: Plan | null = null
   private comparisonPlans: Plan[] = []
   private focused = false
@@ -244,7 +248,9 @@ export class WorkspaceChart implements FuturesChart {
     }
   }
 
-  private async loadScene(scene: number) {
+  private async loadScene(scene: number, attempt = 0) {
+    clearTimeout(this.retryTimer)
+    if (scene !== this.scene || this.disposed) return
     this.closeFeed()
     this.rows = []
     this.times = []
@@ -266,7 +272,13 @@ export class WorkspaceChart implements FuturesChart {
         'Could not load candles for this market: ' + message
       )
       this.onStatus('Market data read failed', true)
-      this.onError(message)
+      // Saying so once is enough. The next success clears it, and nothing else would
+      // bring the chart back, so it keeps trying for as long as this market is shown.
+      if (!attempt) this.onError(t('futures.chartRetrying', activeLanguage()))
+      this.retryTimer = setTimeout(
+        () => void this.loadScene(scene, attempt + 1),
+        Math.min(retryAtMostMs, retryAfterMs * 2 ** attempt)
+      )
       return
     }
     if (scene !== this.scene || this.disposed) return
@@ -470,6 +482,7 @@ export class WorkspaceChart implements FuturesChart {
   }
 
   async plot(plan: Plan | null, _phase = 'draft', comparisons: Plan[] = []) {
+    const comparing = this.comparisonPlans.length >= 2
     this.comparisonPlans = comparisons
       .filter(
         (p) =>
@@ -477,11 +490,14 @@ export class WorkspaceChart implements FuturesChart {
           p.snapshot.venue === this.venue &&
           p.snapshot.symbol === this.symbol
       )
-      .slice(0, 4)
+      .slice(0, 5)
     if (plan?.id !== this.plan?.id) this.focused = false
     this.plan = plan
     if (!this.chart || this.disposed) return
     this.render()
+    // Starting a comparison asks to see every plan in it, wherever the chart was.
+    if (!comparing && this.comparisonPlans.length >= 2 && this.times.length)
+      this.fitFocusedPlan()
   }
 
   private planVisible() {
@@ -696,6 +712,7 @@ export class WorkspaceChart implements FuturesChart {
     this.disposed = true
     this.scene++
     clearInterval(this.ageTimer)
+    clearTimeout(this.retryTimer)
     this.closeFeed()
     this.chart?.remove()
     this.chart = null

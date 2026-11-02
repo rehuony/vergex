@@ -72,7 +72,7 @@ func TestDraftSizingDoesNotMaskInvalidAccountData(t *testing.T) {
 
 func TestAccountSizingUsesFreeMarginAndLeverage(t *testing.T) {
 	a := Snapshot{Equity: "100", Available: "40", FeeBPS: "12", Position: "0"}
-	c, e := AccountLimits(a, plan.Constraints{Leverage: 5, MinRewardRisk: "2", FeeBPS: "10", SlippageBPS: "10"})
+	c, e := AccountLimits(a, plan.Constraints{Leverage: 5, MaxRiskPct: "0", MinRewardRisk: "2", FeeBPS: "10", SlippageBPS: "10"})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -103,7 +103,7 @@ func TestAutoSizingAllocatesMarginAcrossEntryStructures(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			_, b, m, base := setup(t, kind)
 			b.account.Equity, b.account.Available = "283.22", "283.22"
-			limits, err := AccountLimits(b.account, plan.Constraints{Leverage: 5, MinRewardRisk: "2", FeeBPS: "10", SlippageBPS: "10"})
+			limits, err := AccountLimits(b.account, plan.Constraints{Leverage: 5, MaxRiskPct: "0", MinRewardRisk: "2", FeeBPS: "10", SlippageBPS: "10"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -112,7 +112,7 @@ func TestAutoSizingAllocatesMarginAcrossEntryStructures(t *testing.T) {
 				t.Fatal(err)
 			}
 			if cmp(p.Quantity, "0.013") < 0 || cmp(p.Risk, "2.8322") <= 0 || p.SizingLimit != "budget" {
-				t.Fatalf("margin sizing still capped by a hidden risk budget: %+v", p)
+				t.Fatalf("with no limit on the loss, margin sizing was still capped: %+v", p)
 			}
 			if err := CheckAccountCapacity(p, b.account); err != nil {
 				t.Fatal(err)
@@ -140,7 +140,7 @@ func TestAccountMarginSizingReproducesReportedSmallPosition(t *testing.T) {
 	m.book.AskSize = "0.0379"
 	base.Idea.Entry, base.Idea.Stop, base.Idea.Target = "81402", "80700", "84100"
 	a := Snapshot{Equity: "283", Available: "283", FeeBPS: "10"}
-	c, err := AccountLimits(a, plan.Constraints{Leverage: 5, MinRewardRisk: "2", FeeBPS: "10", SlippageBPS: "10"})
+	c, err := AccountLimits(a, plan.Constraints{Leverage: 5, MaxRiskPct: "0", MinRewardRisk: "2", FeeBPS: "10", SlippageBPS: "10"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,5 +195,32 @@ func TestDefaultLeverageAndBounds(t *testing.T) {
 	c.Leverage = 21
 	if c.Validate() == nil {
 		t.Fatal("leverage bound bypassed")
+	}
+}
+
+func TestAccountLimitsCapWhatAStopMayLose(t *testing.T) {
+	snapshot := Snapshot{Equity: "5000", Available: "4000", FeeBPS: "5", Position: "0"}
+	base := plan.Constraints{Leverage: 5, MinRewardRisk: "0", FeeBPS: "10", SlippageBPS: "10"}
+	for _, tt := range []struct {
+		pct, wantPct, wantRisk string
+	}{
+		{"", DefaultMaxRiskPct, "50"},
+		{"2.5", "2.5", "125"},
+		{"0", "0", "5000"},
+	} {
+		c := base
+		c.MaxRiskPct = plan.Decimal(tt.pct)
+		limits, err := AccountLimits(snapshot, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(limits.MaxRiskPct) != tt.wantPct || cmp(limits.MaxRisk, plan.Decimal(tt.wantRisk)) != 0 {
+			t.Fatalf("pct %q: %+v", tt.pct, limits)
+		}
+	}
+	c := base
+	c.MaxRiskPct = "150"
+	if _, err := AccountLimits(snapshot, c); err == nil {
+		t.Fatal("a share over 100 passed")
 	}
 }

@@ -20,16 +20,42 @@ func newTestAccountStore(t *testing.T) (*Store, *gorm.DB) {
 	return NewStore(db), db
 }
 
-func TestOneAPIKeyCannotBeConnectedTwice(t *testing.T) {
+func TestAnAccountKeepsItsEnvironment(t *testing.T) {
 	s, _ := newTestAccountStore(t)
-	first, err := s.Create(testdb.UserID, "binance", "Main", "key-1", "secret", "")
+	id, err := s.Create(testdb.UserID, "binance", "Demo", "key-1", "secret", "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Create(testdb.UserID, "binance", "Copy", "key-1", "secret", ""); !errors.Is(err, ErrDuplicate) {
+	if err := s.Update(testdb.UserID, id, "key-2", "secret-2", ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.GetByID(testdb.UserID, id)
+	if err != nil || !got.Testnet {
+		t.Fatalf("after a change of key: %+v, %v", got, err)
+	}
+	names, err := s.ListNames(testdb.UserID)
+	if err != nil || len(names) != 1 || !names[0].Testnet {
+		t.Fatalf("names: %+v, %v", names, err)
+	}
+	real, err := s.Create(testdb.UserID, "binance", "Main", "key-3", "secret", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.GetByID(testdb.UserID, real); err != nil || got.Testnet {
+		t.Fatalf("a real account: %+v, %v", got, err)
+	}
+}
+
+func TestOneAPIKeyCannotBeConnectedTwice(t *testing.T) {
+	s, _ := newTestAccountStore(t)
+	first, err := s.Create(testdb.UserID, "binance", "Main", "key-1", "secret", "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(testdb.UserID, "binance", "Copy", "key-1", "secret", "", false); !errors.Is(err, ErrDuplicate) {
 		t.Fatalf("second account on one key: %v", err)
 	}
-	second, err := s.Create(testdb.UserID, "binance", "Other", "key-2", "secret", "")
+	second, err := s.Create(testdb.UserID, "binance", "Other", "key-2", "secret", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,18 +71,18 @@ func TestOneAPIKeyCannotBeConnectedTwice(t *testing.T) {
 	if err != nil || account.Identity != Identity("binance", "key-3") || string(account.APIKey) != "key-3" {
 		t.Fatalf("account = %+v, err %v", account, err)
 	}
-	if _, err := s.Create(testdb.UserID, "binance", "Again", "key-1", "secret", ""); err != nil {
+	if _, err := s.Create(testdb.UserID, "binance", "Again", "key-1", "secret", "", false); err != nil {
 		t.Fatalf("the old key should be free: %v", err)
 	}
 	// The same key on another venue is another account.
-	if _, err := s.Create(testdb.UserID, "okx", "OKX", "key-1", "secret", "pass"); err != nil {
+	if _, err := s.Create(testdb.UserID, "okx", "OKX", "key-1", "secret", "pass", false); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestALeasedAccountCannotBeDeleted(t *testing.T) {
 	s, db := newTestAccountStore(t)
-	id, err := s.Create(testdb.UserID, "binance", "Main", "key-1", "secret", "")
+	id, err := s.Create(testdb.UserID, "binance", "Main", "key-1", "secret", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +126,7 @@ func TestMalformedAccountIDsAreNotFound(t *testing.T) {
 // Names are read every 30 seconds for the Dashboard, which has no use for a key.
 func TestListingNamesLeavesTheKeysUnread(t *testing.T) {
 	s, db := newTestAccountStore(t)
-	if _, err := s.Create(testdb.UserID, "binance", "Main", "key-1", "secret", ""); err != nil {
+	if _, err := s.Create(testdb.UserID, "binance", "Main", "key-1", "secret", "", false); err != nil {
 		t.Fatal(err)
 	}
 	accounts, err := s.ListNames(testdb.UserID)

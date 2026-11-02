@@ -2,10 +2,12 @@ package trader
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"vergex/internal/logger"
 	"vergex/internal/market"
+	traderagent "vergex/internal/trader/agent"
 )
 
 const (
@@ -140,11 +142,13 @@ func (at *AutoTrader) checkPositionDrawdown(previous []heldPosition) []heldPosit
 	}
 
 	held := make([]heldPosition, 0, len(positions))
+	heldKeys := make(map[string]bool, len(positions))
 	for _, row := range positions {
 		symbol := row["symbol"].(string)
 		side := row["side"].(string)
 		entryPrice := row["entryPrice"].(float64)
 		markPrice := row["markPrice"].(float64)
+		heldKeys[symbol+"_"+side] = true
 
 		// Guard: skip if entry price is zero (prevents division by zero panic)
 		if entryPrice <= 0 {
@@ -182,6 +186,7 @@ func (at *AutoTrader) checkPositionDrawdown(previous []heldPosition) []heldPosit
 		market.WatchMark(at.venue, symbol)
 		held = append(held, pos)
 	}
+	at.forgetPeaksNotHeld(heldKeys)
 	return held
 }
 
@@ -220,40 +225,103 @@ func (at *AutoTrader) GetPeakPnLCache() map[string]float64 {
 	return cache
 }
 
+// peakSaveStep is how far a peak rises before it is written down again. Marks arrive every
+// second, and a restart can afford to lose this much.
+const peakSaveStep = 1.0
+
 // UpdatePeakPnL updates peak profit cache
 func (at *AutoTrader) UpdatePeakPnL(symbol, side string, currentPnLPct float64) {
-	at.peakPnLCacheMutex.Lock()
-	defer at.peakPnLCacheMutex.Unlock()
-
 	posKey := symbol + "_" + side
-	if peak, exists := at.peakPnLCache[posKey]; exists {
-		// Update peak (if long, take larger value; if short, currentPnLPct is negative, also compare)
-		if currentPnLPct > peak {
-			at.peakPnLCache[posKey] = currentPnLPct
-		}
-	} else {
-		// First time recording
+	at.peakPnLCacheMutex.Lock()
+	peak, exists := at.peakPnLCache[posKey]
+	raised := !exists || currentPnLPct > peak
+	if raised {
 		at.peakPnLCache[posKey] = currentPnLPct
+	}
+	// Only a profit can be given back, so a position that has made none needs no record.
+	save := raised && currentPnLPct > 0 && at.peakPnLSaved != nil && currentPnLPct >= at.peakPnLSaved[posKey]+peakSaveStep
+	if save {
+		at.peakPnLSaved[posKey] = currentPnLPct
+	}
+	at.peakPnLCacheMutex.Unlock()
+
+	if save && at.stores != nil {
+		err := at.stores.Peaks.Save(PositionPeak{TraderID: at.id, Symbol: symbol, Side: side, PeakPnLPct: currentPnLPct})
+		if err != nil {
+			logger.Warnf("Trader %s: save the peak of %s %s: %v", at.id, symbol, side, err)
+		}
 	}
 }
 
 // ClearPeakPnLCache clears peak cache for specified position
 func (at *AutoTrader) ClearPeakPnLCache(symbol, side string) {
+	posKey := symbol + "_" + side
+	at.peakPnLCacheMutex.Lock()
+	delete(at.peakPnLCache, posKey)
+	delete(at.peakPnLSaved, posKey)
+	at.peakPnLCacheMutex.Unlock()
+
+	if at.stores != nil {
+		if err := at.stores.Peaks.Delete(at.id, symbol, side); err != nil {
+			logger.Warnf("Trader %s: forget the peak of %s %s: %v", at.id, symbol, side, err)
+		}
+	}
+}
+
+// loadStoredPeaks picks up what the monitor knew before a restart.
+func (at *AutoTrader) loadStoredPeaks() {
+	if at.stores == nil {
+		return
+	}
+	peaks, err := at.stores.Peaks.Load(at.id)
+	if err != nil {
+		logger.Warnf("Trader %s: read stored peaks: %v", at.id, err)
+		return
+	}
 	at.peakPnLCacheMutex.Lock()
 	defer at.peakPnLCacheMutex.Unlock()
+	for _, peak := range peaks {
+		posKey := peak.Symbol + "_" + peak.Side
+		if current, known := at.peakPnLCache[posKey]; !known || peak.PeakPnLPct > current {
+			at.peakPnLCache[posKey] = peak.PeakPnLPct
+		}
+		at.peakPnLSaved[posKey] = peak.PeakPnLPct
+	}
+}
 
-	posKey := symbol + "_" + side
-	delete(at.peakPnLCache, posKey)
+// forgetPeaksNotHeld drops the peaks of positions that are gone, closed by a stop or by
+// hand, so a later position on the same coin and side does not inherit one.
+func (at *AutoTrader) forgetPeaksNotHeld(held map[string]bool) {
+	at.peakPnLCacheMutex.RLock()
+	var gone []string
+	for posKey := range at.peakPnLCache {
+		if !held[posKey] {
+			gone = append(gone, posKey)
+		}
+	}
+	at.peakPnLCacheMutex.RUnlock()
+	for _, posKey := range gone {
+		if i := strings.LastIndex(posKey, "_"); i > 0 {
+			at.ClearPeakPnLCache(posKey[:i], posKey[i+1:])
+		}
+	}
 }
 
 // ============================================================================
 // Risk Control Helpers
 // ============================================================================
 
-// isBTCETH checks if a symbol is BTC or ETH
+// riskBlock is a rule stopping an order before it is placed, rather than a failure to
+// place it, so it is recorded as blocked and raises no alert.
+type riskBlock struct{ reason string }
+
+func (b riskBlock) Error() string { return b.reason }
+
+// isBTCETH checks if a symbol is BTC or ETH, and not one that only starts the same, such
+// as ETHFI.
 func isBTCETH(symbol string) bool {
 	symbol = strings.ToUpper(symbol)
-	return strings.HasPrefix(symbol, "BTC") || strings.HasPrefix(symbol, "ETH")
+	return symbol == "BTCUSDT" || symbol == "ETHUSDT"
 }
 
 // isMajorAsset returns true for assets that should use the BTC/ETH higher
@@ -314,7 +382,7 @@ func (at *AutoTrader) enforceMinPositionSize(positionSizeUSD float64) error {
 	}
 
 	if positionSizeUSD < minSize {
-		return fmt.Errorf("❌ [RISK CONTROL] Position %.2f USDT below minimum (%.2f USDT)", positionSizeUSD, minSize)
+		return riskBlock{fmt.Sprintf("❌ [RISK CONTROL] Position %.2f USDT below minimum (%.2f USDT)", positionSizeUSD, minSize)}
 	}
 	return nil
 }
@@ -331,7 +399,106 @@ func (at *AutoTrader) enforceMaxPositions(currentPositionCount int) error {
 	}
 
 	if currentPositionCount >= maxPositions {
-		return fmt.Errorf("❌ [RISK CONTROL] Already at max positions (%d/%d)", currentPositionCount, maxPositions)
+		return riskBlock{fmt.Sprintf("❌ [RISK CONTROL] Already at max positions (%d/%d)", currentPositionCount, maxPositions)}
 	}
 	return nil
+}
+
+// enforceEntryRules checks what a decision must meet to open, at the price it would open at (CODE ENFORCED)
+func (at *AutoTrader) enforceEntryRules(decision *traderagent.Decision, price float64) error {
+	if at.config.Agent == nil {
+		return nil
+	}
+	risk := at.config.Agent.RiskControl
+	if decision.Confidence < risk.MinConfidence {
+		return riskBlock{fmt.Sprintf("❌ [RISK CONTROL] Confidence %d below minimum (%d)", decision.Confidence, risk.MinConfidence)}
+	}
+	if ratio := rewardToRisk(decision.Action, price, decision.StopLoss, decision.TakeProfit); ratio < risk.MinRiskRewardRatio {
+		return riskBlock{fmt.Sprintf("❌ [RISK CONTROL] Reward to risk %.2f at price %.8f below minimum (%.2f)", ratio, price, risk.MinRiskRewardRatio)}
+	}
+	return nil
+}
+
+// rewardToRisk is what an open stands to gain against what it stands to lose, at a price.
+func rewardToRisk(action string, price, stopLoss, takeProfit float64) float64 {
+	risk, reward := price-stopLoss, takeProfit-price
+	if action == "open_short" {
+		risk, reward = stopLoss-price, price-takeProfit
+	}
+	if risk <= 0 {
+		return 0
+	}
+	return reward / risk
+}
+
+// enforceMarginUsage caps a position to the margin left under the limit once it is open (CODE ENFORCED)
+func (at *AutoTrader) enforceMarginUsage(positionSizeUSD float64, leverage int, equity float64, positions []map[string]interface{}) (float64, bool) {
+	if at.config.Agent == nil || leverage <= 0 {
+		return positionSizeUSD, false
+	}
+	limit := at.config.Agent.RiskControl.MaxMarginUsage
+	if limit <= 0 {
+		return positionSizeUSD, false
+	}
+	left := math.Max(equity*limit-marginInUse(positions), 0)
+	maxSize := left * float64(leverage)
+	if positionSizeUSD > maxSize {
+		logger.Infof("  ⚠️ [RISK CONTROL] Position %.2f USDT would take margin past %.0f%% of equity %.2f, capping to %.2f",
+			positionSizeUSD, limit*100, equity, maxSize)
+		return maxSize, true
+	}
+	return positionSizeUSD, false
+}
+
+// marginInUse estimates the margin open positions hold.
+func marginInUse(positions []map[string]interface{}) float64 {
+	total := 0.0
+	for _, pos := range positions {
+		quantity, _ := pos["positionAmt"].(float64)
+		markPrice, _ := pos["markPrice"].(float64)
+		leverage := 10.0 // Default value
+		if lev, ok := pos["leverage"].(float64); ok && lev > 0 {
+			leverage = lev
+		}
+		total += math.Abs(quantity) * markPrice / leverage
+	}
+	return total
+}
+
+// checkLossLimits halts a trader whose account has lost more than its settings allow (CODE
+// ENFORCED). It reads the snapshots each cycle stores, so a restart forgets nothing, and a
+// resume starts both counts over.
+func (at *AutoTrader) checkLossLimits(equity float64) {
+	if at.config.Agent == nil || at.stores == nil || equity <= 0 {
+		return
+	}
+	risk := at.config.Agent.RiskControl
+	if risk.MaxDrawdownPct > 0 {
+		if peak := at.storedPeakEquity(); peak > 0 {
+			if drawdown := (peak - equity) / peak * 100; drawdown >= risk.MaxDrawdownPct {
+				at.tripHalt(fmt.Sprintf("max drawdown exceeded: %.2f%%", drawdown), nil)
+				return
+			}
+		}
+	}
+	if risk.MaxDailyLossPct > 0 {
+		now := time.Now().UTC()
+		since := now.Truncate(24 * time.Hour)
+		at.runtimeHealthMu.RLock()
+		if at.resumedAt.After(since) {
+			since = at.resumedAt
+		}
+		at.runtimeHealthMu.RUnlock()
+		start, err := at.stores.Equity.FirstSince(at.id, since)
+		if err != nil {
+			logger.Warnf("Trader %s: read today's first equity: %v", at.id, err)
+			return
+		}
+		if start > 0 {
+			if lost := (start - equity) / start * 100; lost >= risk.MaxDailyLossPct {
+				until := nextUTCDay(now)
+				at.tripHalt(fmt.Sprintf("daily loss limit exceeded: %.2f%%", lost), &until)
+			}
+		}
+	}
 }

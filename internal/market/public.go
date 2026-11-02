@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"vergex/internal/market/instrument"
@@ -20,10 +21,40 @@ type Public struct {
 	OKX     *okx.PublicClient
 }
 
+// publicObserver hears how Binance answers public reads, which share the IP's allowance.
+var publicObserver atomic.Pointer[func(status int, header http.Header)]
+
+// ObservePublicResponses tells a rate limiter about Binance's answers to public reads. It
+// only listens: someone planning a trade waits for no budget, while background requests
+// get to back off when these use up the allowance or Binance objects.
+func ObservePublicResponses(observe func(status int, header http.Header)) {
+	publicObserver.Store(&observe)
+}
+
+// observedTransport passes each response to the observer on its way back.
+type observedTransport struct{ next http.RoundTripper }
+
+func (t observedTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := t.next.RoundTrip(request)
+	if err == nil {
+		if observe := publicObserver.Load(); observe != nil {
+			(*observe)(response.StatusCode, response.Header)
+		}
+	}
+	return response, err
+}
+
 // NewPublic reads from the venues' own hosts.
 func NewPublic() *Public {
+	binanceClient := &http.Client{Timeout: 10 * time.Second, Transport: observedTransport{service.VenueTransport}}
 	client := &http.Client{Timeout: 10 * time.Second, Transport: service.VenueTransport}
-	return &Public{Binance: binance.NewPublicClient(client), OKX: okx.NewPublicClient(client)}
+	return &Public{Binance: binance.NewPublicClient(binanceClient), OKX: okx.NewPublicClient(client)}
+}
+
+// NewTestnetPublic reads from the venues' test environments.
+func NewTestnetPublic() *Public {
+	client := &http.Client{Timeout: 10 * time.Second, Transport: service.VenueTransport}
+	return &Public{Binance: binance.NewTestnetPublicClient(client), OKX: okx.NewTestnetPublicClient(client)}
 }
 
 // PerpetualBook reads a perpetual's book on a venue.
@@ -35,6 +66,17 @@ func (p *Public) PerpetualBook(ctx context.Context, venue, symbol string) (instr
 		return p.OKX.PerpetualBook(ctx, symbol)
 	}
 	return instrument.Book{}, errors.New("unsupported market kind")
+}
+
+// MarkPrice reads a perpetual's mark price on a venue.
+func (p *Public) MarkPrice(ctx context.Context, venue, symbol string) (string, error) {
+	switch venue {
+	case "binance":
+		return p.Binance.MarkPrice(ctx, symbol)
+	case "okx":
+		return p.OKX.MarkPrice(ctx, symbol)
+	}
+	return "", errors.New("unsupported market kind")
 }
 
 // ExactCandles reads a perpetual's candles on a venue, the newest before toSeconds when

@@ -8,7 +8,7 @@ import {
   StatStrip,
   tableClass,
 } from '@/components/common/figures'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { buttonVariants } from '@/components/ui/button'
 import { ROUTES } from '@/constants/route-paths'
 import { t, type Language } from '@/i18n'
@@ -56,7 +56,7 @@ export function StrategyPerformance({
     return <PanelState role="alert">{label('performanceFailed')}</PanelState>
   }
   if (!data) {
-    return <PanelState role="status">{label('loading')}</PanelState>
+    return <PanelLoading />
   }
 
   const latestRun: BacktestRun | undefined = runs?.backtests.find(
@@ -115,10 +115,7 @@ export function StrategyPerformance({
           },
           {
             name: label('afterFeesShort'),
-            value:
-              overall.avg_return_after_fee_pct === null
-                ? '—'
-                : fmtPct(overall.avg_return_after_fee_pct, true),
+            value: fmtPct(overall.avg_return_after_fee_pct ?? 0, true),
             note: label('perSignal'),
             gain: overall.avg_return_after_fee_pct,
           },

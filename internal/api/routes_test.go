@@ -26,7 +26,7 @@ func TestRoutesAreGroupedByModule(t *testing.T) {
 		"GET /api/accounts", "POST /api/accounts", "PUT /api/accounts", "GET /api/accounts/state",
 		"GET /api/accounts/:id", "DELETE /api/accounts/:id", "POST /api/accounts/:id/verify",
 		"GET /api/accounts/:id/positions", "GET /api/accounts/:id/open-orders", "GET /api/accounts/:id/orders", "GET /api/accounts/:id/fills",
-		"GET /api/agent/models", "PUT /api/agent/models", "POST /api/agent/models/test", "GET /api/agent/providers", "GET /api/agent/costs", "GET /api/agent/costs/summary",
+		"GET /api/agent/models", "PUT /api/agent/models", "POST /api/agent/models/test", "POST /api/agent/models/available", "GET /api/agent/models/:id/available", "GET /api/agent/providers", "GET /api/agent/costs", "GET /api/agent/costs/summary", "GET /api/agent/storage",
 		"GET /api/traders", "POST /api/traders", "GET /api/traders/metrics", "POST /api/traders/preflight", "GET /api/traders/presets",
 		"POST /api/traders/dry-run", "POST /api/traders/estimate-tokens", "POST /api/traders/:id/duplicate",
 		"GET /api/traders/:id/status", "GET /api/traders/:id/account", "GET /api/traders/:id/open-positions", "GET /api/traders/:id/positions",

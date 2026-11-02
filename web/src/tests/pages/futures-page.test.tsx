@@ -77,6 +77,7 @@ vi.mock('@/api', () => ({
     },
     getTraders: async () => [],
     getModelConfigs: async () => mocks.models,
+    getAvailableModels: async () => ['deepseek-other', 'deepseek-v4-pro'],
   },
 }))
 vi.mock('@/api/futures', async (importOriginal) => ({
@@ -185,7 +186,7 @@ beforeEach(() => {
     if (path.startsWith('account?'))
       return { equity: '1000', available: '1000', fee_bps: '5' }
     if (path === 'preferences') return { text: '' }
-    if (path === 'conversations') return []
+    if (path.startsWith('conversations?')) return []
     if (path === 'compile')
       return { ...plan('resized'), constraints: { leverage: 5 } }
     if (path === 'approve') return { id: 'run', approval_hash: 'locked' }
@@ -210,19 +211,21 @@ function open() {
     </MemoryRouter>
   )
 }
-// The assistant shows the conversation or the plans, opening on plans left behind.
+// The assistant shows the conversation or the plans, opening on the conversation.
 const showConversation = () =>
   fireEvent.click(screen.getByRole('button', { name: 'Conversation' }))
 const showPlans = () =>
   fireEvent.click(screen.getByRole('button', { name: /^Plans/ }))
 // A plan is put on the chart, and reviewed from there.
 async function reviewPlan(name: RegExp, action = /review order/i) {
+  showPlans()
   fireEvent.click(await screen.findByRole('button', { name }))
   fireEvent.click(await screen.findByRole('button', { name: action }))
 }
 describe('Vergex live planning', () => {
   it('refreshes account sizing and executes only after the explicit review click', async () => {
     open()
+    showPlans()
     const card = await screen.findByRole('button', { name: /Test plan one/ })
     fireEvent.click(card)
     fireEvent.click(await screen.findByRole('button', { name: 'Review order' }))
@@ -257,6 +260,7 @@ describe('Vergex live planning', () => {
   })
   it('selecting a plan exits comparison and displays only that plan on the chart', async () => {
     open()
+    showPlans()
     await screen.findByRole('button', { name: /Test plan one/ })
     fireEvent.click(screen.getByRole('button', { name: 'Compare plans' }))
     await waitFor(() =>
@@ -271,8 +275,41 @@ describe('Vergex live planning', () => {
       expect(args[2]).toEqual([])
     })
   })
+  it('closes an open plan from its row or beside its name', async () => {
+    open()
+    showPlans()
+    const row = await screen.findByRole('button', { name: /Test plan one/ })
+    const opened = async () => {
+      fireEvent.click(row)
+      await screen.findByRole('button', { name: 'Review order' })
+      expect(row).toHaveAttribute('aria-expanded', 'true')
+    }
+    const closed = async () => {
+      await waitFor(() =>
+        expect(
+          screen.queryByRole('button', { name: 'Review order' })
+        ).toBeNull()
+      )
+      expect(row).toHaveAttribute('aria-expanded', 'false')
+      await waitFor(() => expect(mocks.plot.mock.lastCall?.[0]).toBeNull())
+    }
+    await opened()
+    fireEvent.click(row)
+    await closed()
+    await opened()
+    fireEvent.click(screen.getByRole('button', { name: 'Close plan' }))
+    await closed()
+    // While comparing, it goes back to showing that plan alone rather than closing.
+    await opened()
+    fireEvent.click(screen.getByRole('button', { name: 'Compare plans' }))
+    fireEvent.click(row)
+    await waitFor(() => expect(mocks.plot.mock.lastCall?.[2]).toEqual([]))
+    expect(mocks.plot.mock.lastCall?.[0]?.id).toBe('one')
+    expect(row).toHaveAttribute('aria-expanded', 'true')
+  })
   it('custom entry mode does not attach TWAP parameters to a ladder', async () => {
     open()
+    showPlans()
     await screen.findByRole('button', { name: /Test plan one/ })
     fireEvent.click(screen.getByRole('tab', { name: 'Positions and orders' }))
     fireEvent.click(screen.getByRole('button', { name: 'Buy / Long' }))
@@ -351,6 +388,7 @@ it('keeps a venue chosen while account configuration is still loading', async ()
 
 it('preflight failure clears busy state without accumulating phantom user messages', async () => {
   open()
+  showPlans()
   await screen.findByRole('button', { name: /Test plan one/ })
   showConversation()
   const generate = screen.getByRole('button', { name: 'Generate plans' })
@@ -382,6 +420,7 @@ it('account review does not restart model activity or show a planning stop butto
     path === 'compile' ? pending : base(path, body)
   )
   open()
+  showPlans()
   fireEvent.click(await screen.findByRole('button', { name: /Test plan one/ }))
   fireEvent.click(screen.getByRole('button', { name: 'Review order' }))
   await screen.findByText('Validating account and order details…')
@@ -407,6 +446,7 @@ it.each([true, false])(
       emit({ type: 'outcome', data: { drafts: 0, stop_reason: 'completed' } })
     })
     open()
+    showPlans()
     await screen.findByRole('button', { name: /Test plan one/ })
     showConversation()
     const generate = screen.getByRole('button', { name: 'Generate plans' })
@@ -419,7 +459,7 @@ it.each([true, false])(
     ).toEqual(waiting ? [] : ['one', 'two'])
     if (waiting) {
       showPlans()
-      expect(screen.getByText('Earlier drafts')).toBeInTheDocument()
+      expect(screen.getByText('Expired drafts')).toBeInTheDocument()
       expect(
         screen.getByRole('heading', { name: 'Waiting for an entry' })
       ).toBeInTheDocument()
@@ -443,6 +483,7 @@ it('restores the reasons for waiting after the page is reloaded', async () => {
     })
   )
   open()
+  showPlans()
   await screen.findByRole('heading', { name: 'Waiting for an entry' })
   expect(screen.getAllByText('Wait for entry')).toHaveLength(4)
   for (const entry of deferred)
@@ -453,6 +494,7 @@ it('restores the reasons for waiting after the page is reloaded', async () => {
 it('opens settings before a paid request and retains the original idea when AI is missing', async () => {
   mocks.models = []
   open()
+  showPlans()
   await screen.findByRole('button', { name: /Test plan one/ })
   showConversation()
   await waitFor(() =>
@@ -472,10 +514,11 @@ it('opens settings before a paid request and retains the original idea when AI i
 
 it('offers a safe starting point, keeps real account activity separate and keeps plans beside the chart', async () => {
   open()
+  showPlans()
   await screen.findByRole('button', { name: /Test plan one/ })
   showConversation()
   await waitFor(() =>
-    expect(screen.getByLabelText('Model')).toHaveValue('model')
+    expect(screen.getByLabelText('Model')).toHaveValue('model deepseek-v4-pro')
   )
   fireEvent.click(screen.getByRole('tab', { name: 'Positions and orders' }))
   expect(
@@ -484,7 +527,7 @@ it('offers a safe starting point, keeps real account activity separate and keeps
   fireEvent.click(screen.getByRole('tab', { name: 'Trade' }))
   fireEvent.click(screen.getByRole('button', { name: /Find a pullback entry/ }))
   expect(screen.getByLabelText('Trade idea')).toHaveValue(
-    'Find a pullback entry with clear risk and exits.'
+    'Find a pullback entry from the current structure: the level, what invalidates it and where to take profit. If there is no good level yet, say what to wait for.'
   )
   expect(screen.getByLabelText('Trade idea')).toHaveFocus()
   expect(mocks.stream).not.toHaveBeenCalled()
@@ -497,7 +540,110 @@ it('offers a safe starting point, keeps real account activity separate and keeps
   expect(screen.getByRole('region', { name: 'Entry plans' })).toBeVisible()
   showConversation()
   expect(screen.getByLabelText('Trade idea')).toHaveValue(
-    'Find a pullback entry with clear risk and exits.'
+    'Find a pullback entry from the current structure: the level, what invalidates it and where to take profit. If there is no good level yet, say what to wait for.'
+  )
+})
+
+it('sends a turn to the provider model picked above the input', async () => {
+  mocks.stream.mockResolvedValue(undefined)
+  open()
+  showPlans()
+  await screen.findByRole('button', { name: /Test plan one/ })
+  showConversation()
+  await waitFor(() =>
+    expect(screen.getByLabelText('Model')).toHaveValue('model deepseek-v4-pro')
+  )
+  // The connection's own model comes first, and sends no other name.
+  fireEvent.change(screen.getByLabelText('Trade idea'), {
+    target: { value: 'First idea.' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+  await waitFor(() =>
+    expect(mocks.stream).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent_model_id: 'model',
+        agent_model_name: undefined,
+      }),
+      expect.anything(),
+      expect.anything()
+    )
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Send' })).toBeEnabled()
+  )
+  await waitFor(() =>
+    expect(
+      within(screen.getByLabelText('Model')).getByRole('option', {
+        name: 'deepseek-other',
+        hidden: true,
+      })
+    ).toBeInTheDocument()
+  )
+  fireEvent.change(screen.getByLabelText('Model'), {
+    target: { value: 'model deepseek-other' },
+  })
+  fireEvent.change(screen.getByLabelText('Trade idea'), {
+    target: { value: 'Second idea.' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+  await waitFor(() =>
+    expect(mocks.stream).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        agent_model_id: 'model',
+        agent_model_name: 'deepseek-other',
+      }),
+      expect.anything(),
+      expect.anything()
+    )
+  )
+})
+
+it('opens on the conversation whatever plans were left, and after a reload', async () => {
+  const { unmount } = open()
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: /^Plans 2/ })).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
+  )
+  expect(screen.getByRole('button', { name: 'Conversation' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+  showPlans()
+  unmount()
+  open()
+  expect(screen.getByRole('button', { name: 'Conversation' })).toHaveAttribute(
+    'aria-pressed',
+    'true'
+  )
+})
+
+it('changing one plan leaves the rest of its generation listed', async () => {
+  mocks.stream.mockImplementation(async (_body, _signal, onEvent) => {
+    onEvent({
+      type: 'plans',
+      data: { plans: [plan('three')], checks: [] },
+    })
+  })
+  open()
+  showPlans()
+  fireEvent.click(await screen.findByRole('button', { name: /Test plan one/ }))
+  showConversation()
+  fireEvent.change(screen.getByLabelText('Trade idea'), {
+    target: { value: 'Move the stop lower.' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+  await waitFor(() =>
+    expect(
+      JSON.parse(localStorage.getItem('futures-batch-v1//ex/binance/BTCUSDT')!)
+        .ids
+    ).toEqual(['two', 'three'])
+  )
+  expect(mocks.stream).toHaveBeenCalledWith(
+    expect.objectContaining({ plan_id: 'one' }),
+    expect.anything(),
+    expect.any(Function)
   )
 })
 
@@ -509,10 +655,11 @@ it('shows generated plans automatically and uses the user idea instead of a gene
     })
   })
   open()
+  showPlans()
   await screen.findByRole('button', { name: /Test plan one/ })
   showConversation()
   await waitFor(() =>
-    expect(screen.getByLabelText('Model')).toHaveValue('model')
+    expect(screen.getByLabelText('Model')).toHaveValue('model deepseek-v4-pro')
   )
   fireEvent.change(screen.getByLabelText('Trade idea'), {
     target: { value: 'Compare timed entries for a pullback.' },
@@ -565,7 +712,7 @@ it('starts a separate draft from a locked trade without revising or executing th
   )
   showConversation()
   await waitFor(() =>
-    expect(screen.getByLabelText('Model')).toHaveValue('model')
+    expect(screen.getByLabelText('Model')).toHaveValue('model deepseek-v4-pro')
   )
   fireEvent.change(screen.getByLabelText('Trade idea'), {
     target: { value: 'Generate a new independent entry plan.' },
@@ -713,6 +860,7 @@ describe('previous trade recovery', () => {
     await screen.findByRole('button', {
       name: 'BTCUSDT trade status needs verification',
     })
+    showPlans()
     fireEvent.click(
       await screen.findByRole('button', { name: /Test plan one/ })
     )

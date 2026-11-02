@@ -4,9 +4,10 @@ import { useQuery } from '@tanstack/react-query'
 import { Copy, Pencil, Plus, Power, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/api'
-import { confirmToast } from '@/components/common/notify'
+import { confirmToast, notify } from '@/components/common/notify'
+import { Skeleton } from '@/components/ui/skeleton'
 import { NameInput } from '@/components/common/name-editing'
-import { Panel, PanelState } from '@/components/common/panel'
+import { Panel, PanelLoading, PanelState } from '@/components/common/panel'
 import { SearchField } from '@/components/common/search-field'
 import {
   RailItem,
@@ -98,6 +99,9 @@ export function TradersPage() {
   const allModels = models.data ?? []
   const allAccounts = accounts.data ?? []
   const configError = Boolean(models.error || accounts.error)
+  useEffect(() => {
+    if (configError) notify.error(label('connectionsFailed'))
+  }, [configError])
 
   const {
     data: traders,
@@ -205,8 +209,9 @@ export function TradersPage() {
     }
     setStopping(true)
     try {
-      await api.stopTrader(trader.trader_id)
-      toast.success(t('agentTradersToast.stopped', language))
+      const { ordersLeft } = await api.stopTrader(trader.trader_id)
+      if (ordersLeft) toast.error(t('agentTradersToast.ordersLeft', language))
+      else toast.success(t('agentTradersToast.stopped', language))
       await refetch()
     } catch {
       toast.error(t('operationFailed', language))
@@ -299,19 +304,11 @@ export function TradersPage() {
           {tradersError ? (
             <PanelState role="alert">{label('loadFailed')}</PanelState>
           ) : (
-            <PanelState role="status">{t('loading', language)}</PanelState>
+            <PanelLoading />
           )}
         </Panel>
       ) : traders.length === 0 ? (
         <Panel>
-          {configError && (
-            <p
-              role="alert"
-              className="px-4 pt-4 text-center text-sm text-vergex-danger"
-            >
-              {label('connectionsFailed')}
-            </p>
-          )}
           <NoTraders
             modelCount={configuredModels.length}
             accountCount={configuredAccounts.length}
@@ -338,25 +335,13 @@ export function TradersPage() {
               addLabel={t('createTrader', language)}
               onAdd={add}
               top={
-                (configError || traders.length >= SEARCH_FROM) && (
-                  <>
-                    {configError && (
-                      <p
-                        role="alert"
-                        className="pb-2 text-xs text-vergex-danger"
-                      >
-                        {label('connectionsFailed')}
-                      </p>
-                    )}
-                    {traders.length >= SEARCH_FROM && (
-                      <SearchField
-                        label={label('search')}
-                        value={search}
-                        onChange={setSearch}
-                        className="w-full"
-                      />
-                    )}
-                  </>
+                traders.length >= SEARCH_FROM && (
+                  <SearchField
+                    label={label('search')}
+                    value={search}
+                    onChange={setSearch}
+                    className="w-full"
+                  />
                 )
               }
             >
@@ -399,7 +384,7 @@ export function TradersPage() {
                               : undefined
                           )}
                         >
-                          {fmtPct(change)}
+                          {metrics ? fmtPct(change) : <Skeleton />}
                         </span>
                       </span>
                     }
@@ -501,6 +486,7 @@ export function TradersPage() {
           kind={starting.kind}
           model={getTraderModelLabel(starting.agent_model, allModels)}
           account={getAccountDisplayName(starting.account_id, allAccounts)}
+          scanMinutes={starting.scan_interval_minutes}
           language={language}
           onClose={() => setStarting(null)}
           onStarted={() => {

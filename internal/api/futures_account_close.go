@@ -64,30 +64,30 @@ func (s *Server) handleFuturesAccountClose(c *gin.Context) {
 	user := c.GetString("user_id")
 	order, err := s.closeFuturesAccount(ctx, user, in, func(ex *account.Account) (accountCloser, error) {
 		if ex.Venue == "okx" {
-			return okx.NewReadOnlyAccount(string(ex.APIKey), string(ex.SecretKey), string(ex.Passphrase)), nil
+			return okx.NewReadOnlyAccount(string(ex.APIKey), string(ex.SecretKey), string(ex.Passphrase), ex.Testnet), nil
 		}
-		return binance.NewReadOnlyAccount(ctx, string(ex.APIKey), string(ex.SecretKey))
+		return binance.NewReadOnlyAccount(ctx, string(ex.APIKey), string(ex.SecretKey), ex.Testnet)
 	})
 	if err != nil {
 		writeAccountCloseError(c, err)
 		return
 	}
-	message := "Close order accepted. Verify the refreshed position and remaining exchange orders."
+	warning := ""
 	if order.Status == "FILLED" {
 		runs, readErr := p.controller.List(user)
 		if readErr != nil {
-			message += " Execution records could not be refreshed."
+			warning = "Execution records could not be refreshed."
 		}
 		for _, run := range runs {
 			if run.State == "completed" || run.State == "cancelled" || run.State == "expired" || run.AccountID != in.AccountID || run.Plan.Snapshot.Symbol != in.Symbol || run.Plan.Idea.Side != in.Side {
 				continue
 			}
 			if _, err := p.controller.FinishManualClose(ctx, user, run.ID); err != nil {
-				message += " " + err.Error()
+				warning = strings.TrimSpace(warning + " " + err.Error())
 			}
 		}
 	}
-	c.JSON(http.StatusOK, gin.H{"message": message, "order": order})
+	c.JSON(http.StatusOK, gin.H{"warning": warning, "order": order})
 }
 
 func (s *Server) closeFuturesAccount(ctx context.Context, user string, in accountCloseRequest, factory func(*account.Account) (accountCloser, error)) (out account.Order, err error) {

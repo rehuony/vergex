@@ -23,11 +23,11 @@ interface FuturesNoticesProps {
   onDismissError: () => void
 }
 
-// FuturesNotices is one line above the assistant's input, there only while it has something
-// to say: the latest error, what is under way, a trade that reserves the account, or the
-// latest order notice. What sits below it stays put, and the conversation above gives up the
-// room. An error the blocker explains or the assistant's activity shows stays out of it, and
-// one too long for the line opens in full.
+// FuturesNotices is one line floating above the assistant's input, there only while it has
+// something to say: the latest error, what is under way, a trade that reserves the account,
+// or the latest order notice. It takes no room, so nothing moves when it comes or goes. An
+// error the blocker explains or the assistant's activity shows stays out of it, and one too
+// long for the line opens in full.
 export function FuturesNotices({
   busy,
   progress,
@@ -46,7 +46,7 @@ export function FuturesNotices({
         error.includes('An earlier trade is reserving this account'))
     ) &&
     !trace.some((item) => item.state === 'failed' && item.detail === error)
-      ? formatRequestError(error, 'en')
+      ? formatRequestError(error, language)
       : ''
   const line = shownError ? (
     <div role="alert" className="flex min-w-0 flex-1 items-center gap-1">
@@ -97,9 +97,13 @@ export function FuturesNotices({
   )
   return (
     // The live region stays while the line comes and goes, so what appears is read out.
-    <div role="status" aria-live="polite" className="shrink-0">
+    <div
+      role="status"
+      aria-live="polite"
+      className="relative z-10 h-0 shrink-0"
+    >
       {line && (
-        <div className="flex min-h-8 items-center gap-2 border-t border-vergex-line px-4 text-xs text-vergex-muted max-sm:min-h-10">
+        <div className="absolute inset-x-2 bottom-2 flex min-h-8 animate-menu-in items-center gap-2 rounded-2xl border border-vergex-line bg-vergex-surface px-3 text-xs text-vergex-muted shadow-(--shadow-float) max-sm:min-h-10">
           {line}
         </div>
       )}

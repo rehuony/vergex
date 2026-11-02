@@ -30,12 +30,13 @@ The Makefile is the entry point for everything else, and `make help` lists it. T
 
 ### Live order paths
 
-These handle real money. Only rename and decouple code there; do not change order logic. If a change is truly needed, add tests and verify it on a small account before calling it done. Exchange testnets are not supported yet and will be added once the features are complete.
+These handle real money. Only rename and decouple code there; do not change order logic. If a change is truly needed, add tests and verify it on a testnet account before calling it done, and on a small account before it trades real money. A testnet account is made in Settings ([docs/accounts.md](docs/accounts.md#testnet)); it proves the flow, not a real key's permissions.
 
 | Path | Files | Live order path |
 | :--- | :---- | :-------------- |
 | `internal/venue/binance`, `internal/venue/okx` | `account.go`, `orders.go`, `executor.go`, `fills.go`: account, orders, reading fills | Yes |
 | | `klines.go`, `stream.go`, `derivatives.go`, `markets.go`, `book.go`, `ranking.go`, `listing.go`, `limiter.go`: public data and the request budget | No |
+| | `permissions.go`: what an API key may do, read only | No |
 | `internal/futures/run` | All | Yes |
 | `internal/account` | The contract orders go through: `Trading`, `Executor`, `Order`, exact decimals | Yes |
 | `internal/account/syncer` | All | No: it places no order and only reads the exchange. But cooldowns and statistics rest on what it books, so a change to how it reads a venue needs tests and goes on the small-account list |
@@ -79,7 +80,7 @@ Both containers and `vergex-postgres` share the `vergex-network` network. `.env`
 
 | Path | Contents |
 | :--- | :------- |
-| `cmd/vergex/` | Entry point: `main.go` is the startup flow and joins the modules together, `cli.go` the local subcommands such as `vergex reset-password`, `vergex reset-user` and `vergex market-backfill` |
+| `cmd/vergex/` | Entry point: `main.go` is the startup flow and joins the modules together, `cli.go` the local subcommands such as `vergex reset-password`, `vergex reset-user`, `vergex market-backfill` and `vergex prune` |
 | `internal/` | All backend Go packages, private to this module under Go's `internal` rule |
 | `web/` | Frontend. The Futures chart is `web/src/components/futures/futures-chart/`, on the surface shared with Forecast in `web/src/components/market-chart/`; the page's components are in `web/src/components/futures/` |
 | `docker/` | Dockerfiles for both images and the frontend container's `nginx.conf` |
@@ -124,8 +125,8 @@ Schemas follow the same layers. `core` is under everything, `market` under `acco
 
 Details are in [docs/traders.md](docs/traders.md). A trader carries its kind and config (`trader.traders`), edited on the Settings section of its page. The entry point is `runCycle` in `internal/trader/auto_trader_loop.go`:
 
-1. Check the running state, hot-reload the settings, check risk pauses.
-2. Build the trading context: account, positions, candidates. `agent.Engine.GetCandidateCoins` produces candidates from `static`, `volume_top`, `gainers`, `losers`, `oi_top`, `oi_low` or the combined `mixed`. Rankings come from `venue/binance`; OKX traders filter them with `venue/okx`.
+1. Check the running state and hot-reload the settings.
+2. Build the trading context: account, positions, candidates. `agent.Engine.GetCandidateCoins` produces candidates from `static`, `volume_top`, `gainers`, `losers`, `oi_top`, `oi_low` or the combined `mixed`. Rankings come from `venue/binance`; OKX traders filter them with `venue/okx`. Check the loss limits: a halt stops opens and is stored on the trader, so it outlives a restart.
 3. `trader/agent` fetches candles and indicators, builds the prompts, calls the model and parses decisions.
 4. Execute opens and closes by priority, and record orders, positions, decisions and agent usage. Repeated model failures enter safe mode, which opens no new positions; a drawdown monitor goroutine handles emergency closes.
 
@@ -140,6 +141,7 @@ Details are in [docs/futures.md](docs/futures.md).
 | `approve` | Lock `plan_hash` and `approval_hash` |
 | `execute` | `futures/run` runs a finite, immutable order basket |
 | `reconcile`, `check-status` | Reconciliation and recovery |
+| `amend-exit`, `cancel-order` | Move an open run's stop or target, placing the new order before cancelling the old; cancel an order no unfinished run holds |
 | `candles`, `feed` | Chart history and SSE updates |
 | `results` | What finished plans realized, read from the exchange |
 
@@ -171,8 +173,10 @@ The model sees only these skills (`internal/telegram/agent/skills.go`):
 | :---- | :------ | :---- |
 | `trader_management` | create, update, delete, start, stop, query | Create takes a `kind` and `preset`, and auto-selects the model or account when only one is enabled. Update sends only `config_patch`; the server merges it |
 | `model_management` | query | Read-only; keys and endpoints change only in the web UI |
-| `account_management` | query | Read-only, with account connection state |
+| `account_management` | query, positions | Read-only, with account connection state; positions reads what an account holds, whoever opened it |
 | `account_query` | overview, balance, positions, position_history, trades, orders, open_orders, decisions, statistics, agent_costs | Read-only, per trader |
+| `futures_query` | runs, drafts, results | Read-only, trimmed to what a chat needs; plans are approved and run in the web UI |
+| `forecast_query` | signals, detail | Read-only; Forecast is experimental and connected to no trading |
 | `close_position` | | Checks first that the position exists |
 | `diagnose` | trader_start, model, account, order_execution | Collects facts along fixed paths and gives hints (`diagnose.go`) |
 
@@ -222,7 +226,7 @@ Reads go through TanStack Query's `useQuery`, on the one `queryClient` in `utils
 
 ### Panels
 
-A functional area of a page is a `Panel` from `components/common/panel.tsx`, and its loading, empty and error states are a centred `PanelState`. A choice between a few options shown side by side is `Segmented` from `components/common/segmented.tsx`, tabs inside a page are `SectionTabs` from `components/common/section-tabs.tsx`, a floating panel is `Popover` from `components/ui/popover.tsx`, a list beside its detail is `SplitView` from `components/common/split-view.tsx`, and a record's figures and tables use `StatStrip` and the table classes from `components/common/figures.tsx`. The Dashboard stays read-only: actions belong on the page a row opens.
+A functional area of a page is a `Panel` from `components/common/panel.tsx`. A region being read is `PanelLoading`, its empty and error states are a centred `PanelState`, and a figure being read is a `Skeleton` from `components/ui/skeleton.tsx`. A figure with nothing behind it is 0, and "—" stays for what 0 would misstate: see [DESIGN.md](DESIGN.md). A status line never sits in the page's flow: it floats, or goes on a row that is there anyway, such as `Panel`'s `status`. A choice between a few options shown side by side is `Segmented` from `components/common/segmented.tsx`, tabs inside a page are `SectionTabs` from `components/common/section-tabs.tsx`, a floating panel is `Popover` from `components/ui/popover.tsx`, a list beside its detail is `SplitView` from `components/common/split-view.tsx`, and a record's figures and tables use `StatStrip` and the table classes from `components/common/figures.tsx`. The Dashboard stays read-only: actions belong on the page a row opens.
 
 ### Dialogs
 
@@ -232,7 +236,7 @@ Use `components/common/dialog.tsx`, and never hand-write a `fixed inset-0` overl
 
 - **Buttons** use `Button` from `components/ui/button.tsx`; for links and other elements use `asChild` or `buttonVariants`. Choose `variant` and `size` by meaning. A one-off style goes in `className` as Tailwind classes, which override defaults through `cn`. Don't style buttons in page CSS or define button style constants.
 - **Global element defaults** for `button`, `input`, `select` and `textarea` belong in `styles/base.css`, in `@layer base`; rules outside a layer beat the Tailwind classes on components.
-- **Selects** use `AppSelect` from `components/ui/select.tsx` (Radix Select, popover styled like the account menu). A Radix popover in a dialog closes only itself on Esc: it sets `defaultPrevented`, and `Dialog` then stays open. A picker that needs a popover of its own, such as a searchable list, opens it from a `Button` with `variant="select"`, the same trigger.
+- **Selects** use `AppSelect` from `components/ui/select.tsx` (Radix Select, popover styled like the account menu). A Radix popover in a dialog closes only itself on Esc: it sets `defaultPrevented`, and `Dialog` then stays open. A picker that needs a popover of its own, such as a searchable list, opens it from a `Button` with `variant="select"`, the same trigger. A value that can also be typed, such as a model's name, is the field in `components/settings/model-field.tsx` instead.
 - **Switches** use `Switch` from `components/ui/switch.tsx`, a button with `role="switch"`.
 - **Search boxes** above long lists use `SearchField` from `components/common/search-field.tsx`, filtering as you type.
 - **Number and symbol inputs** in setting rows use `NumberField`, `PeriodsField` and `SymbolsField` from `components/common/form-fields.tsx`, and `FieldGrid` lays rows out in two columns on wide pages.

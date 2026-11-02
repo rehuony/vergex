@@ -7,6 +7,10 @@ import (
 	"vergex/internal/futures/plan"
 )
 
+// DefaultMaxRiskPct is the share of equity a plan's stop may lose when nothing says
+// otherwise.
+const DefaultMaxRiskPct = "1"
+
 // AccountLimits derives exact budgets from a fresh Vergex account snapshot.
 // Use free margin at the selected leverage, reserving estimated execution costs.
 // Existing exposure is not a reason to reject a draft. The controller checks
@@ -27,9 +31,20 @@ func AccountLimits(a Snapshot, c plan.Constraints) (plan.Constraints, error) {
 	c.PlanningOnly = false
 	c.AvailableMargin = plan.Decimal(available.FloatString(12))
 	c.SizingPolicy = plan.SizingAccountMargin
-	// Auto sizing allocates margin, rather than silently applying a 1% loss budget.
-	// The compiler still validates stop distance, reward/risk and market depth.
+	// Auto sizing allocates margin up to what the stop may lose: a share of equity, or all
+	// of it when that share is 0. The compiler still validates stop distance, reward/risk
+	// and market depth.
+	if c.MaxRiskPct == "" {
+		c.MaxRiskPct = DefaultMaxRiskPct
+	}
+	pct, err := decimal(c.MaxRiskPct)
+	if err != nil {
+		return c, errors.New("invalid maximum loss per trade")
+	}
 	c.MaxRisk = a.Equity
+	if pct.Sign() > 0 {
+		c.MaxRisk = plan.Decimal(new(big.Rat).Quo(new(big.Rat).Mul(equity, pct), big.NewRat(100, 1)).FloatString(12))
+	}
 	if !plan.Positive(a.FeeBPS) && a.FeeBPS != "0" {
 		return c, errors.New("account fee estimate unavailable")
 	}

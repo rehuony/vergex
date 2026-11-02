@@ -11,7 +11,8 @@ import {
   type RailAction,
 } from '@/components/common/split-view'
 import { confirmToast, notify } from '@/components/common/notify'
-import { Panel, PanelState } from '@/components/common/panel'
+import { Panel, PanelLoading, PanelState } from '@/components/common/panel'
+import { Skeleton } from '@/components/ui/skeleton'
 import { SettingBadge } from '@/components/common/setting-row'
 import { BacktestForm } from '@/components/forecast/backtest-form'
 import { BacktestReportView } from '@/components/forecast/backtest-report'
@@ -195,7 +196,7 @@ export function ForecastBacktestsPage() {
           >
             {list.length === 0 && (
               <li className="px-3 py-2 text-[13px] text-vergex-muted">
-                {runs ? label('noRuns') : label('loading')}
+                {runs ? label('noRuns') : <Skeleton className="h-3 w-40" />}
               </li>
             )}
             {list.map((run) => {
@@ -291,7 +292,7 @@ export function ForecastBacktestsPage() {
             />
           ) : !current ? (
             <Panel className="flex-1">
-              <PanelState role="status">{label('loading')}</PanelState>
+              <PanelLoading />
             </Panel>
           ) : (
             <Panel
@@ -409,7 +410,7 @@ export function ForecastBacktestsPage() {
                     language={language}
                   />
                 ) : (
-                  <PanelState role="status">{label('loading')}</PanelState>
+                  <PanelLoading />
                 )}
               </ScrollArea>
             </Panel>

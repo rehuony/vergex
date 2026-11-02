@@ -27,6 +27,13 @@ func NewPublicClient(client *http.Client) *PublicClient {
 	return &PublicClient{HTTP: client, Spot: "https://data-api.binance.vision", Futures: "https://fapi.binance.com"}
 }
 
+// NewTestnetPublicClient creates a client for Binance's test environment.
+func NewTestnetPublicClient(client *http.Client) *PublicClient {
+	public := NewPublicClient(client)
+	public.Futures = testnetBaseURL
+	return public
+}
+
 func (c *PublicClient) request(ctx context.Context, u string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, bytes.NewReader(nil))
 	if err != nil {
@@ -120,4 +127,10 @@ func (c *PublicClient) PerpetualBook(ctx context.Context, symbol string) (instru
 	}
 	s.SourceTime = time.UnixMilli(b.T).UTC()
 	return s, nil
+}
+
+// MarkPrice reads a USDT perpetual's mark price.
+func (c *PublicClient) MarkPrice(ctx context.Context, symbol string) (string, error) {
+	reading, err := c.Funding(ctx, symbol)
+	return reading.Mark, err
 }

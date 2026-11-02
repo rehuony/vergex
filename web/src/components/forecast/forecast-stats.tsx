@@ -12,8 +12,7 @@ import { fmtPct, fmtRate } from './forecast-format'
 
 // How far a hit rate is above what chance would hit, in percentage points.
 export const pointsAbove = (hit: number | null, chance: number | null) => {
-  if (hit === null || chance === null) return '—'
-  const points = (hit - chance) * 100
+  const points = ((hit ?? 0) - (chance ?? 0)) * 100
   return `${points > 0 ? '+' : ''}${points.toFixed(1)}`
 }
 
@@ -134,7 +133,7 @@ export function BreakdownTable({
                 </span>
               </td>
               <td className={cn(cellClass, numberClass, 'max-sm:hidden')}>
-                {row.samples ?? '—'}
+                {row.samples ?? 0}
               </td>
               <td className={cn(cellClass, 'max-md:hidden')}>
                 <HitBar hit={row.hit} chance={row.chance} />
@@ -145,9 +144,7 @@ export function BreakdownTable({
               </td>
               {head.lift && (
                 <td className={cn(cellClass, numberClass, 'max-sm:hidden')}>
-                  {row.lift === null || row.lift === undefined
-                    ? '—'
-                    : `${(row.lift * 100).toFixed(1)}%`}
+                  {`${((row.lift ?? 0) * 100).toFixed(1)}%`}
                 </td>
               )}
               <td
@@ -157,7 +154,7 @@ export function BreakdownTable({
                   gainTone(row.afterFees) ?? 'text-vergex-muted'
                 )}
               >
-                {row.afterFees === null ? '—' : fmtPct(row.afterFees, true)}
+                {fmtPct(row.afterFees ?? 0, true)}
               </td>
             </tr>
           ))}

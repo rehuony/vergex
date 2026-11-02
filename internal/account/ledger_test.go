@@ -35,7 +35,7 @@ func newLedgerFixture(t *testing.T) *ledgerFixture {
 	if err := user.NewStore(db).Create(&user.User{ID: testdb.UserID, Email: "me@example.com", PasswordHash: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	account, err := NewStore(db).Create(testdb.UserID, "binance", "Main", "key", "secret", "")
+	account, err := NewStore(db).Create(testdb.UserID, "binance", "Main", "key", "secret", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

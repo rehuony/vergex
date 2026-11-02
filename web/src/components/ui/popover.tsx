@@ -8,6 +8,8 @@ import { cn } from '@/utils/cn'
 
 export const Popover = PopoverPrimitive.Root
 export const PopoverTrigger = PopoverPrimitive.Trigger
+// What it lines up with, where that is more than its trigger.
+export const PopoverAnchor = PopoverPrimitive.Anchor
 
 // A floating panel styled like the app's menus. Radix supplies focus handling,
 // Escape and closing on an outside click; it grows from its trigger.

@@ -37,30 +37,37 @@ export function PlanFunding({ plan, flush }: { plan: Plan; flush?: boolean }) {
           { name: label('positionValue'), value: money(notional), note: quote },
         ]}
       />
-      <div
-        className={cn(
-          'space-y-1 text-xs text-vergex-muted',
-          flush ? 'px-4 py-2' : 'mt-2'
-        )}
-      >
-        {plan.constraints.planning_only ? (
-          <p>{label('previewOnly')}</p>
-        ) : Number.isFinite(available) && available > 0 ? (
-          <p>
-            {label('availableAtSizing', {
-              available: money(available),
-              quote,
-              percent: money((margin / available) * 100),
-            })}
-          </p>
-        ) : (
-          <p>{label('savedSize')}</p>
-        )}
-        {plan.sizing_limit === 'liquidity' && (
-          <p className="text-vergex-danger">{label('oldCap')}</p>
-        )}
-        {plan.sizing_limit === 'risk' && <p>{label('riskReduced')}</p>}
-      </div>
+      {/* Only what changes how to read the figures above. */}
+      {(plan.constraints.planning_only ||
+        plan.sizing_limit === 'liquidity' ||
+        plan.sizing_limit === 'risk' ||
+        (Number.isFinite(available) && available > 0)) && (
+        <div
+          className={cn(
+            'space-y-1 text-xs text-vergex-muted',
+            flush ? 'px-4 py-2' : 'mt-2'
+          )}
+        >
+          {plan.constraints.planning_only ? (
+            <p>{label('previewOnly')}</p>
+          ) : (
+            Number.isFinite(available) &&
+            available > 0 && (
+              <p>
+                {label('availableAtSizing', {
+                  available: money(available),
+                  quote,
+                  percent: money((margin / available) * 100),
+                })}
+              </p>
+            )
+          )}
+          {plan.sizing_limit === 'liquidity' && (
+            <p className="text-vergex-danger">{label('oldCap')}</p>
+          )}
+          {plan.sizing_limit === 'risk' && <p>{label('riskReduced')}</p>}
+        </div>
+      )}
     </section>
   )
 }

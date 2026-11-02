@@ -33,6 +33,8 @@ const agent = (selected: string[]): AgentConfig => ({
     min_position_size: 12,
     min_risk_reward_ratio: 3,
     min_confidence: 75,
+    max_daily_loss_pct: 5,
+    max_drawdown_pct: 15,
   },
 })
 

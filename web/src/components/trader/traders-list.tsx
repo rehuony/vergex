@@ -14,12 +14,13 @@ import {
   numberClass,
   tableClass,
 } from '@/components/common/figures'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { SortHeader, type ColumnSort } from '@/components/common/sort-header'
 import { SettingsLink } from '@/components/settings/settings-link'
 import { buttonVariants } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { Account, AgentModel, TraderInfo, TraderMetrics } from '@/types'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/utils/cn'
 import { fmtPct, fmtUsd } from '@/utils/trader-format'
 
@@ -96,10 +97,7 @@ export function NoTraders({
           </SettingsLink>
         </>
       ) : (
-        <>
-          <p>{label('createFirst')}</p>
-          {create}
-        </>
+        <>{create}</>
       )}
     </PanelState>
   )
@@ -164,7 +162,7 @@ export function TradersList({
     return failed ? (
       <PanelState role="alert">{label('loadFailed')}</PanelState>
     ) : (
-      <PanelState role="status">{t('loading', language)}</PanelState>
+      <PanelLoading />
     )
   }
 
@@ -269,21 +267,31 @@ export function TradersList({
                   </div>
                 </td>
                 <td className={cn(cellClass, numberClass)}>
-                  {fmtUsd(row?.equity)}
+                  {metrics ? fmtUsd(row?.equity) : <Skeleton />}
                 </td>
                 <td className={cn(cellClass, numberClass, gainTone(change))}>
-                  {fmtPct(change)}
+                  {metrics ? fmtPct(change) : <Skeleton />}
                 </td>
                 <td className={cn(cellClass, numberClass, narrowHidden)}>
-                  {row?.win_rate == null ? '—' : `${row.win_rate.toFixed(1)}%`}
+                  {metrics ? (
+                    `${(row?.win_rate ?? 0).toFixed(1)}%`
+                  ) : (
+                    <Skeleton className="w-10" />
+                  )}
                 </td>
                 <td className={cn(cellClass, numberClass, narrowHidden)}>
-                  {row?.max_drawdown_pct == null
-                    ? '—'
-                    : `${row.max_drawdown_pct.toFixed(1)}%`}
+                  {metrics ? (
+                    `${(row?.max_drawdown_pct ?? 0).toFixed(1)}%`
+                  ) : (
+                    <Skeleton className="w-10" />
+                  )}
                 </td>
                 <td className={cn(cellClass, numberClass, narrowHidden)}>
-                  {row?.total_trades ?? '—'}
+                  {metrics ? (
+                    (row?.total_trades ?? 0)
+                  ) : (
+                    <Skeleton className="w-8" />
+                  )}
                 </td>
               </tr>
             )

@@ -8,7 +8,7 @@ import (
 
 const (
 	DefaultKimiBaseURL = "https://api.moonshot.ai/v1" // Global endpoint (use api.moonshot.cn for China)
-	DefaultKimiModel   = "moonshot-v1-auto"
+	DefaultKimiModel   = "kimi-k3.1-pro"
 )
 
 func init() {

@@ -26,6 +26,8 @@ export function StatStrip({
   small?: boolean
   className?: string
 }) {
+  // A note that comes and goes must not change the strip's height.
+  const noted = stats.some((stat) => stat.note !== undefined)
   return (
     <dl
       className={cn(
@@ -63,8 +65,8 @@ export function StatStrip({
               >
                 {stat.value}
               </dd>
-              {stat.note !== undefined && (
-                <dd className="mt-0.5 truncate text-[11px] tabular-nums text-vergex-muted">
+              {noted && (
+                <dd className="mt-0.5 min-h-4 truncate text-[11px] tabular-nums text-vergex-muted">
                   {stat.note}
                 </dd>
               )}

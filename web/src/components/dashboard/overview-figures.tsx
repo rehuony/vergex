@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import type { Overview } from '@/api/dashboard'
 import { StatStrip, type Stat } from '@/components/common/figures'
 import { fmtUsd } from '@/utils/trader-format'
-import { totalEquity } from './flow-members'
+import { equityText } from './flow-members'
 
 type Label = (key: string, params?: Record<string, string | number>) => string
 
@@ -22,11 +22,11 @@ export function OverviewFigures({
   const stats: Stat[] = [
     {
       name: label('figures.equity'),
-      value: overview.accounts.length ? fmtUsd(totalEquity(overview)) : '—',
+      value: equityText(overview),
     },
     {
       name: label('figures.today'),
-      value: today == null ? '—' : fmtUsd(today, true),
+      value: fmtUsd(today ?? undefined, true),
       gain: today,
     },
     {

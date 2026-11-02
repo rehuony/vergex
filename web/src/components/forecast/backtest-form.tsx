@@ -4,13 +4,9 @@ import { api } from '@/api'
 import { FORECAST_INTERVALS, type BacktestRun } from '@/api/forecast'
 import { fieldClass, SymbolsField } from '@/components/common/form-fields'
 import { notify } from '@/components/common/notify'
-import { Panel } from '@/components/common/panel'
+import { Panel, PanelLoading } from '@/components/common/panel'
 import { Segmented } from '@/components/common/segmented'
-import {
-  SettingActions,
-  SettingRow,
-  SettingState,
-} from '@/components/common/setting-row'
+import { SettingActions, SettingRow } from '@/components/common/setting-row'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AppSelect } from '@/components/ui/select'
@@ -181,7 +177,7 @@ export function BacktestForm({
       className="flex min-h-0 flex-1 flex-col overflow-hidden"
     >
       {!strategies ? (
-        <SettingState role="status">{label('loading')}</SettingState>
+        <PanelLoading className="flex-1" />
       ) : (
         <>
           <ScrollArea className="min-h-0 flex-1 border-t border-vergex-line">

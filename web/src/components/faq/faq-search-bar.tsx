@@ -25,7 +25,10 @@ export function FAQSearchBar({
         onChange={(e) => onSearchChange(e.target.value)}
         placeholder={placeholder}
         aria-label={placeholder}
-        className={cn(dialogInputClass, 'pl-9 pr-9')}
+        className={cn(
+          dialogInputClass,
+          'pl-9 pr-9 max-sm:h-10 max-sm:text-base'
+        )}
       />
       {searchTerm && (
         <Button

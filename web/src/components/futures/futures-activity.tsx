@@ -15,6 +15,8 @@ export interface ActivityItem {
   started: number
   ended?: number
 }
+const METRICS = new Set(['funding_rate', 'mark_price', 'open_interest'])
+
 const TOOLS = new Set([
   'get_candles',
   'get_market',
@@ -49,7 +51,7 @@ export function recordActivity(
       {
         id: 'planning_sizing',
         label: text('sizing'),
-        detail: String(d.message),
+        detail: text('planningOnly'),
         state: 'done' as const,
         started: now,
         ended: now,
@@ -72,7 +74,12 @@ export function recordActivity(
   if (event.type === 'plugin_data') {
     const plugin = String(d.plugin)
     const metrics = Array.isArray(d.metrics)
-      ? (d.metrics as { label: string; value: string; unit: string }[])
+      ? (d.metrics as {
+          key?: string
+          label: string
+          value: string
+          unit: string
+        }[])
       : []
     const id = `plugin_${String(d.plugin)}`
     const previous = items.find((row) => row.id === id)
@@ -94,9 +101,13 @@ export function recordActivity(
               const display = Number.isFinite(value)
                 ? metric.unit === 'fraction'
                   ? `${(value * 100).toFixed(5)}%`
-                  : `${value.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${metric.unit}`
+                  : `${value.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${metric.unit === 'contracts' ? text('metric.contracts') : metric.unit}`
                 : metric.value
-              return `${metric.label}: ${display}`
+              // The built-in plugins' figures are named here; another's as it names them.
+              const name = METRICS.has(metric.key ?? '')
+                ? text(`metric.${metric.key}`)
+                : metric.label
+              return `${name}: ${display}`
             })
             .join(' · '),
     }
@@ -163,7 +174,7 @@ export function recordActivity(
         interval: String(d.interval),
         count: String(d.count),
         target: String(d.target_count),
-        scope: String(d.scope),
+        scope: text('latestHistory'),
       }),
       state: 'running',
     })
@@ -176,7 +187,7 @@ export function recordActivity(
           })
         : undefined,
       d.truncated ? text('limitedHistory') : undefined,
-      d.scope,
+      d.scope ? text('latestHistory') : undefined,
     ]
       .filter(Boolean)
       .join(' · ')

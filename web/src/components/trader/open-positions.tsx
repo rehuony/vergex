@@ -13,7 +13,7 @@ import {
   wideTableClass,
 } from '@/components/common/figures'
 import { confirmToast, notify } from '@/components/common/notify'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
 import { baseLabel, fmtPx, fmtUsd } from '@/utils/trader-format'
 
@@ -27,11 +27,14 @@ export function OpenPositions({
   traderId,
   positions,
   failed,
+  reason,
   language,
 }: {
   traderId: string
   positions?: Position[]
   failed?: boolean
+  // What the exchange's refusal came down to.
+  reason?: string
   language: Language
 }) {
   const client = useQueryClient()
@@ -99,10 +102,12 @@ export function OpenPositions({
   }
 
   if (!positions) {
-    return (
-      <PanelState role={failed ? 'alert' : 'status'}>
-        {failed ? label('positionsFailed') : t('loading', language)}
+    return failed ? (
+      <PanelState role="alert">
+        {[label('positionsFailed'), reason].filter(Boolean).join(' ')}
       </PanelState>
+    ) : (
+      <PanelLoading />
     )
   }
 
@@ -113,6 +118,15 @@ export function OpenPositions({
           <tr>
             <th className={headClass}>
               {label('openPositionsCount', { count: positions.length })}
+              {failed && (
+                <span
+                  role="status"
+                  title={reason}
+                  className="ml-2 text-vergex-warning"
+                >
+                  {label('notUpdating')}
+                </span>
+              )}
             </th>
             <th className={cn(headClass, 'w-20')}>{label('side')}</th>
             <th className={cn(headClass, 'w-24 text-right max-sm:hidden')}>
@@ -159,6 +173,11 @@ export function OpenPositions({
                   title={position.symbol}
                 >
                   {baseLabel(position.symbol)}
+                  {position.foreign && (
+                    <span className="ml-1.5 text-[11px] font-normal text-vergex-muted">
+                      {label('notThisTrader')}
+                    </span>
+                  )}
                 </td>
                 <td
                   className={cn(

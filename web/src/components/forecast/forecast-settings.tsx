@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { api } from '@/api'
 import { NumberField, SymbolsField } from '@/components/common/form-fields'
-import { Panel } from '@/components/common/panel'
+import { Panel, PanelLoading } from '@/components/common/panel'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   SettingActions,
   SettingRow,
@@ -80,7 +81,7 @@ function CollectionPanel({ language }: { language: Language }) {
         {error ? (
           <SettingState role="alert">{label('loadFailed')}</SettingState>
         ) : !data ? (
-          <SettingState>{label('loading')}</SettingState>
+          <PanelLoading className="flex-1" />
         ) : (
           <>
             <SettingRow
@@ -186,7 +187,7 @@ function AlertPanel({ language }: { language: Language }) {
         {error ? (
           <SettingState role="alert">{label('loadFailed')}</SettingState>
         ) : !data ? (
-          <SettingState>{label('loading')}</SettingState>
+          <PanelLoading className="flex-1" />
         ) : (
           <SettingRow
             label={label('alertThreshold')}
@@ -239,12 +240,13 @@ function StatusRow({
 // problem appearing changes no region's size.
 function StatusPanel({ language }: { language: Language }) {
   const label = labelsIn(language)
-  const { data: status } = useQuery({
+  const { data: status, error: statusError } = useQuery({
     ...marketStatusQuery,
     refetchInterval: 5000,
   })
   const backfill = status?.backfill
   const problem = status?.limiter.reason || status?.last_error
+  const unread = statusError ? '—' : <Skeleton className="w-12" />
   return (
     <Panel
       title={label('health')}
@@ -253,17 +255,19 @@ function StatusPanel({ language }: { language: Language }) {
       <ScrollArea className="min-h-0 flex-1 rounded-b-2xl">
         <dl>
           <StatusRow name={label('seriesReady')}>
-            {status ? `${status.ready} / ${status.series}` : '—'}
+            {status ? `${status.ready} / ${status.series}` : unread}
           </StatusRow>
-          <StatusRow name={label('behind')}>{status?.behind ?? '—'}</StatusRow>
+          <StatusRow name={label('behind')}>
+            {status?.behind ?? unread}
+          </StatusRow>
           <StatusRow name={label('failing')}>
-            {status?.failing ?? '—'}
+            {status?.failing ?? unread}
           </StatusRow>
           <StatusRow name={label('watchCoins')}>
-            {status?.watch_symbols ?? '—'}
+            {status?.watch_symbols ?? unread}
           </StatusRow>
           <StatusRow name={label('topCoins')}>
-            {status?.top_symbols ?? '—'}
+            {status?.top_symbols ?? unread}
           </StatusRow>
           <StatusRow
             name={label('stream')}
@@ -278,13 +282,17 @@ function StatusPanel({ language }: { language: Language }) {
               ? status.stream.connected
                 ? label('streamUp', { topics: status.stream.topics })
                 : label('streamDown')
-              : '—'}
+              : unread}
           </StatusRow>
           <StatusRow name={label('requestWeight')}>
-            {status?.limiter.used_weight ?? '—'}
+            {status?.limiter.used_weight ?? unread}
           </StatusRow>
           <StatusRow name={label('backfill')}>
-            {backfill?.running ? `${backfill.done} / ${backfill.total}` : '—'}
+            {status
+              ? backfill?.running
+                ? `${backfill.done} / ${backfill.total}`
+                : 0
+              : unread}
           </StatusRow>
           <StatusRow
             name={label('problem')}

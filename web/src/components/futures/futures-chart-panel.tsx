@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Segmented } from '@/components/common/segmented'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
 import { resolutions } from './futures-chart/futures-chart-data'
@@ -43,7 +44,7 @@ export function FuturesChartPanel({
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-vergex-line p-2">
         {market}
         <span className="mono min-w-24 text-xl leading-[1.2] tracking-[-0.01em] text-vergex-ink">
-          {price === '—' ? price : format(price)}
+          {price === '—' ? <Skeleton className="w-24" /> : format(price)}
         </span>
         <div className="ml-auto flex items-center gap-3">
           <ForecastSwitch on={forecastOn} onChange={onForecastChange} />

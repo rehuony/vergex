@@ -22,6 +22,44 @@ type TraderStats struct {
 	MaxDrawdownPct float64 `json:"max_drawdown_pct"`
 }
 
+// RealizedOfTrader sums the realized P/L of a trader's positions closed since a time.
+func (s *PositionStore) RealizedOfTrader(traderID string, sinceMs int64) (float64, error) {
+	var total float64
+	err := s.db.Table("account.positions").
+		Select("COALESCE(SUM(realized_pnl), 0)").
+		Where("status = ? AND source = ? AND source_id = ? AND closed_at >= ?", PositionClosed, SourceTrader, traderID, time.UnixMilli(sinceMs).UTC()).
+		Scan(&total).Error
+	if err != nil {
+		return 0, fmt.Errorf("failed to sum realized P/L: %w", err)
+	}
+	return total, nil
+}
+
+// NetOfTrader sums what a trader has realized since it began, after fees, including what
+// open positions have already taken off the table. Nobody else's trades count, nor do
+// deposits and withdrawals.
+func (s *PositionStore) NetOfTrader(traderID string) (float64, error) {
+	var total float64
+	err := s.db.Table("account.positions").
+		Select("COALESCE(SUM(realized_pnl - fee), 0)").
+		Where("source = ? AND source_id = ?", SourceTrader, traderID).
+		Scan(&total).Error
+	if err != nil {
+		return 0, fmt.Errorf("failed to sum net P/L: %w", err)
+	}
+	return total, nil
+}
+
+// OpenOfTrader returns the positions the ledger gives to a trader that are still open.
+func (s *PositionStore) OpenOfTrader(traderID string) ([]*TraderPosition, error) {
+	var positions []*TraderPosition
+	err := s.positions().Where("p.source = ? AND p.source_id = ? AND p.status = ?", SourceTrader, traderID, PositionOpen).Find(&positions).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to query open positions: %w", err)
+	}
+	return positions, nil
+}
+
 // RealizedOnAccounts sums the realized P/L of positions closed on the accounts since
 // the given time (Unix milliseconds), whoever traded them.
 func (s *PositionStore) RealizedOnAccounts(accountIDs []string, sinceMs int64) (float64, error) {
@@ -37,6 +75,36 @@ func (s *PositionStore) RealizedOnAccounts(accountIDs []string, sinceMs int64) (
 		return 0, fmt.Errorf("failed to sum realized P/L: %w", err)
 	}
 	return total, nil
+}
+
+// RealizedBetween sums the realized P/L of positions closed on the accounts within a span,
+// whoever traded them.
+func (s *PositionStore) RealizedBetween(accountIDs []string, from, to time.Time) (float64, error) {
+	if len(accountIDs) == 0 {
+		return 0, nil
+	}
+	var total float64
+	err := s.db.Table("account.positions").
+		Select("COALESCE(SUM(realized_pnl), 0)").
+		Where("status = ? AND account_id IN ? AND closed_at >= ? AND closed_at < ?", PositionClosed, accountIDs, from, to).
+		Scan(&total).Error
+	if err != nil {
+		return 0, fmt.Errorf("failed to sum realized P/L: %w", err)
+	}
+	return total, nil
+}
+
+// OpenOnAccounts returns what is open on the accounts, whoever opened it.
+func (s *PositionStore) OpenOnAccounts(accountIDs []string) ([]*TraderPosition, error) {
+	if len(accountIDs) == 0 {
+		return nil, nil
+	}
+	var positions []*TraderPosition
+	err := s.positions().Where("p.status = ? AND p.account_id IN ?", PositionOpen, accountIDs).Order("i.symbol").Find(&positions).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to query open positions: %w", err)
+	}
+	return positions, nil
 }
 
 // UpdatedSince returns the positions updated at or after a time, oldest change first.
@@ -65,6 +133,32 @@ func (s *PositionStore) ClosedSince(traderIDs []string, sinceMs int64, limit int
 		Find(&positions).Error
 	if err != nil {
 		return nil, fmt.Errorf("failed to query closed positions: %w", err)
+	}
+	return positions, nil
+}
+
+// FuturesClosedSince returns Futures positions closed after sinceMs, oldest first.
+func (s *PositionStore) FuturesClosedSince(sinceMs int64, limit int) ([]*TraderPosition, error) {
+	var positions []*TraderPosition
+	err := s.positions().Where("p.status = ? AND p.source = ? AND p.closed_at >= ?", PositionClosed, SourceFutures, afterMilli(sinceMs)).
+		Order("p.closed_at ASC").
+		Limit(limit).
+		Find(&positions).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to query closed Futures positions: %w", err)
+	}
+	return positions, nil
+}
+
+// FuturesOpenedSince returns Futures positions opened after sinceMs, oldest first.
+func (s *PositionStore) FuturesOpenedSince(sinceMs int64, limit int) ([]*TraderPosition, error) {
+	var positions []*TraderPosition
+	err := s.positions().Where("p.source = ? AND p.opened_at >= ?", SourceFutures, afterMilli(sinceMs)).
+		Order("p.opened_at ASC").
+		Limit(limit).
+		Find(&positions).Error
+	if err != nil {
+		return nil, fmt.Errorf("failed to query opened Futures positions: %w", err)
 	}
 	return positions, nil
 }

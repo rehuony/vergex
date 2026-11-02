@@ -69,6 +69,8 @@ export function useFuturesMarket({
   const [link] = useState(() => readMarketLink(params))
   const [accountId, setAccountId] = useState('')
   const [modelID, setModelID] = useState('')
+  // Another of that provider's models, instead of the one the connection is set to.
+  const [modelName, setModelName] = useState('')
   const [venue, setVenue] = useState(link.venue ?? 'binance')
   const requestedVenue = useRef(venue)
   const marketChosen = useRef(
@@ -84,9 +86,10 @@ export function useFuturesMarket({
 
   useEffect(() => {
     if (!configsLoaded) return
-    setModelID((old) =>
-      models.some((m) => m.id === old) ? old : models[0]?.id || ''
-    )
+    if (!models.some((m) => m.id === modelID)) {
+      setModelID(models[0]?.id || '')
+      setModelName('')
+    }
     if (!initialized.current) {
       initialized.current = true
       const linked = accounts.find((a) => a.id === link.account)
@@ -137,7 +140,11 @@ export function useFuturesMarket({
     accountId,
     setAccountId,
     modelID,
-    setModelID,
+    modelName,
+    chooseModel: (id: string, name = '') => {
+      setModelID(id)
+      setModelName(name)
+    },
     venue,
     setVenue,
     requestedVenue,

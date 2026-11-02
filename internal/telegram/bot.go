@@ -157,21 +157,22 @@ func runBot(token string, cfg *config.Config, st *Stores, reloadCh <-chan struct
 		if text == "/start" {
 			resolveBotUser()
 			if botUserID == "" {
-				sendMsg(bot, chatID,
-					"No account found.\nOpen the web dashboard to register, then send /start.")
+				sendMsg(bot, chatID, pick(st.Telegram.GetLanguage(),
+					"No account found.\nOpen the web dashboard to register, then send /start.",
+					"还没有账户。\n请先在网页上注册，然后发送 /start。"))
 				continue
 			}
 			if allowedChatID == 0 {
 				username := update.Message.From.UserName
 				if err := st.Telegram.BindUser(chatID, "@"+username); err != nil {
 					logger.Errorf("Failed to bind Telegram user: %v", err)
-					sendMsg(bot, chatID, "Binding failed. Please try again.")
+					sendMsg(bot, chatID, pick(st.Telegram.GetLanguage(), "Binding failed. Please try again.", "绑定失败，请重试。"))
 					continue
 				}
 				allowedChatID = chatID
 				logger.Infof("Telegram bound to @%s (chatID: %d)", username, chatID)
 			} else if chatID != allowedChatID {
-				sendMsg(bot, chatID, "This bot is already bound to another account.")
+				sendMsg(bot, chatID, pick(st.Telegram.GetLanguage(), "This bot is already bound to another account.", "这个机器人已经绑定了另一个账户。"))
 				continue
 			} else {
 				agents.Reset(chatID)
@@ -197,11 +198,11 @@ func runBot(token string, cfg *config.Config, st *Stores, reloadCh <-chan struct
 
 		// ── Access control ────────────────────────────────────────────────────
 		if allowedChatID != 0 && chatID != allowedChatID {
-			sendMsg(bot, chatID, "Unauthorized.")
+			sendMsg(bot, chatID, pick(st.Telegram.GetLanguage(), "Unauthorized.", "没有权限。"))
 			continue
 		}
 		if allowedChatID == 0 {
-			sendMsg(bot, chatID, "Send /start first.")
+			sendMsg(bot, chatID, pick(st.Telegram.GetLanguage(), "Send /start first.", "请先发送 /start。"))
 			continue
 		}
 		if text == "" {
@@ -359,12 +360,12 @@ func statusMsg(st *Stores, userID string, apiPort int, lang string) string {
 		missing := ""
 		if lang == "zh" {
 			if !hasModel {
-				missing += "\n❌ Model → Settings → Models → Add"
+				missing += "\n❌ 模型 → 设置 → 模型 → 添加"
 			}
 			if !hasAccount {
-				missing += "\n❌ Account → Settings → Accounts → Add"
+				missing += "\n❌ 账户 → 设置 → 交易账户 → 添加"
 			}
-			return "⚙️ *Setup required*\n\nOpen the web dashboard to complete setup:\n→ " + webURL + "\n" + missing + "\n\nSend /start when done."
+			return "⚙️ *需要先完成设置*\n\n打开网页完成设置：\n→ " + webURL + "\n" + missing + "\n\n完成后发送 /start。"
 		}
 		if !hasModel {
 			missing += "\n❌ Model → Settings → Models → Add"
@@ -377,16 +378,16 @@ func statusMsg(st *Stores, userID string, apiPort int, lang string) string {
 
 	// All configured — show ready state.
 	if lang == "zh" {
-		return `✅ *Vergex is ready!*
+		return `✅ *Vergex 已就绪！*
 
-Just tell me what you want:
+直接告诉我你要做什么：
 
-📊 "Show my positions"
-💰 "What's my balance?"
-🤖 "Create a BTC trend trader and start it"
-⏹ "Stop all traders"
+📊 "看看我的持仓"
+💰 "我的余额是多少？"
+🤖 "创建一个 BTC 趋势交易员并启动"
+⏹ "停止所有交易员"
 
-/help for more · /lang to change language`
+/help 查看更多 · /lang 切换语言`
 	}
 	return `✅ *Vergex is ready!*
 
@@ -403,14 +404,14 @@ Just tell me what you want:
 // ── Language ──────────────────────────────────────────────────────────────────
 
 func langMenuMsg() string {
-	return "🌐 *Choose your language*\n\n1 — English\n2 — Chinese\n\nReply with 1 or 2"
+	return "🌐 *Choose your language / 选择语言*\n\n1 — English\n2 — 中文\n\nReply with 1 or 2 / 回复 1 或 2"
 }
 
 func parseLangChoice(text string) string {
 	switch strings.TrimSpace(text) {
 	case "1", "en", "EN", "English", "english":
 		return "en"
-	case "2", "zh", "ZH", "chinese", "Chinese":
+	case "2", "zh", "ZH", "chinese", "Chinese", "中文":
 		return "zh"
 	}
 	return ""
@@ -420,26 +421,26 @@ func parseLangChoice(text string) string {
 
 func helpMsg(lang string) string {
 	if lang == "zh" {
-		return `*Vergex Help*
+		return `*Vergex 帮助*
 
-*Query*
-• "Show my positions"
-• "What's my balance?"
-• "List my traders"
+*查询*
+• "看看我的持仓"
+• "我的余额是多少？"
+• "列出我的交易员"
 
-*Create & start*
-• "Create a BTC trend trader and start it"
-• "A careful trader, BTC and ETH only"
+*创建并启动*
+• "创建一个 BTC 趋势交易员并启动"
+• "一个谨慎的交易员，只做 BTC 和 ETH"
 
-*Control*
-• "Start trader"
-• "Pause trader"
-• "Stop all trading"
+*控制*
+• "启动交易员"
+• "停止交易员"
+• "停止所有交易"
 
-*Commands*
-/start — refresh status
-/lang  — change language
-/help  — show this`
+*命令*
+/start — 刷新状态
+/lang  — 切换语言
+/help  — 显示这条帮助`
 	}
 	return `*Vergex Help*
 

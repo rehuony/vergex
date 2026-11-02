@@ -40,6 +40,9 @@ type testBroker struct {
 	prepareErr, errorPlace error
 	lookupErr              bool
 	fillEntryImmediately   bool
+	// missingIsKnown has an order nobody placed read as the exchange saying so.
+	missingIsKnown bool
+	cancelErr      error
 }
 
 func (b *testBroker) Venue() string { return "binance" }
@@ -115,6 +118,9 @@ func (b *testBroker) Lookup(_ context.Context, o Order) (Order, error) {
 	}
 	r, ok := b.orders[o.ClientID]
 	if !ok {
+		if b.missingIsKnown {
+			return o, account.ErrOrderNotFound
+		}
 		return o, errors.New("unknown")
 	}
 	return r, nil
@@ -122,6 +128,9 @@ func (b *testBroker) Lookup(_ context.Context, o Order) (Order, error) {
 func (b *testBroker) Cancel(_ context.Context, o Order) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.cancelErr != nil {
+		return b.cancelErr
+	}
 	b.cancelled = append(b.cancelled, o.ClientID)
 	r := b.orders[o.ClientID]
 	r.Status = "CANCELED"
@@ -538,3 +547,39 @@ func TestMarketIntentAndReceiptCannotBecomeRestingLimit(t *testing.T) {
 		t.Fatal("persisted market intent became a resting limit")
 	}
 }
+
+type testnetBroker struct{ testBroker }
+
+func (*testnetBroker) Testnet() bool { return true }
+
+func TestATestnetPlanStaysOnItsEnvironment(t *testing.T) {
+	real, test := &testMarket{book: plan.Snapshot{Bid: "1"}}, &testMarket{book: plan.Snapshot{Bid: "2"}}
+	c := &Controller{Market: real, TestnetMarket: test}
+	for _, tt := range []struct {
+		testnet bool
+		want    plan.Decimal
+	}{{false, "1"}, {true, "2"}} {
+		got, err := c.book(context.Background(), plan.Snapshot{Venue: "binance", Symbol: "BTCUSDT", Testnet: tt.testnet})
+		if err != nil || got.Bid != tt.want {
+			t.Fatalf("testnet %v read %+v, %v", tt.testnet, got, err)
+		}
+	}
+	if _, err := (&Controller{Market: real}).book(context.Background(), plan.Snapshot{Testnet: true}); err == nil {
+		t.Fatal("a testnet plan read the real market")
+	}
+
+	realPlan, testPlan := plan.Snapshot{Venue: "binance"}, plan.Snapshot{Venue: "binance", Testnet: true}
+	if !brokerFits(&testBroker{}, realPlan) || brokerFits(&testBroker{}, testPlan) {
+		t.Fatal("a real account must take only real plans")
+	}
+	if !brokerFits(&testnetBroker{}, testPlan) || brokerFits(&testnetBroker{}, realPlan) {
+		t.Fatal("a testnet account must take only testnet plans")
+	}
+	if !brokerFits(ExecutorBroker{Executor: venueOnly{}}, realPlan) {
+		t.Fatal("an executor with no environment is real")
+	}
+}
+
+type venueOnly struct{ account.Executor }
+
+func (venueOnly) Venue() string { return "binance" }

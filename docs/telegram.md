@@ -12,6 +12,8 @@ In **Settings → Telegram**:
 
 Saving the token, model or binding restarts the bot.
 
+`/start` shows what is set up and what is missing, `/help` lists what you can ask, and `/lang` switches the bot and its alerts between English and Chinese.
+
 A chat is stored in `agent.conversations` and `agent.messages`: what you and the assistant said, the account state it was given, its thinking where the model returns one, and each skill call with its result. After a restart the assistant picks up from the latest 40 things said. `/start` begins a new conversation; the old one stays stored, and nothing cleans it up automatically (see [Data and backups](getting-started.md#data-and-backups)).
 
 ## Skills
@@ -22,8 +24,10 @@ Defined in `internal/telegram/agent/skills.go`:
 | :---- | :------ |
 | `trader_management` | create, with a kind and preset; update, with a `config_patch` the server merges; delete, start, stop, query |
 | `model_management` | query |
-| `account_management` | query, with account connection state |
+| `account_management` | query, with account connection state; positions, what an account holds whoever opened it |
 | `account_query` | overview, balance, positions, position history, trades, orders, open orders, decisions, statistics, agent costs |
+| `futures_query` | read only: runs, drafts, and what finished plans realized on an account |
+| `forecast_query` | read only: signals for the watched coins, or one coin in detail |
 | `close_position` | closes a position after checking that it exists |
 | `diagnose` | `trader_start`, `model`, `account`, `order_execution` |
 
@@ -47,11 +51,13 @@ Once the bot is bound, the assistant also tells you about events without being a
 | :--- | :-------- |
 | Rejected orders | The exchange rejects a trader's order, or an order action fails. Actions a risk guard stopped are not reported |
 | Safe mode | A trader enters safe mode or trading is blocked. Sent once each time it begins |
-| Closed positions | A trader's position closes, with its realized P/L |
-| Futures plans | A plan needs reconciliation, including after a restart |
+| Closed positions | A trader's or a Futures position closes, with its realized P/L |
+| Futures plans | A plan's entry fills, or a plan needs reconciliation, including after a restart |
 | Forecast signals | A watchlist coin's score crosses the threshold in Forecast → Settings. See [Forecast](forecast.md#alerts) |
+| Daily report | Just after 00:00 UTC, the day before on your real accounts: their equity now, what was realized, what is open, and what the models cost. Testnet accounts count for nothing, and with no real account nothing is sent |
+| System problems | A background service fails, a trader halts on a loss limit or cannot start, the ledger cannot book a trade, or an account's reads keep failing for 5 minutes. Sent once each time it begins |
 
-`internal/telegram/alerts.go` checks every 30 seconds. It only reads the database and in-memory state, so it adds no exchange requests and does not touch the trading loop. What was already sent is stored in `telegram.alert_marks`, so a restart repeats nothing. Connecting the bot does not replay history, and after downtime events are reported from at most 24 hours back. If a message cannot be delivered, the same events go out on the next check.
+`internal/telegram/alerts.go` checks every 30 seconds. It only reads the database and in-memory state, so it adds no exchange requests and does not touch the trading loop. The one exception is the daily report, which asks each real account its equity once a day. What was already sent is stored in `telegram.alert_marks`, so a restart repeats nothing. Connecting the bot does not replay history, and after downtime events are reported from at most 24 hours back. If a message cannot be delivered, the same events go out on the next check.
 
 ## Diagnostics
 

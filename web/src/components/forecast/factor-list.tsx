@@ -1,5 +1,5 @@
 import type { ForecastResult } from '@/api/forecast'
-import { Panel, PanelState } from '@/components/common/panel'
+import { Panel, PanelLoading, PanelState } from '@/components/common/panel'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { t, type Language } from '@/i18n'
 
@@ -17,7 +17,8 @@ export function FactorList({
 }: {
   result: ForecastResult | null | undefined
   // What to say while there is nothing to list.
-  pending: string
+  // Why there is nothing yet; without it, the coin is still being read.
+  pending?: string
   language: Language
   className?: string
 }) {
@@ -39,9 +40,13 @@ export function FactorList({
       className={className}
     >
       {factors.length === 0 ? (
-        <PanelState role="status" className="min-h-0 flex-1">
-          {pending}
-        </PanelState>
+        pending ? (
+          <PanelState role="status" className="min-h-0 flex-1">
+            {pending}
+          </PanelState>
+        ) : (
+          <PanelLoading className="min-h-0 flex-1" />
+        )
       ) : (
         <ScrollArea className="min-h-0 flex-1 rounded-b-2xl px-2 pb-2">
           <table className="w-full text-left text-[13px] tabular-nums">

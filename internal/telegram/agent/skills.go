@@ -23,6 +23,8 @@ const (
 	skillAccount  = "account_query"
 	skillClose    = "close_position"
 	skillDiagnose = "diagnose"
+	skillFutures  = "futures_query"
+	skillForecast = "forecast_query"
 )
 
 // maxResultChars bounds a single tool result fed back to the model.
@@ -73,9 +75,9 @@ var skillTools = []agent.Tool{
 			"action":     enum("only query is available in chat", "query"),
 			"target_ref": refSchema,
 		}, "action")),
-	tool(skillAccounts, "Query accounts with their connection status and balance. Credentials can only be changed in the web UI.",
+	tool(skillAccounts, "Query accounts with their connection status and balance, or what one account holds on the exchange, whoever opened it. Credentials can only be changed in the web UI.",
 		object(map[string]any{
-			"action":     enum("only query is available in chat", "query"),
+			"action":     enum("query for status and balance, positions for what an account holds", "query", "positions"),
 			"target_ref": refSchema,
 		}, "action")),
 	tool(skillAccount, "Read trading data of one trader: balance, positions, history, trades, orders, decisions, statistics, agent costs. scope=overview lists all traders.",
@@ -91,6 +93,18 @@ var skillTools = []agent.Tool{
 			"symbol":     str("position symbol, e.g. BTCUSDT"),
 			"side":       enum("position side", "LONG", "SHORT"),
 		}, "symbol", "side")),
+	tool(skillFutures, "Read Futures, the one-time trade plans made by hand or with the planning assistant: runs that are live or finished, drafts waiting for approval, and what finished plans realized on an account. Read-only: plans are approved and run in the web UI.",
+		object(map[string]any{
+			"scope":       enum("runs for plans sent to the exchange, drafts for plans not yet approved, results for what finished plans realized", "runs", "drafts", "results"),
+			"account_ref": refSchema,
+			"symbol":      str("optional symbol filter, e.g. BTCUSDT"),
+		}, "scope")),
+	tool(skillForecast, "Read Forecast's signals, which are experimental and connected to no trading: scores for the watched coins, or one coin's latest in detail. Read-only.",
+		object(map[string]any{
+			"scope":    enum("signals for all watched coins, detail for one coin", "signals", "detail"),
+			"interval": str("optional timeframe of the signals, such as 1h or 4h"),
+			"symbol":   str("the coin for detail, e.g. BTCUSDT"),
+		}, "scope")),
 	tool(skillDiagnose, "Run a fixed troubleshooting path and return findings: why a trader cannot start, model config problems, exchange API connection problems, or why orders are not executing.",
 		object(map[string]any{
 			"topic":      enum("problem area", "trader_start", "model", "account", "order_execution"),
@@ -127,13 +141,18 @@ type accountInfo struct {
 	HasAPIKey bool   `json:"has_api_key"`
 	HasSecret bool   `json:"has_secret_key"`
 	HasPass   bool   `json:"has_passphrase"`
+	Testnet   bool   `json:"testnet"`
 }
 
 func (e accountInfo) label() string {
-	if e.Name != "" {
-		return e.Name
+	name := e.Name
+	if name == "" {
+		name = e.Venue
 	}
-	return e.Venue
+	if e.Testnet {
+		return name + " (testnet)"
+	}
+	return name
 }
 
 func (a *Agent) traders() ([]traderInfo, error) {
@@ -245,6 +264,10 @@ func (a *Agent) runSkill(name, arguments string) string {
 		result = a.closePosition(arguments)
 	case skillDiagnose:
 		result = a.diagnose(arguments)
+	case skillFutures:
+		result = a.futuresQuery(arguments)
+	case skillForecast:
+		result = a.forecastQuery(arguments)
 	default:
 		result = map[string]any{"error": "unknown_skill", "detail": "available skills: " + strings.Join(skillNames(), ", ")}
 	}
@@ -571,7 +594,7 @@ func (a *Agent) accountManagement(arguments string) map[string]any {
 	if bad := decodeArgs(arguments, &args); bad != nil {
 		return bad
 	}
-	if args.Action != "query" {
+	if args.Action != "query" && args.Action != "positions" {
 		return map[string]any{"error": "not_available_in_chat", "instruction": webOnly}
 	}
 	list, err := a.accounts()
@@ -589,6 +612,9 @@ func (a *Agent) accountManagement(arguments string) map[string]any {
 				break
 			}
 		}
+	}
+	if args.Action == "positions" {
+		return a.accountPositions(list)
 	}
 	states := a.accountStates()
 	rows := make([]map[string]any, 0, len(list))
@@ -660,6 +686,187 @@ func (a *Agent) accountQuery(arguments string) map[string]any {
 		return errResult(err)
 	}
 	return map[string]any{"trader": t.Name, "scope": args.Scope, "data": rawResult(raw)}
+}
+
+// accountPositions reads what each account holds. One that cannot be read says so, and
+// the others still answer.
+func (a *Agent) accountPositions(list []accountInfo) map[string]any {
+	rows := make([]map[string]any, 0, len(list))
+	for _, e := range list {
+		row := map[string]any{"account": e.label(), "venue": e.Venue, "testnet": e.Testnet}
+		raw, err := a.api.raw("GET", "/api/accounts/"+url.PathEscape(e.ID)+"/positions", nil)
+		if err != nil {
+			row["error"] = err.Error()
+		} else {
+			row["positions"] = rawResult(raw)
+		}
+		rows = append(rows, row)
+	}
+	return map[string]any{"accounts": rows}
+}
+
+// ── futures_query ───────────────────────────────────────────────────────────
+
+type futuresArgs struct {
+	Scope      string     `json:"scope"`
+	AccountRef *targetRef `json:"account_ref"`
+	Symbol     string     `json:"symbol"`
+}
+
+type futuresPlan struct {
+	ID         string `json:"id"`
+	Quantity   string `json:"quantity"`
+	RewardRisk string `json:"reward_risk"`
+	Expires    string `json:"expires"`
+	Idea       struct {
+		Name   string `json:"name"`
+		Side   string `json:"side"`
+		Entry  string `json:"entry"`
+		Stop   string `json:"stop"`
+		Target string `json:"target"`
+	} `json:"idea"`
+	Snapshot struct {
+		Symbol  string `json:"symbol"`
+		Venue   string `json:"venue"`
+		Testnet bool   `json:"testnet"`
+	} `json:"snapshot"`
+}
+
+type futuresState struct {
+	Records map[string]struct {
+		Plan  futuresPlan `json:"plan"`
+		State string      `json:"state"`
+	} `json:"records"`
+	Runs []struct {
+		ID        string      `json:"id"`
+		AccountID string      `json:"account_id"`
+		State     string      `json:"state"`
+		Error     string      `json:"error"`
+		Plan      futuresPlan `json:"plan"`
+		Orders    []struct {
+			Role   string `json:"role"`
+			Status string `json:"status"`
+			Filled string `json:"filled"`
+		} `json:"orders"`
+	} `json:"runs"`
+}
+
+// futuresShown bounds how many runs or drafts one answer lists.
+const futuresShown = 10
+
+func planSummary(plan futuresPlan) map[string]any {
+	return map[string]any{
+		"name": plan.Idea.Name, "symbol": plan.Snapshot.Symbol, "venue": plan.Snapshot.Venue, "testnet": plan.Snapshot.Testnet,
+		"side": plan.Idea.Side, "entry": plan.Idea.Entry, "stop": plan.Idea.Stop, "target": plan.Idea.Target,
+		"quantity": plan.Quantity, "reward_risk": plan.RewardRisk,
+	}
+}
+
+func (a *Agent) futuresQuery(arguments string) map[string]any {
+	var args futuresArgs
+	if bad := decodeArgs(arguments, &args); bad != nil {
+		return bad
+	}
+	if args.Scope == "results" {
+		return a.futuresResults(args.AccountRef)
+	}
+	if args.Scope != "runs" && args.Scope != "drafts" {
+		return map[string]any{"error": "unsupported_scope", "scope": args.Scope}
+	}
+	raw, err := a.api.raw("GET", "/api/futures/state", nil)
+	if err != nil {
+		return errResult(err)
+	}
+	var state futuresState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return errResult(err)
+	}
+	symbol := strings.ToUpper(args.Symbol)
+	rows := []map[string]any{}
+	if args.Scope == "runs" {
+		for _, run := range state.Runs {
+			if symbol != "" && run.Plan.Snapshot.Symbol != symbol {
+				continue
+			}
+			row := planSummary(run.Plan)
+			row["state"], row["orders"] = run.State, run.Orders
+			if run.Error != "" {
+				row["error"] = run.Error
+			}
+			rows = append(rows, row)
+		}
+	} else {
+		for _, record := range state.Records {
+			if record.State != "draft" || (symbol != "" && record.Plan.Snapshot.Symbol != symbol) {
+				continue
+			}
+			row := planSummary(record.Plan)
+			row["expires"] = record.Plan.Expires
+			rows = append(rows, row)
+		}
+		sort.Slice(rows, func(i, j int) bool { return fmt.Sprint(rows[i]["expires"]) > fmt.Sprint(rows[j]["expires"]) })
+	}
+	total := len(rows)
+	if total > futuresShown {
+		rows = rows[:futuresShown]
+	}
+	return map[string]any{"scope": args.Scope, "total": total, "shown": rows}
+}
+
+func (a *Agent) futuresResults(ref *targetRef) map[string]any {
+	list, err := a.accounts()
+	if err != nil {
+		return errResult(err)
+	}
+	e, rerr := resolve("account", accountNames(list), ref)
+	if rerr != nil {
+		// With a single account there is nothing to ask.
+		if len(list) != 1 || !ref.empty() {
+			return toMap(rerr)
+		}
+		e = accountNames(list)[0]
+	}
+	raw, err := a.api.raw("GET", "/api/futures/results?account_id="+url.QueryEscape(e.ID), nil)
+	if err != nil {
+		return errResult(err)
+	}
+	return map[string]any{"account": e.Name, "results": rawResult(raw)}
+}
+
+// ── forecast_query ──────────────────────────────────────────────────────────
+
+type forecastArgs struct {
+	Scope    string `json:"scope"`
+	Interval string `json:"interval"`
+	Symbol   string `json:"symbol"`
+}
+
+func (a *Agent) forecastQuery(arguments string) map[string]any {
+	var args forecastArgs
+	if bad := decodeArgs(arguments, &args); bad != nil {
+		return bad
+	}
+	q := url.Values{}
+	if args.Interval != "" {
+		q.Set("interval", args.Interval)
+	}
+	var path string
+	switch args.Scope {
+	case "signals":
+		path = "/api/forecast/signals"
+	case "detail":
+		if args.Symbol == "" {
+			return missing("symbol")
+		}
+		path = "/api/forecast/detail/" + url.PathEscape(strings.ToUpper(args.Symbol))
+	default:
+		return map[string]any{"error": "unsupported_scope", "scope": args.Scope}
+	}
+	raw, err := a.api.raw("GET", path+"?"+q.Encode(), nil)
+	if err != nil {
+		return errResult(err)
+	}
+	return map[string]any{"scope": args.Scope, "note": "Forecast is experimental and connected to no trading.", "data": rawResult(raw)}
 }
 
 // ── close_position ──────────────────────────────────────────────────────────

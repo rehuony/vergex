@@ -7,6 +7,11 @@ const mocks = vi.hoisted(() => ({
   models: { data: [] as unknown[], error: undefined as unknown },
   accounts: { data: [] as unknown[], error: undefined as unknown },
   update: vi.fn(),
+  notifyError: vi.fn(),
+}))
+vi.mock('@/components/common/notify', () => ({
+  confirmToast: vi.fn(),
+  notify: { error: mocks.notifyError },
 }))
 vi.mock('@/contexts/auth-context', () => ({
   useAuth: () => ({ user: mocks.user, token: 'fixture' }),
@@ -76,7 +81,7 @@ it('leads to the missing model instead of offering creation', () => {
 it('shows a read failure instead of inventing an empty configuration', () => {
   mocks.models = { data: undefined as never, error: new Error('fixture') }
   open()
-  expect(screen.getByRole('alert')).toHaveTextContent(
-    'Connections could not be loaded'
+  expect(mocks.notifyError).toHaveBeenCalledWith(
+    expect.stringContaining('Connections could not be loaded')
   )
 })

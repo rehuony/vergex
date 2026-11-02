@@ -35,7 +35,8 @@ export function SelectedPlanActions({
   if (!record) return null
   const state = [
     planStateLabel(run?.state || record.state, language),
-    label('liveTrading'),
+    // A testnet account's name already says so.
+    !record.plan.snapshot.testnet && label('liveTrading'),
     accountName,
   ]
     .filter(Boolean)

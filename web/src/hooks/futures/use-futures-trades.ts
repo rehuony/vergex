@@ -28,6 +28,8 @@ interface FuturesTradesOptions {
   setSelected: Dispatch<SetStateAction<string>>
   setCompare: Dispatch<SetStateAction<string[]>>
   onShowAccount: () => void
+  // A plan was compiled afresh for its review.
+  onPlanSized: (old: string, sized: string) => void
 }
 
 // useFuturesTrades owns the steps from a plan to live orders: sizing a plan
@@ -51,6 +53,7 @@ export function useFuturesTrades({
   setSelected,
   setCompare,
   onShowAccount,
+  onPlanSized,
 }: FuturesTradesOptions) {
   const [tradeCheckError, setTradeCheckError] = useState<{
     runID: string
@@ -126,6 +129,7 @@ export function useFuturesTrades({
       })
       await reload()
       // A refreshed account size is a new review, never a replacement in an older comparison set.
+      onPlanSized(plan.id, sized.id)
       setSelected(sized.id)
       setCompare([])
       setLimits(sized.constraints)

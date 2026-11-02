@@ -7,6 +7,7 @@ import {
   FuturesActivity,
   recordActivity,
 } from '@/components/futures/futures-activity'
+import { FuturesPlanDeck } from '@/components/futures/futures-plan-deck'
 import { PlanStructures } from '@/components/futures/plan-structures'
 
 vi.mock('@/contexts/language-context', () => ({
@@ -17,15 +18,10 @@ afterEach(cleanup)
 it('shows the unfunded planning explanation as activity, not an interruption', () => {
   const rows = recordActivity([], {
     type: 'planning_sizing',
-    data: {
-      planning_only: true,
-      message: 'No free margin. Continuing with equity previews.',
-    },
+    data: { planning_only: true },
   })
   render(<FuturesActivity items={rows} busy />)
-  expect(
-    screen.getByText('No free margin. Continuing with equity previews.')
-  ).toBeInTheDocument()
+  expect(screen.getByText(/No free margin is available/)).toBeInTheDocument()
   expect(rows[0].state).toBe('done')
   expect(screen.queryByText('Planning interrupted')).toBeNull()
 })
@@ -76,7 +72,6 @@ it('shows each TWAP release on a seconds axis before execution', () => {
   expect(screen.getByText('T+30s')).toBeInTheDocument()
   expect(screen.getAllByText(/0.001 BTC/)).toHaveLength(2)
   expect(screen.getByText(/starts only after approval/)).toBeInTheDocument()
-  expect(screen.getByText(/separate from candle time/)).toBeInTheDocument()
   expect(
     screen.queryByRole('button', { name: /execute/i })
   ).not.toBeInTheDocument()
@@ -107,7 +102,7 @@ it('shows four structure outcomes without inventing missing valid drafts', () =>
       onSelect={select}
     />
   )
-  expect(screen.getByText('Weighted ladder')).toBeInTheDocument()
+  expect(screen.getByText('Ladder')).toBeInTheDocument()
   expect(
     screen.getByText('Child order below venue minimum')
   ).toBeInTheDocument()
@@ -153,9 +148,54 @@ it('shows deferred entry types alongside valid pullback drafts without offering 
   expect(
     screen.getByText('Timed releases cannot confirm a retest.')
   ).toBeInTheDocument()
-  expect(screen.getAllByRole('button')).toHaveLength(2)
+  expect(
+    screen.getAllByRole('button', { name: /^View on chart/ })
+  ).toHaveLength(2)
   fireEvent.click(screen.getByRole('button', { name: /^View on chart: limit/ }))
   expect(select).toHaveBeenCalledWith(expect.objectContaining({ id: 'limit' }))
+  // The reason takes one line until it is opened.
+  const reason = screen.getByRole('button', { name: /Immediate entry/ })
+  expect(reason).toHaveAttribute('aria-expanded', 'false')
+  fireEvent.click(reason)
+  expect(reason).toHaveAttribute('aria-expanded', 'true')
+})
+
+it('offers a comparison only when there are plans to compare', () => {
+  const deck = (plans: Plan[]) => (
+    <FuturesPlanDeck
+      batch={{ id: 'turn', ids: [], created: new Date().toISOString() }}
+      plans={plans}
+      checks={[]}
+      futuresBusy={false}
+      waitingForEntry={false}
+      selected=""
+      clock={0}
+      connected
+      comparing={false}
+      onChoose={vi.fn()}
+      onCompare={vi.fn()}
+      onExitCompare={vi.fn()}
+    />
+  )
+  const { rerender } = render(deck([plan('limit')]))
+  expect(screen.queryByRole('button', { name: 'Compare plans' })).toBeNull()
+  rerender(deck([plan('limit'), plan('ladder')]))
+  expect(screen.getByRole('button', { name: 'Compare plans' })).toBeEnabled()
+})
+
+it('lists every plan of a kind, each on its own row', () => {
+  render(
+    <PlanStructures
+      checks={[]}
+      plans={[plan('limit'), { ...plan('limit'), id: 'limit-low' }]}
+      busy={false}
+      selected="limit-low"
+      onSelect={vi.fn()}
+    />
+  )
+  const rows = screen.getAllByRole('button', { name: /^View on chart/ })
+  expect(rows).toHaveLength(2)
+  expect(rows[1]).toHaveAttribute('aria-current', 'true')
 })
 
 it('reports a completed wait decision without claiming drafts were saved or awaiting approval', () => {
@@ -303,10 +343,10 @@ it('puts market first regardless of model order and labels the estimate', () => 
   const cards = screen.getAllByRole('article')
   expect(cards).toHaveLength(4)
   expect(cards[0]).toHaveTextContent('Market')
-  expect(cards[1]).toHaveTextContent('Single limit')
-  expect(cards[2]).toHaveTextContent('Weighted ladder')
+  expect(cards[1]).toHaveTextContent('Limit')
+  expect(cards[2]).toHaveTextContent('Ladder')
   expect(cards[3]).toHaveTextContent('TWAP')
-  expect(cards[0]).toHaveTextContent('≈83,000')
+  expect(cards[0]).toHaveTextContent('83,000')
   fireEvent.click(
     screen.getByRole('button', { name: /^View on chart: market/ })
   )
@@ -339,7 +379,8 @@ it('updates paginated history progress and discloses a newly listed market with 
   expect(rows[0]).toMatchObject({
     state: 'running',
     started: 1000,
-    detail: '1h · 300 / 1200 candles · Latest history',
+    detail:
+      '1h · 300 / 1200 candles · Latest history · independent of chart view',
   })
   rows = recordActivity(
     rows,
@@ -361,6 +402,6 @@ it('updates paginated history progress and discloses a newly listed market with 
     started: 1000,
     ended: 3000,
     detail:
-      '1h · 345 / 1200 candles · Limited exchange history · Latest history',
+      '1h · 345 / 1200 candles · Limited exchange history · Latest history · independent of chart view',
   })
 })

@@ -155,6 +155,7 @@ export const dashboard = {
     attention: {
       trader_blocked: '{name}: trading is blocked',
       trader_safe_mode: '{name} is in safe mode',
+      trader_halted: '{name} has halted',
       trader_load_failed: '{name} could not be loaded',
       plan_needs_attention: 'Futures plan on {name} needs reconciliation',
       account_invalid_credentials: '{name}: invalid credentials',

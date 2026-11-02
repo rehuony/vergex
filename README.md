@@ -58,7 +58,7 @@ make dev           # run both at once
 
 1. **Create the user.** The first registered user is the only user of the instance.
 2. **Add a model** in Settings → Agent models: DeepSeek, OpenAI, Claude, Qwen, Gemini, Grok, Kimi or MiniMax with your own API key, optionally with a custom base URL and model name.
-3. **Add an account** in Settings → Trading accounts: Binance or OKX USDT perpetuals ([API key guide](docs/accounts.md)). Bind the key to the server IP shown there.
+3. **Add an account** in Settings → Trading accounts: Binance or OKX USDT perpetuals ([API key guide](docs/accounts.md)). Bind the key to the server IP shown there. A [testnet account](docs/accounts.md#testnet) lets you try everything with test money.
 4. **Open Futures** to plan a trade, or create a trader on the Auto trading page and set it up in its Settings tab.
 
 Futures asks for approval on every order. A running trader places orders on its own; starting and stopping it are separate actions.

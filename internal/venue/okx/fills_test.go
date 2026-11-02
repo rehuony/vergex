@@ -24,7 +24,7 @@ func fillRow(bill, trade, inst, side, posSide, size, fee, pnl string) string {
 func fillsClient(t *testing.T, contracts func(instID string) (string, error), rows func(query map[string]string) (string, error)) (*Account, *[]map[string]string) {
 	t.Helper()
 	asked := &[]map[string]string{}
-	client := NewReadOnlyAccount("key", "secret", "pass")
+	client := NewReadOnlyAccount("key", "secret", "pass", false)
 	client.httpClient = &http.Client{Transport: executionTransport(func(r *http.Request) (*http.Response, error) {
 		var body string
 		var err error

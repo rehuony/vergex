@@ -50,6 +50,10 @@ type Trader struct {
 	ScanIntervalMinutes int             `gorm:"column:scan_interval_minutes;default:15" json:"scan_interval_minutes"`
 	IsRunning           bool            `gorm:"column:is_running" json:"is_running"`
 	MarginMode          string          `gorm:"column:margin_mode;default:cross" json:"margin_mode"`
+	HaltedAt            *time.Time      `gorm:"column:halted_at" json:"-"`
+	HaltedReason        string          `gorm:"column:halted_reason" json:"-"`
+	HaltedUntil         *time.Time      `gorm:"column:halted_until" json:"-"`
+	ResumedAt           *time.Time      `gorm:"column:resumed_at" json:"-"`
 	CreatedAt           time.Time       `gorm:"column:created_at;autoCreateTime" json:"created_at"`
 	UpdatedAt           time.Time       `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
 }
@@ -100,6 +104,22 @@ func (s *Store) UpdateStatus(userID, id string, isRunning bool) error {
 	return s.inUse().Model(&Trader{}).
 		Where("id = ? AND user_id = ?", id, userID).
 		Update("is_running", isRunning).Error
+}
+
+// SetHalt records a hard stop that has tripped.
+func (s *Store) SetHalt(id string, halt Halt) error {
+	return s.inUse().Model(&Trader{}).Where("id = ?", id).Updates(map[string]any{
+		"halted_at": halt.At, "halted_reason": halt.Reason, "halted_until": halt.Until,
+	}).Error
+}
+
+// ClearHalt ends a halt. resumedAt is when the user ended it, and nil when it ended by itself.
+func (s *Store) ClearHalt(id string, resumedAt *time.Time) error {
+	updates := map[string]any{"halted_at": nil, "halted_reason": "", "halted_until": nil}
+	if resumedAt != nil {
+		updates["resumed_at"] = *resumedAt
+	}
+	return s.inUse().Model(&Trader{}).Where("id = ?", id).Updates(updates).Error
 }
 
 // Update updates trader configuration

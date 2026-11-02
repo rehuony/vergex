@@ -1,15 +1,20 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"vergex/internal/account"
+	"vergex/internal/agent"
 	"vergex/internal/config"
+	"vergex/internal/futures"
 	"vergex/internal/logger"
+	"vergex/internal/market"
 	"vergex/internal/market/instrument"
 	"vergex/internal/security/crypto"
 
@@ -23,6 +28,7 @@ type SafeAccountConfig struct {
 	Venue         string `json:"venue"`      // "binance" or "okx"
 	Name          string `json:"name"`       // User-defined account name
 	VenueName     string `json:"venue_name"` // Display name of the venue
+	Testnet       bool   `json:"testnet"`    // On the venue's test environment
 	HasAPIKey     bool   `json:"has_api_key"`
 	HasSecretKey  bool   `json:"has_secret_key"`
 	HasPassphrase bool   `json:"has_passphrase"`
@@ -34,6 +40,7 @@ func safeAccountConfigFromStore(account *account.Account) SafeAccountConfig {
 		Venue:         account.Venue,
 		Name:          account.Name,
 		VenueName:     account.VenueName(),
+		Testnet:       account.Testnet,
 		HasAPIKey:     account.APIKey != "",
 		HasSecretKey:  account.SecretKey != "",
 		HasPassphrase: account.Passphrase != "",
@@ -61,6 +68,7 @@ type CreateAccountRequest struct {
 	APIKey     string `json:"api_key"`
 	SecretKey  string `json:"secret_key"`
 	Passphrase string `json:"passphrase"`
+	Testnet    bool   `json:"testnet"` // Fixed when created
 }
 
 // handleGetAccountConfigs Get exchange configurations
@@ -295,7 +303,7 @@ func (s *Server) handleCreateAccount(c *gin.Context) {
 	// Exchange configs only persist once complete.
 	id, err := s.stores.Accounts.Create(
 		userID, req.Venue, req.Name,
-		req.APIKey, req.SecretKey, req.Passphrase,
+		req.APIKey, req.SecretKey, req.Passphrase, req.Testnet,
 	)
 	if errors.Is(err, account.ErrDuplicate) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": account.ErrDuplicate.Error()})
@@ -345,7 +353,7 @@ func (s *Server) handleDeleteAccount(c *gin.Context) {
 	}
 
 	// Delete exchange account
-	err = s.stores.Accounts.Delete(userID, accountID)
+	err = s.deleteAccountAndHistory(userID, accountID)
 	if errors.Is(err, gorm.ErrForeignKeyViolated) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete an account with trading history or an unfinished Futures trade"})
 		return
@@ -360,6 +368,54 @@ func (s *Server) handleDeleteAccount(c *gin.Context) {
 
 	logger.Infof("✓ Deleted exchange account: id=%s", accountID)
 	c.JSON(http.StatusOK, gin.H{"message": "Account deleted"})
+}
+
+// deleteAccountAndHistory removes an account with the Futures conversations and plans on
+// it, or leaves all of them. A plan loses its account when that goes, so which they are is
+// read first. Its runs go with the account, so what is left of a plan normally never ran.
+func (s *Server) deleteAccountAndHistory(userID, accountID string) error {
+	return s.stores.DB.Transaction(func(tx *gorm.DB) error {
+		plans := futures.NewPlanStore(tx, userID, accountID, "")
+		ids, err := plans.OnAccount()
+		if err != nil {
+			return err
+		}
+		if err := account.NewStore(tx).Delete(userID, accountID); err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if err := plans.Delete(id); err != nil && !errors.Is(err, futures.ErrPlanRan) {
+				return err
+			}
+		}
+		return agent.NewConversationStore(tx).DeleteByContext(userID, agent.FeatureFutures, futuresConversationAccount, accountID)
+	})
+}
+
+// handleRenameAccount changes the name an account goes by. It is not a change of keys, so
+// no trader reloads and the account is not checked again.
+func (s *Server) handleRenameAccount(c *gin.Context) {
+	var in struct {
+		Name string `json:"name"`
+	}
+	name := ""
+	if err := c.ShouldBindJSON(&in); err == nil {
+		name = strings.TrimSpace(in.Name)
+	}
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "An account needs a name"})
+		return
+	}
+	err := s.stores.Accounts.Rename(c.GetString("user_id"), c.Param("id"), name)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Account not found"})
+		return
+	}
+	if err != nil {
+		SafeInternalError(c, "Failed to rename account", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"name": name})
 }
 
 // handleGetAccount returns one of the caller's accounts with its state.
@@ -405,6 +461,52 @@ func (s *Server) handleAccountOrders(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, orders)
+}
+
+// maxMarkSymbols bounds one read of mark prices, more than an account holds in practice.
+const maxMarkSymbols = 40
+
+// handleAccountMarks gives the live mark prices of an account's coins. Most come from the
+// streams, costing no request to the exchange. A testnet account's prices are not on them,
+// so it reads its environment's public price.
+func (s *Server) handleAccountMarks(c *gin.Context) {
+	row, err := s.stores.Accounts.GetByID(c.GetString("user_id"), c.Param("id"))
+	if err != nil {
+		SafeNotFound(c, "Account")
+		return
+	}
+	marks := map[string]float64{}
+	for i, symbol := range strings.Split(c.Query("symbols"), ",") {
+		if i == maxMarkSymbols {
+			break
+		}
+		if !instrument.ValidSymbol(symbol) {
+			continue
+		}
+		if mark, ok := s.accountMark(c.Request.Context(), row, symbol); ok {
+			marks[symbol] = mark
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"marks": marks})
+}
+
+func (s *Server) accountMark(ctx context.Context, row *account.Account, symbol string) (float64, bool) {
+	if !row.Testnet {
+		market.WatchMark(row.Venue, symbol)
+		return market.MarkPrice(row.Venue, symbol)
+	}
+	services, err := s.futuresService()
+	if err != nil {
+		return 0, false
+	}
+	read, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	raw, err := services.testnet.Public.MarkPrice(read, row.Venue, symbol)
+	if err != nil {
+		return 0, false
+	}
+	mark, err := strconv.ParseFloat(raw, 64)
+	return mark, err == nil && mark > 0
 }
 
 // handleAccountFills lists the fills in an account's ledger, newest first.

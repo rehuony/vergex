@@ -5,7 +5,7 @@ import type { ForecastCoin, ForecastInterval } from '@/api/forecast'
 import { SearchField } from '@/components/common/search-field'
 import { Segmented } from '@/components/common/segmented'
 import { SortHeader, type ColumnSort } from '@/components/common/sort-header'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { buildForecastPath } from '@/constants/route-paths'
@@ -260,9 +260,7 @@ export function CoinList({
           {label('loadFailed')}
         </PanelState>
       ) : loading && coins.length === 0 ? (
-        <PanelState role="status" className="flex-1">
-          {label('loading')}
-        </PanelState>
+        <PanelLoading className="flex-1" />
       ) : shown.length === 0 ? (
         <PanelState role="status" className="flex-1">
           {emptyMessage()}
@@ -388,9 +386,7 @@ export function CoinList({
                             : 'text-vergex-danger'
                       )}
                     >
-                      {change === null || change === undefined
-                        ? '—'
-                        : fmtPct(change, true, 1)}
+                      {fmtPct(change ?? 0, true, 1)}
                     </td>
                     <td
                       className={cn(
@@ -406,7 +402,7 @@ export function CoinList({
                           {scoreText(signal.display_prob, signal.calibrated)}
                         </span>
                       ) : (
-                        '—'
+                        0
                       )}
                     </td>
                   </tr>

@@ -271,12 +271,7 @@ func parseFullDecisionResponse(agentResponse string, accountEquity float64, btcE
 		}, fmt.Errorf("failed to extract decisions: %w", err)
 	}
 
-	if err := validateDecisions(decisions, accountEquity, btcEthLeverage, altcoinLeverage, btcEthPosRatio, altcoinPosRatio); err != nil {
-		return &FullDecision{
-			CoTTrace:  cotTrace,
-			Decisions: decisions,
-		}, fmt.Errorf("decision validation failed: %w", err)
-	}
+	validateDecisions(decisions, accountEquity, btcEthLeverage, altcoinLeverage, btcEthPosRatio, altcoinPosRatio)
 
 	return &FullDecision{
 		CoTTrace:  cotTrace,

@@ -70,6 +70,9 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *traderagent.Decision, 
 	if err := validateProtectionPrices(decision.Action, marketData.CurrentPrice, decision.StopLoss, decision.TakeProfit); err != nil {
 		return err
 	}
+	if err := at.enforceEntryRules(decision, marketData.CurrentPrice); err != nil {
+		return err
+	}
 
 	// Get balance (needed for multiple checks)
 	balance, err := at.trader.GetBalance()
@@ -95,6 +98,11 @@ func (at *AutoTrader) executeOpenLongWithRecord(decision *traderagent.Decision, 
 	adjustedPositionSize, wasCapped := at.enforcePositionValueRatio(decision.PositionSizeUSD, equity, decision.Symbol)
 	if wasCapped {
 		decision.PositionSizeUSD = adjustedPositionSize
+	}
+
+	// [CODE ENFORCED] Margin Usage Check: margin in use after this position <= equity × limit
+	if adjusted, capped := at.enforceMarginUsage(decision.PositionSizeUSD, decision.Leverage, equity, positions); capped {
+		decision.PositionSizeUSD = adjusted
 	}
 
 	// ⚠️ Auto-adjust position size if insufficient margin
@@ -181,6 +189,9 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *traderagent.Decision,
 	if err := validateProtectionPrices(decision.Action, marketData.CurrentPrice, decision.StopLoss, decision.TakeProfit); err != nil {
 		return err
 	}
+	if err := at.enforceEntryRules(decision, marketData.CurrentPrice); err != nil {
+		return err
+	}
 
 	// Get balance (needed for multiple checks)
 	balance, err := at.trader.GetBalance()
@@ -206,6 +217,11 @@ func (at *AutoTrader) executeOpenShortWithRecord(decision *traderagent.Decision,
 	adjustedPositionSize, wasCapped := at.enforcePositionValueRatio(decision.PositionSizeUSD, equity, decision.Symbol)
 	if wasCapped {
 		decision.PositionSizeUSD = adjustedPositionSize
+	}
+
+	// [CODE ENFORCED] Margin Usage Check: margin in use after this position <= equity × limit
+	if adjusted, capped := at.enforceMarginUsage(decision.PositionSizeUSD, decision.Leverage, equity, positions); capped {
+		decision.PositionSizeUSD = adjusted
 	}
 
 	// ⚠️ Auto-adjust position size if insufficient margin

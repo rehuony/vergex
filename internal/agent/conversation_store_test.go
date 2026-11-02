@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sync"
 	"testing"
+	"time"
 
 	"vergex/internal/database/testdb"
 	"vergex/internal/user"
@@ -121,5 +122,54 @@ func TestConversationDropsWhatPostgreSQLRefuses(t *testing.T) {
 	messages, err := s.Messages(id)
 	if err != nil || messages[0].Content != "ab\uFFFD" || messages[0].Thinking != "c" {
 		t.Fatalf("messages = %+v, err %v", messages, err)
+	}
+}
+
+func TestOldMessagesCanBeReportedAndDeleted(t *testing.T) {
+	db := testdb.Open(t)
+	user := testdb.AddUser(t, db)
+	store := NewConversationStore(db)
+	id := uuid.NewString()
+	conversation := Conversation{ID: id, UserID: user, Feature: FeatureFutures, Title: "old and new"}
+	if err := store.Open(&conversation); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"old one", "old two", "old three", "new"} {
+		if err := store.Append(id, ConversationMessage{Role: RoleUser, Content: text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	old := now.Add(-100 * 24 * time.Hour)
+	if err := db.Exec("UPDATE agent.messages SET created_at = ? WHERE content LIKE 'old%'", old).Error; err != nil {
+		t.Fatal(err)
+	}
+	cutoff := now.Add(-90 * 24 * time.Hour)
+
+	count, size, err := store.MessagesBefore(cutoff)
+	if err != nil || count != 3 || size != int64(len("old oneold twoold three")) {
+		t.Fatalf("report = %d messages, %d bytes, err %v", count, size, err)
+	}
+	if left, _ := store.Messages(id); len(left) != 4 {
+		t.Fatalf("reporting deleted something: %d left", len(left))
+	}
+
+	// What was reported is what goes, whatever the batch size, and nothing newer does.
+	deleted, err := store.DeleteMessagesBefore(cutoff, 2)
+	if err != nil || deleted != count {
+		t.Fatalf("deleted = %d of %d, err %v", deleted, count, err)
+	}
+	left, err := store.Messages(id)
+	if err != nil || len(left) != 1 || left[0].Content != "new" {
+		t.Fatalf("left = %+v, err %v", left, err)
+	}
+	if _, err := store.Get(user, id); err != nil {
+		t.Fatalf("the conversation went with them: %v", err)
+	}
+	if err := store.Append(id, ConversationMessage{Role: RoleUser, Content: "after"}); err != nil {
+		t.Fatalf("carrying on after a prune: %v", err)
+	}
+	if size, err := store.MessageStorage(); err != nil || size <= 0 {
+		t.Fatalf("storage = %d, err %v", size, err)
 	}
 }

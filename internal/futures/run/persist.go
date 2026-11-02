@@ -35,6 +35,7 @@ type runOrder struct {
 	ReduceOnly      bool            `gorm:"column:reduce_only"`
 	PostOnly        bool            `gorm:"column:post_only"`
 	Error           string          `gorm:"column:error"`
+	Replaces        string          `gorm:"column:replaces"`
 	UpdatedAt       time.Time       `gorm:"column:updated_at;autoUpdateTime:false"`
 }
 
@@ -45,7 +46,7 @@ func toRunOrder(runID string, seq int, o Order) runOrder {
 		RunID: runID, Seq: seq, Role: o.Role, Symbol: o.Symbol, Side: o.Side, Type: o.Type, ClientID: o.ClientID,
 		VenueClientID: o.VenueClientID, ParentClientID: o.ParentID, ExchangeOrderID: o.OrderID, Price: o.Price,
 		Quantity: o.Quantity, Status: o.Status, Filled: o.Filled, Average: o.Average, ReduceOnly: o.ReduceOnly,
-		PostOnly: o.PostOnly, Error: o.Error,
+		PostOnly: o.PostOnly, Error: o.Error, Replaces: o.Replaces,
 	}
 }
 
@@ -53,7 +54,7 @@ func (r runOrder) order() Order {
 	return Order{
 		Type: r.Type, ReduceOnly: r.ReduceOnly, PostOnly: r.PostOnly, VenueClientID: r.VenueClientID, ParentID: r.ParentClientID,
 		ClientID: r.ClientID, OrderID: r.ExchangeOrderID, Role: r.Role, Symbol: r.Symbol, Side: r.Side, Price: r.Price,
-		Quantity: r.Quantity, Status: r.Status, Filled: r.Filled, Average: r.Average, Error: r.Error,
+		Quantity: r.Quantity, Status: r.Status, Filled: r.Filled, Average: r.Average, Error: r.Error, Replaces: r.Replaces,
 	}
 }
 

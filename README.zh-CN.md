@@ -58,7 +58,7 @@ make dev           # 同时启动前后端
 
 1. **创建账号。** 第一个注册的用户就是本实例唯一的用户。
 2. **在“设置 → Agent 模型”中添加模型**：DeepSeek、OpenAI、Claude、Qwen、Gemini、Grok、Kimi 或 MiniMax，使用你自己的 API Key，可选自定义 base URL 和模型名。
-3. **在“设置 → 交易账户”中添加账户**：Binance 或 OKX USDT 永续（[API Key 指南](docs/accounts.md)）。把 Key 绑定到该页面显示的服务器 IP。
+3. **在“设置 → 交易账户”中添加账户**：Binance 或 OKX USDT 永续（[API Key 指南](docs/accounts.md)）。把 Key 绑定到该页面显示的服务器 IP。[测试网账户](docs/accounts.md#testnet)可以用测试资金把所有功能试一遍。
 4. **打开合约交易** 规划交易，或在自动交易页面创建交易员，并在它的“配置”标签里调整。
 
 合约交易的每一笔订单都需要批准。运行中的 trader 会自行下单；启动和停止是单独的操作。

@@ -45,7 +45,8 @@ func (c *Controller) FinishManualClose(ctx context.Context, user, id string) (Vi
 			}
 		}
 		for _, order := range v.Orders {
-			if order.Role != "sl" && order.Role != "tp" {
+			// A replacement that was refused never existed to look up.
+			if (order.Role != "sl" && order.Role != "tp") || (order.Replaces != "" && order.Status == "REJECTED") {
 				continue
 			}
 			observed, err := broker.Lookup(ctx, order)
@@ -90,14 +91,21 @@ func (c *Controller) CheckStatus(ctx context.Context, user, id string) (View, er
 		return v, nil
 	}
 	broker, key, err := c.Factory(ctx, user, v.AccountID)
-	if err != nil || key != v.AccountKey || broker.Venue() != v.Plan.Snapshot.Venue {
+	if err != nil || key != v.AccountKey || !brokerFits(broker, v.Plan.Snapshot) {
 		return v, errors.New("Could not verify the original trading account. Check its connection in Config.")
 	}
 	for i, order := range v.Orders {
 		if order.Status == "scheduled" || (order.Role == "entry" && order.Status == "CANCELED" && order.OrderID == "" && cmp(order.Filled, "0") == 0) {
 			continue // Persisted intent has never been sent to the exchange.
 		}
+		if order.Replaces != "" && order.Status == "REJECTED" {
+			continue
+		}
 		observed, lookupErr := broker.Lookup(ctx, order)
+		if neverTaken(order, lookupErr) {
+			v.Orders[i].Status, v.Orders[i].Error = "REJECTED", neverTakenReason
+			continue
+		}
 		if lookupErr != nil || (order.OrderID != "" && order.OrderID != observed.OrderID) || !validReceipt(order, observed) || cmp(observed.Filled, order.Filled) < 0 {
 			v.State = "needs_attention"
 			v.Error = fmt.Sprintf("Could not confirm %s order %s. Check Positions & orders; new plans can still be generated, but another entry cannot be submitted yet.", orderRoleName(order.Role), order.OrderID)
@@ -191,7 +199,7 @@ func confirmedClosedTrade(orders []Order, account Snapshot) bool {
 			continue
 		}
 		stop, target := plan.Decimal("0"), plan.Decimal("0")
-		for _, exit := range orders {
+		for _, exit := range currentOrders(orders) {
 			if exit.ParentID != entry.ClientID || (exit.Status != "CANCELED" && exit.Status != "FILLED" && exit.Status != "EXPIRED") {
 				continue
 			}
@@ -250,11 +258,12 @@ func confirmedProtectedPosition(orders []Order, account Snapshot) bool {
 		}
 		closed, stop, target := plan.Decimal("0"), plan.Decimal("0"), plan.Decimal("0")
 		for _, exit := range orders {
-			if exit.ParentID != entry.ClientID {
-				continue
+			if exit.ParentID == entry.ClientID {
+				closed = add(closed, exit.Filled)
 			}
-			closed = add(closed, exit.Filled)
-			if exit.Status != "NEW" {
+		}
+		for _, exit := range currentOrders(orders) {
+			if exit.ParentID != entry.ClientID || exit.Status != "NEW" {
 				continue
 			}
 			if exit.Role == "sl" {

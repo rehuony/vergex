@@ -63,6 +63,41 @@ export const agentApi = {
     return result.data
   },
 
+  // What a saved model's provider offers, with its saved key.
+  async getAvailableModels(id: string): Promise<string[]> {
+    const result = await httpClient.request<{ models: string[] }>(
+      `${API_BASE}/agent/models/${encodeURIComponent(id)}/available`,
+      { silent: true }
+    )
+    if (!result.success) throw new Error('Failed to list models')
+    return result.data?.models ?? []
+  },
+
+  // What a provider offers with the form's values; a blank key uses the saved one.
+  async listAvailableModels(
+    request: Omit<TestModelConfigRequest, 'custom_model_name'>
+  ): Promise<string[]> {
+    const result = await httpClient.request<{ models: string[] }>(
+      `${API_BASE}/agent/models/available`,
+      {
+        method: 'POST',
+        data: await sealCredentials(request),
+        silent: true,
+      }
+    )
+    if (!result.success) throw new Error('Failed to list models')
+    return result.data?.models ?? []
+  },
+
+  async getAgentStorage(silent?: boolean): Promise<{ bytes: number }> {
+    const result = await httpClient.request<{ bytes: number }>(
+      `${API_BASE}/agent/storage`,
+      { silent }
+    )
+    if (!result.success) throw new Error('Failed to read agent storage')
+    return result.data!
+  },
+
   async getAgentCostSummary(
     period: AgentCostPeriod = 'today',
     silent?: boolean,

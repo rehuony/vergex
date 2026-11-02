@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"vergex/internal/database/testdb"
 	"vergex/internal/telegram"
@@ -58,6 +59,19 @@ func TestWipeAllDataEmptiesTables(t *testing.T) {
 		}
 		if n != 0 {
 			t.Errorf("%s still has %d rows", table, n)
+		}
+	}
+}
+
+func TestParseAgeTakesDaysAndRefusesWhatCouldEmptyTheTable(t *testing.T) {
+	for text, want := range map[string]time.Duration{"90d": 90 * 24 * time.Hour, "48h": 48 * time.Hour, "1d": 24 * time.Hour} {
+		if got, err := parseAge(text); err != nil || got != want {
+			t.Errorf("%s = %v, err %v", text, got, err)
+		}
+	}
+	for _, text := range []string{"", "90", "0d", "-5d", "90m", "soon"} {
+		if got, err := parseAge(text); err == nil {
+			t.Errorf("%q was accepted as %v", text, got)
 		}
 	}
 }

@@ -53,6 +53,7 @@ type Service struct {
 
 	mu       sync.Mutex
 	accounts map[string]*target
+	failing  map[string]Failure
 }
 
 // Features is what only the features using accounts know. The ledger names them by
@@ -76,11 +77,17 @@ type target struct {
 	readFrom time.Time
 }
 
+// Failure says how long an account has been failing to read, and why.
+type Failure struct {
+	Since  time.Time
+	Reason string
+}
+
 // New creates a Service that reads the exchanges themselves.
 func New(db *gorm.DB, features Features) *Service {
 	return &Service{
 		db: db, store: account.NewStore(db), ledger: account.NewLedger(db), features: features,
-		open: openExchange, now: time.Now, accounts: make(map[string]*target),
+		open: openExchange, now: time.Now, accounts: make(map[string]*target), failing: make(map[string]Failure),
 	}
 }
 
@@ -89,9 +96,9 @@ func New(db *gorm.DB, features Features) *Service {
 func openExchange(ctx context.Context, ex *account.Account) (Source, error) {
 	switch ex.Venue {
 	case "binance":
-		return binance.NewReadOnlyAccount(ctx, string(ex.APIKey), string(ex.SecretKey))
+		return binance.NewReadOnlyAccount(ctx, string(ex.APIKey), string(ex.SecretKey), ex.Testnet)
 	case "okx":
-		return okx.NewReadOnlyAccount(string(ex.APIKey), string(ex.SecretKey), string(ex.Passphrase)), nil
+		return okx.NewReadOnlyAccount(string(ex.APIKey), string(ex.SecretKey), string(ex.Passphrase), ex.Testnet), nil
 	default:
 		return nil, fmt.Errorf("order sync is not available for exchange type %s", ex.Venue)
 	}
@@ -185,14 +192,42 @@ func (s *Service) state(id string) *target {
 	return state
 }
 
+// noteResult remembers whether an account's read worked, for Failing.
+func (s *Service) noteResult(accountID string, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err == nil {
+		delete(s.failing, accountID)
+		return
+	}
+	failure, ok := s.failing[accountID]
+	if !ok {
+		failure.Since = s.now()
+	}
+	failure.Reason = err.Error()
+	s.failing[accountID] = failure
+}
+
+// Failing lists the accounts whose last read failed. It does not wait for a read under way.
+func (s *Service) Failing() map[string]Failure {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	failing := make(map[string]Failure, len(s.failing))
+	for id, failure := range s.failing {
+		failing[id] = failure
+	}
+	return failing
+}
+
 // Sync reads an account's new trades into the ledger now. Each account syncs one at a
 // time, so a caller that needs the result waits for one already under way.
-func (s *Service) Sync(accountID string) error {
+func (s *Service) Sync(accountID string) (err error) {
 	s.mu.Lock()
 	state := s.state(accountID)
 	s.mu.Unlock()
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	defer func() { s.noteResult(accountID, err) }()
 
 	ex, err := s.store.Get(accountID)
 	if err != nil {

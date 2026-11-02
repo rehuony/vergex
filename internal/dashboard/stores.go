@@ -11,6 +11,7 @@ import (
 
 // Stores is what the feed reads.
 type Stores struct {
+	DB        *gorm.DB
 	Users     *user.Store
 	Traders   *trader.Store
 	Decisions *trader.DecisionStore
@@ -24,6 +25,7 @@ type Stores struct {
 // NewStores opens them on a migrated connection.
 func NewStores(db *gorm.DB) *Stores {
 	return &Stores{
+		DB:        db,
 		Users:     user.NewStore(db),
 		Traders:   trader.NewStore(db),
 		Decisions: trader.NewDecisionStore(db),

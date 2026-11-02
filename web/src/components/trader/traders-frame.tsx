@@ -37,15 +37,18 @@ function StopAll({ language }: { language: Language }) {
     if (!ok) return
     setStopping(true)
     let failed = 0
+    let ordersLeft = false
     for (const trader of running) {
       try {
-        await api.stopTrader(trader.trader_id)
+        ordersLeft =
+          (await api.stopTrader(trader.trader_id)).ordersLeft || ordersLeft
       } catch {
         failed++
       }
     }
     await refetch()
     setStopping(false)
+    if (ordersLeft) toast.error(t('agentTradersToast.ordersLeft', language))
     if (failed === 0) toast.success(label('stopAllDone'))
     else toast.error(label('stopAllFailed', { failed, total: running.length }))
   }

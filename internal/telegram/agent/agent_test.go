@@ -354,6 +354,104 @@ func TestAccountQueryRoutesToTraderData(t *testing.T) {
 	}
 }
 
+func TestAccountPositionsReadEachAccountAndSayWhichFailed(t *testing.T) {
+	gets := map[string]string{
+		"/api/accounts":               `[{"id":"ex1","venue":"binance","name":"Main"},{"id":"ex2","venue":"okx","name":"Side","testnet":true}]`,
+		"/api/accounts/ex1/positions": `[{"symbol":"BTCUSDT","side":"long"}]`,
+	}
+	api, port, stop := newFakeAPI(gets)
+	defer stop()
+	a := newAgent(port, &mockClient{})
+
+	var all struct {
+		Accounts []map[string]any `json:"accounts"`
+	}
+	json.Unmarshal([]byte(a.runSkill(skillAccounts, `{"action":"positions"}`)), &all)
+	if len(all.Accounts) != 2 || all.Accounts[0]["positions"] == nil || all.Accounts[1]["error"] == nil || all.Accounts[1]["testnet"] != true {
+		t.Fatalf("positions = %+v", all.Accounts)
+	}
+	if !api.called("GET /api/accounts/ex1/positions") {
+		t.Fatal("the account was not read")
+	}
+
+	var one struct {
+		Accounts []map[string]any `json:"accounts"`
+	}
+	json.Unmarshal([]byte(a.runSkill(skillAccounts, `{"action":"positions","target_ref":{"name":"Main"}}`)), &one)
+	if len(one.Accounts) != 1 || one.Accounts[0]["account"] != "Main" {
+		t.Fatalf("one account = %+v", one.Accounts)
+	}
+	// Still nothing but reading.
+	if out := a.runSkill(skillAccounts, `{"action":"update"}`); !strings.Contains(out, "not_available_in_chat") {
+		t.Fatalf("update = %s", out)
+	}
+}
+
+func TestFuturesQuerySummarizesAndNeverWrites(t *testing.T) {
+	plan := func(name, symbol string) string {
+		return `{"id":"p","quantity":"0.1","reward_risk":"2","expires":"2026-11-02T10:00:00Z","idea":{"name":"` + name + `","side":"long","entry":"100","stop":"90","target":"120"},"snapshot":{"symbol":"` + symbol + `","venue":"binance","testnet":true},"body":"` + strings.Repeat("x", 500) + `"}`
+	}
+	gets := map[string]string{
+		"/api/accounts":        `[{"id":"ex1","venue":"binance","name":"Main"}]`,
+		"/api/futures/state":   `{"records":{"a":{"state":"draft","plan":` + plan("Draft BTC", "BTCUSDT") + `},"b":{"state":"completed","plan":` + plan("Done", "BTCUSDT") + `},"c":{"state":"draft","plan":` + plan("Draft ETH", "ETHUSDT") + `}},"runs":[{"id":"r1","account_id":"ex1","state":"needs_attention","error":"check it","plan":` + plan("Live BTC", "BTCUSDT") + `,"orders":[{"role":"entry","status":"FILLED","filled":"0.1"}]}]}`,
+		"/api/futures/results": `{"r1":{"realized_pnl":12.5,"closes":1}}`,
+	}
+	api, port, stop := newFakeAPI(gets)
+	defer stop()
+	a := newAgent(port, &mockClient{})
+
+	var runs struct {
+		Total int              `json:"total"`
+		Shown []map[string]any `json:"shown"`
+	}
+	json.Unmarshal([]byte(a.runSkill(skillFutures, `{"scope":"runs"}`)), &runs)
+	if runs.Total != 1 || runs.Shown[0]["name"] != "Live BTC" || runs.Shown[0]["state"] != "needs_attention" || runs.Shown[0]["error"] != "check it" || runs.Shown[0]["testnet"] != true {
+		t.Fatalf("runs = %+v", runs)
+	}
+	var drafts struct {
+		Total int              `json:"total"`
+		Shown []map[string]any `json:"shown"`
+	}
+	json.Unmarshal([]byte(a.runSkill(skillFutures, `{"scope":"drafts","symbol":"ethusdt"}`)), &drafts)
+	if drafts.Total != 1 || drafts.Shown[0]["name"] != "Draft ETH" {
+		t.Fatalf("drafts = %+v", drafts)
+	}
+	if out := a.runSkill(skillFutures, `{"scope":"drafts"}`); strings.Contains(out, "xxxx") {
+		t.Fatalf("the plan's body came along: %s", out)
+	}
+	// With one account, results need no name.
+	if out := a.runSkill(skillFutures, `{"scope":"results"}`); !strings.Contains(out, "12.5") {
+		t.Fatalf("results = %s", out)
+	}
+	if out := a.runSkill(skillFutures, `{"scope":"execute"}`); !strings.Contains(out, "unsupported_scope") {
+		t.Fatalf("execute = %s", out)
+	}
+	for key := range api.bodies {
+		if !strings.HasPrefix(key, "GET ") {
+			t.Fatalf("a query wrote: %s", key)
+		}
+	}
+}
+
+func TestForecastQueryReadsSignalsAndAsksForTheCoin(t *testing.T) {
+	gets := map[string]string{
+		"/api/forecast/signals":        `{"coins":[{"symbol":"BTCUSDT","score":61}]}`,
+		"/api/forecast/detail/BTCUSDT": `{"symbol":"BTCUSDT"}`,
+	}
+	_, port, stop := newFakeAPI(gets)
+	defer stop()
+	a := newAgent(port, &mockClient{})
+	if out := a.runSkill(skillForecast, `{"scope":"signals","interval":"4h"}`); !strings.Contains(out, "61") || !strings.Contains(out, "experimental") {
+		t.Fatalf("signals = %s", out)
+	}
+	if out := a.runSkill(skillForecast, `{"scope":"detail","symbol":"btcusdt"}`); !strings.Contains(out, "BTCUSDT") {
+		t.Fatalf("detail = %s", out)
+	}
+	if out := a.runSkill(skillForecast, `{"scope":"detail"}`); !strings.Contains(out, "symbol") || !strings.Contains(out, "missing") {
+		t.Fatalf("detail without a coin = %s", out)
+	}
+}
+
 func TestUnknownSkillAndMaxIterations(t *testing.T) {
 	_, port, stop := newFakeAPI(account)
 	defer stop()

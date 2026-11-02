@@ -20,6 +20,7 @@ interface Calculator {
 // What sets a plan's size and costs, in the order they are read. With an account connected
 // it sets the budget itself, so the first three only apply without one.
 const BUDGET = ['equity', 'max_risk', 'max_notional'] as const
+const ACCOUNT_BUDGET = ['max_risk_pct'] as const
 const ASSUMPTIONS = ['min_reward_risk', 'fee_bps', 'slippage_bps'] as const
 
 // FuturesSettings is what planning works from: the limits, kept on this browser as they
@@ -67,7 +68,9 @@ export function FuturesSettings({
       toast.error(err instanceof Error ? err.message : String(err))
     }
   }
-  const fields = accountSized ? ASSUMPTIONS : [...BUDGET, ...ASSUMPTIONS]
+  const fields = accountSized
+    ? [...ACCOUNT_BUDGET, ...ASSUMPTIONS]
+    : [...BUDGET, ...ASSUMPTIONS]
   return (
     <div className="grid min-w-0 gap-4 lg:h-[max(520px,calc(100dvh-181px))] lg:grid-cols-[minmax(0,1fr)_320px]">
       <Panel
@@ -90,7 +93,9 @@ export function FuturesSettings({
                     ? 'bps'
                     : key === 'min_reward_risk'
                       ? label('noMinimum')
-                      : undefined
+                      : key === 'max_risk_pct'
+                        ? label('ofEquity')
+                        : undefined
                 }
                 onChange={(next) =>
                   onLimitsChange({ ...limits, [key]: String(next) })

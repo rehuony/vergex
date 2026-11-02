@@ -57,3 +57,37 @@ func TestClientAdapterHidesProviderErrorDetails(t *testing.T) {
 		t.Fatal("provider error detail leaked or call retried", got, f.calls)
 	}
 }
+
+// refusingClient turns down any reply longer than it can give, as an older model does.
+type refusingClient struct {
+	agent.Client
+	asked []int
+}
+
+func (c *refusingClient) CallWithRequestFull(r *agent.Request) (*agent.Response, error) {
+	c.asked = append(c.asked, *r.MaxTokens)
+	if *r.MaxTokens > smallerReplyLimit {
+		return nil, errors.New(`API returned error (status 400): {"error":{"message":"Range of max_tokens should be [1, 8192]"}}`)
+	}
+	return &agent.Response{Content: "answer"}, nil
+}
+
+func TestClientAdapterAsksLessOfAModelThatRefusesTheLongerReply(t *testing.T) {
+	c := &refusingClient{}
+	out, e := (&ClientAdapter{Client: c}).Chat(context.Background(), nil, nil)
+	if e != nil || out.Content != "answer" {
+		t.Fatal(out, e)
+	}
+	if len(c.asked) != 2 || c.asked[0] != replyLimit || c.asked[1] != smallerReplyLimit {
+		t.Fatal("unexpected reply limits", c.asked)
+	}
+}
+
+func TestClientAdapterSaysWhenAReplyRanOutReasoning(t *testing.T) {
+	for _, finish := range []string{"length", "max_tokens"} {
+		a := ClientAdapter{Client: &fakeClient{response: &agent.Response{ReasoningContent: "still thinking", FinishReason: finish}}}
+		if _, e := a.Chat(context.Background(), nil, nil); !errors.Is(e, errReplyRanOut) {
+			t.Fatal(finish, e)
+		}
+	}
+}

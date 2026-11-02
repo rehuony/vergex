@@ -10,11 +10,12 @@ import {
   numberClass,
   wideTableClass,
 } from '@/components/common/figures'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/utils/cn'
 import { pollEvery } from '@/utils/poll'
-import { downloadCsv, ordersToCsv } from './orders-csv'
+import { downloadCsv, ordersToCsv } from '@/utils/orders-csv'
 import { baseLabel, fmtPx, fmtTime } from '@/utils/trader-format'
 
 const PAGE_SIZE = 100
@@ -37,8 +38,7 @@ function OrderFills({
   })
   if (error)
     return <p className="text-xs text-vergex-danger">{label('fillsFailed')}</p>
-  if (!data)
-    return <p className="text-xs text-vergex-muted">{t('loading', language)}</p>
+  if (!data) return <Skeleton className="h-3 w-40" />
   if (data.length === 0)
     return <p className="text-xs text-vergex-muted">{label('noFills')}</p>
   return (
@@ -90,10 +90,10 @@ export function TraderOrders({
     placeholderData: keepPreviousData,
   })
   if (!orders) {
-    return (
-      <PanelState role={error ? 'alert' : 'status'}>
-        {error ? label('ordersFailed') : t('loading', language)}
-      </PanelState>
+    return error ? (
+      <PanelState role="alert">{label('ordersFailed')}</PanelState>
+    ) : (
+      <PanelLoading />
     )
   }
   return (

@@ -17,6 +17,8 @@ const (
 	MinLeverage       = 1
 	MaxBTCETHLeverage = 20
 	MaxAltLeverage    = 20
+	MinLossLimitPct   = 0.5
+	MaxLossLimitPct   = 100.0
 	MinPositionRatio  = 0.5
 	MaxPositionRatio  = 10.0
 	MinRiskReward     = 1.0
@@ -123,9 +125,9 @@ type RiskControl struct {
 	// Max number of coins held simultaneously (CODE ENFORCED)
 	MaxPositions int `json:"max_positions"`
 
-	// BTC/ETH exchange leverage for opening positions (agent guided)
+	// BTC/ETH exchange leverage for opening positions (CODE ENFORCED)
 	BTCETHMaxLeverage int `json:"btc_eth_max_leverage"`
-	// Altcoin exchange leverage for opening positions (agent guided)
+	// Altcoin exchange leverage for opening positions (CODE ENFORCED)
 	AltcoinMaxLeverage int `json:"altcoin_max_leverage"`
 
 	// BTC/ETH single position max value = equity × this ratio (CODE ENFORCED, default: 5)
@@ -133,15 +135,20 @@ type RiskControl struct {
 	// Altcoin single position max value = equity × this ratio (CODE ENFORCED, default: 1)
 	AltcoinMaxPositionValueRatio float64 `json:"altcoin_max_position_value_ratio"`
 
-	// Max margin utilization (e.g. 0.9 = 90%) (CODE ENFORCED)
+	// Max margin in use after an open, against equity (e.g. 0.9 = 90%) (CODE ENFORCED)
 	MaxMarginUsage float64 `json:"max_margin_usage"`
 	// Min position size in USDT (CODE ENFORCED)
 	MinPositionSize float64 `json:"min_position_size"`
 
-	// Min take_profit / stop_loss ratio (agent guided)
+	// Min reward to risk at the price an open would happen at (CODE ENFORCED)
 	MinRiskRewardRatio float64 `json:"min_risk_reward_ratio"`
-	// Min agent confidence to open position (agent guided)
+	// Min agent confidence to open position (CODE ENFORCED)
 	MinConfidence int `json:"min_confidence"`
+
+	// Halt opens after losing this share of equity since 00:00 UTC, until the next UTC day. 0 is off (CODE ENFORCED)
+	MaxDailyLossPct float64 `json:"max_daily_loss_pct"`
+	// Halt opens when equity falls this far below its peak, until resumed. 0 is off (CODE ENFORCED)
+	MaxDrawdownPct float64 `json:"max_drawdown_pct"`
 }
 
 // DefaultAgent is the balanced starting config.
@@ -171,14 +178,16 @@ func DefaultAgent() *AgentConfig {
 		},
 		RiskControl: RiskControl{
 			MaxPositions:                 3,   // Max 3 coins simultaneously (CODE ENFORCED)
-			BTCETHMaxLeverage:            5,   // BTC/ETH exchange leverage (agent guided)
-			AltcoinMaxLeverage:           5,   // Altcoin exchange leverage (agent guided)
+			BTCETHMaxLeverage:            5,   // BTC/ETH exchange leverage (CODE ENFORCED)
+			AltcoinMaxLeverage:           5,   // Altcoin exchange leverage (CODE ENFORCED)
 			BTCETHMaxPositionValueRatio:  5.0, // BTC/ETH: max position = 5x equity (CODE ENFORCED)
 			AltcoinMaxPositionValueRatio: 1.0, // Altcoin: max position = 1x equity (CODE ENFORCED)
 			MaxMarginUsage:               0.9, // Max 90% margin usage (CODE ENFORCED)
 			MinPositionSize:              12,  // Min 12 USDT per position (CODE ENFORCED)
-			MinRiskRewardRatio:           3.0, // Min 3:1 profit/loss ratio (agent guided)
-			MinConfidence:                75,  // Min 75% confidence (agent guided)
+			MinRiskRewardRatio:           3.0, // Min 3:1 reward to risk (CODE ENFORCED)
+			MinConfidence:                75,  // Min 75% confidence (CODE ENFORCED)
+			MaxDailyLossPct:              5,   // Halt opens at 5% lost today (CODE ENFORCED)
+			MaxDrawdownPct:               15,  // Halt opens at 15% below peak (CODE ENFORCED)
 		},
 		PromptSections: PromptSections{
 			RoleDefinition: `# You are a professional cryptocurrency perpetual futures trading agent
@@ -210,6 +219,8 @@ func agentPresets() []Preset {
 	careful.RiskControl.BTCETHMaxLeverage = 3
 	careful.RiskControl.AltcoinMaxLeverage = 3
 	careful.RiskControl.MinConfidence = 82
+	careful.RiskControl.MaxDailyLossPct = 3
+	careful.RiskControl.MaxDrawdownPct = 10
 
 	active := DefaultAgent()
 	active.Indicators.Klines.PrimaryCount = 30
@@ -217,6 +228,8 @@ func agentPresets() []Preset {
 	active.RiskControl.BTCETHMaxLeverage = 10
 	active.RiskControl.AltcoinMaxLeverage = 10
 	active.RiskControl.MinConfidence = 68
+	active.RiskControl.MaxDailyLossPct = 8
+	active.RiskControl.MaxDrawdownPct = 25
 
 	return []Preset{
 		{ID: "balanced", Config: DefaultAgent()},
@@ -237,6 +250,10 @@ type agentLimits struct {
 	MinPositionSize              float64 `json:"min_position_size"`
 	BTCETHMaxLeverage            int     `json:"btc_eth_max_leverage"`
 	AltcoinMaxLeverage           int     `json:"altcoin_max_leverage"`
+	MinRiskRewardRatio           float64 `json:"min_risk_reward_ratio"`
+	MinConfidence                int     `json:"min_confidence"`
+	MaxDailyLossPct              float64 `json:"max_daily_loss_pct"`
+	MaxDrawdownPct               float64 `json:"max_drawdown_pct"`
 }
 
 // Limits implements Config.
@@ -250,6 +267,10 @@ func (c *AgentConfig) Limits() any {
 		MinPositionSize:              risk.MinPositionSize,
 		BTCETHMaxLeverage:            risk.BTCETHMaxLeverage,
 		AltcoinMaxLeverage:           risk.AltcoinMaxLeverage,
+		MinRiskRewardRatio:           risk.MinRiskRewardRatio,
+		MinConfidence:                risk.MinConfidence,
+		MaxDailyLossPct:              risk.MaxDailyLossPct,
+		MaxDrawdownPct:               risk.MaxDrawdownPct,
 	}
 }
 
@@ -351,6 +372,16 @@ func (r *RiskControl) clamp() {
 	r.MaxMarginUsage = max(min(r.MaxMarginUsage, MaxMarginUsage), MinMarginUsage)
 	r.MinPositionSize = max(min(r.MinPositionSize, MaxPositionSize), MinPositionSize)
 	r.MinConfidence = max(min(r.MinConfidence, MaxConfidence), MinConfidence)
+	r.MaxDailyLossPct = clampLossLimit(r.MaxDailyLossPct)
+	r.MaxDrawdownPct = clampLossLimit(r.MaxDrawdownPct)
+}
+
+// clampLossLimit keeps a loss limit in range, where 0 and below mean it is off.
+func clampLossLimit(pct float64) float64 {
+	if pct <= 0 {
+		return 0
+	}
+	return max(min(pct, MaxLossLimitPct), MinLossLimitPct)
 }
 
 func (r RiskControl) adjustments(after RiskControl) []string {
@@ -369,6 +400,8 @@ func (r RiskControl) adjustments(after RiskControl) []string {
 	note("max_margin_usage", r.MaxMarginUsage, after.MaxMarginUsage)
 	note("min_position_size", r.MinPositionSize, after.MinPositionSize)
 	note("min_confidence", float64(r.MinConfidence), float64(after.MinConfidence))
+	note("max_daily_loss_pct", r.MaxDailyLossPct, after.MaxDailyLossPct)
+	note("max_drawdown_pct", r.MaxDrawdownPct, after.MaxDrawdownPct)
 	return out
 }
 

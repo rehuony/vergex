@@ -15,13 +15,13 @@ const (
 
 	// Default DeepSeek configuration (used as fallback in NewClient)
 	DefaultDeepSeekBaseURL = "https://api.deepseek.com"
-	DefaultDeepSeekModel   = "deepseek-chat"
+	DefaultDeepSeekModel   = "deepseek-v4-pro"
 
 	// Default Qwen configuration (used by WithQwenConfig convenience option)
 	DefaultQwenBaseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-	DefaultQwenModel   = "qwen3-max"
+	DefaultQwenModel   = "qwen3.8-max"
 
 	// Default MiniMax configuration (used by WithMiniMaxConfig convenience option)
 	DefaultMiniMaxBaseURL = "https://api.minimax.io/v1"
-	DefaultMiniMaxModel   = "MiniMax-M2.7"
+	DefaultMiniMaxModel   = "MiniMax-M3"
 )

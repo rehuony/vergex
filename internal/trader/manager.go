@@ -416,6 +416,8 @@ func (tm *Manager) buildTrader(traderCfg *Trader, agentModelCfg *agent.Model, ac
 		AgentModelID:     agentModelCfg.ID,
 		Venue:            accountCfg.Venue, // binance/okx
 		AccountID:        accountCfg.ID,    // Account UUID (for multi-account)
+		Testnet:          accountCfg.Testnet,
+		Halt:             traderCfg.Halt(),
 		BinanceAPIKey:    "",
 		BinanceSecretKey: "",
 		UseQwen:          agentModelCfg.Provider == "qwen",
@@ -427,6 +429,9 @@ func (tm *Manager) buildTrader(traderCfg *Trader, agentModelCfg *agent.Model, ac
 		InitialBalance:   traderCfg.InitialBalance,
 		IsCrossMargin:    traderCfg.IsCrossMargin(),
 		ConfigRaw:        string(traderCfg.Config),
+	}
+	if traderCfg.ResumedAt != nil {
+		traderConfig.ResumedAt = *traderCfg.ResumedAt
 	}
 	switch c := config.(type) {
 	case *kind.AgentConfig:

@@ -77,7 +77,7 @@ export function mergeChecks(previous: PlanCheck[], incoming: PlanCheck[]) {
 }
 
 // deferredEntries records the structures the assistant deferred until entry
-// conditions are met, and drops those it later saved or reused.
+// conditions are met or could not use, and drops those it later saved or reused.
 export function deferredEntries(
   deferred: PlanBatch['deferred'],
   checks: PlanCheck[]
@@ -88,6 +88,12 @@ export function deferredEntries(
       entries.set(check.kind, {
         kind: check.kind,
         reason: check.reason,
+      })
+    else if (check.status === 'rejected' && check.reason)
+      entries.set(check.kind, {
+        kind: check.kind,
+        reason: check.reason,
+        rejected: true,
       })
     else if (check.status === 'saved' || check.status === 'reused')
       entries.delete(check.kind)

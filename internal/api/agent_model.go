@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -232,29 +233,10 @@ func (s *Server) handleTestModelConfig(c *gin.Context) {
 		return
 	}
 
-	providerID := ""
-	apiKey := strings.TrimSpace(req.APIKey)
-	if saved, err := s.stores.Models.Get(userID, req.AgentModelID); err == nil {
-		providerID = saved.Provider
-		if apiKey == "" {
-			apiKey = string(saved.APIKey)
-		}
-	} else if p, ok := findNativeProvider(req.AgentModelID); ok {
-		providerID = p.ID
-	} else {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown model"})
+	providerID, apiKey, baseURL, refusal := s.modelFormValues(userID, req)
+	if refusal != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": refusal})
 		return
-	}
-	if apiKey == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Enter an API key first"})
-		return
-	}
-	baseURL := strings.TrimSpace(req.CustomAPIURL)
-	if baseURL != "" {
-		if err := security.ValidateURL(strings.TrimSuffix(baseURL, "#")); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Base URL must be a valid HTTPS endpoint"})
-			return
-		}
 	}
 	modelName := strings.TrimSpace(req.CustomModelName)
 	if modelName == "" {
@@ -275,6 +257,86 @@ func (s *Server) handleTestModelConfig(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"ok": true, "model": modelName, "latency_ms": time.Since(started).Milliseconds()})
+}
+
+// modelFormValues reads what the model form says: which provider, with the key typed in or
+// else the saved one, and the endpoint. What is wrong with them comes back as refusal.
+func (s *Server) modelFormValues(userID string, req TestModelConfigRequest) (providerID, apiKey, baseURL, refusal string) {
+	apiKey = strings.TrimSpace(req.APIKey)
+	if saved, err := s.stores.Models.Get(userID, req.AgentModelID); err == nil {
+		providerID = saved.Provider
+		if apiKey == "" {
+			apiKey = string(saved.APIKey)
+		}
+	} else if p, ok := findNativeProvider(req.AgentModelID); ok {
+		providerID = p.ID
+	} else {
+		return "", "", "", "Unknown model"
+	}
+	if apiKey == "" {
+		return "", "", "", "Enter an API key first"
+	}
+	baseURL = strings.TrimSpace(req.CustomAPIURL)
+	if baseURL != "" {
+		if err := security.ValidateURL(strings.TrimSuffix(baseURL, "#")); err != nil {
+			return "", "", "", "Base URL must be a valid HTTPS endpoint"
+		}
+	}
+	return providerID, apiKey, baseURL, ""
+}
+
+// modelListTimeout bounds asking a provider what it offers.
+const modelListTimeout = 15 * time.Second
+
+// newModelListClient builds the client that asks a provider what it offers; tests replace it.
+var newModelListClient = func(providerID string) agent.Client {
+	return agent.NewClientByProvider(providerID, agent.WithTimeout(modelListTimeout), agent.WithMaxRetries(1))
+}
+
+// answerModelList asks a provider what it offers and answers with the names, or with the
+// provider's own short message. It costs no tokens, so it records no usage.
+func answerModelList(c *gin.Context, providerID, apiKey, baseURL string) {
+	client := newModelListClient(providerID)
+	if client == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown model provider"})
+		return
+	}
+	client.SetAPIKey(apiKey, baseURL, "")
+	ctx, cancel := context.WithTimeout(c.Request.Context(), modelListTimeout)
+	defer cancel()
+	names, err := agent.ListModels(ctx, client)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": modelTestError(err, apiKey)})
+		return
+	}
+	if names == nil {
+		names = []string{}
+	}
+	c.JSON(http.StatusOK, gin.H{"models": names})
+}
+
+// handleSavedModelList says what a saved model's provider offers, with its saved key.
+func (s *Server) handleSavedModelList(c *gin.Context) {
+	saved, err := s.stores.Models.Get(c.GetString("user_id"), c.Param("id"))
+	if err != nil {
+		SafeNotFound(c, "Model")
+		return
+	}
+	answerModelList(c, saved.Provider, string(saved.APIKey), saved.CustomAPIURL)
+}
+
+// handleModelFormList says what a provider offers with the model form's current values.
+func (s *Server) handleModelFormList(c *gin.Context) {
+	var req TestModelConfigRequest
+	if !s.readSensitiveJSON(c, &req) {
+		return
+	}
+	providerID, apiKey, baseURL, refusal := s.modelFormValues(c.GetString("user_id"), req)
+	if refusal != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": refusal})
+		return
+	}
+	answerModelList(c, providerID, apiKey, baseURL)
 }
 
 var modelTestStatusPrefix = regexp.MustCompile(`^API returned error \(status (\d+)\): `)
@@ -329,7 +391,7 @@ func (s *Server) handleGetSupportedModels(c *gin.Context) {
 	supportedModels := make([]map[string]interface{}, 0, len(nativeProviders))
 	for _, p := range nativeProviders {
 		supportedModels = append(supportedModels, map[string]interface{}{
-			"id": p.ID, "name": p.Name, "provider": p.ID, "defaultModel": p.DefaultModel,
+			"id": p.ID, "name": p.Name, "provider": p.ID, "defaultModel": p.DefaultModel, "defaultBaseUrl": p.DefaultBaseURL,
 		})
 	}
 
@@ -338,22 +400,23 @@ func (s *Server) handleGetSupportedModels(c *gin.Context) {
 
 // nativeProvider describes a directly connected model provider (user brings their own API key).
 type nativeProvider struct {
-	ID           string
-	Name         string
-	DefaultModel string
+	ID             string
+	Name           string
+	DefaultModel   string
+	DefaultBaseURL string
 }
 
 // nativeProviders is the list of agent providers offered in the model config UI.
 // Default model names mirror the defaults used by the agent provider clients.
 var nativeProviders = []nativeProvider{
-	{ID: agent.ProviderDeepSeek, Name: "DeepSeek", DefaultModel: agent.DefaultDeepSeekModel},
-	{ID: agent.ProviderQwen, Name: "Qwen", DefaultModel: provider.DefaultQwenModel},
-	{ID: agent.ProviderOpenAI, Name: "OpenAI", DefaultModel: provider.DefaultOpenAIModel},
-	{ID: agent.ProviderClaude, Name: "Claude", DefaultModel: provider.DefaultClaudeModel},
-	{ID: agent.ProviderGemini, Name: "Google Gemini", DefaultModel: provider.DefaultGeminiModel},
-	{ID: agent.ProviderGrok, Name: "Grok (xAI)", DefaultModel: provider.DefaultGrokModel},
-	{ID: agent.ProviderKimi, Name: "Kimi (Moonshot)", DefaultModel: provider.DefaultKimiModel},
-	{ID: agent.ProviderMiniMax, Name: "MiniMax", DefaultModel: provider.DefaultMiniMaxModel},
+	{ID: agent.ProviderDeepSeek, Name: "DeepSeek", DefaultModel: agent.DefaultDeepSeekModel, DefaultBaseURL: agent.DefaultDeepSeekBaseURL},
+	{ID: agent.ProviderQwen, Name: "Qwen", DefaultModel: provider.DefaultQwenModel, DefaultBaseURL: provider.DefaultQwenBaseURL},
+	{ID: agent.ProviderOpenAI, Name: "OpenAI", DefaultModel: provider.DefaultOpenAIModel, DefaultBaseURL: provider.DefaultOpenAIBaseURL},
+	{ID: agent.ProviderClaude, Name: "Claude", DefaultModel: provider.DefaultClaudeModel, DefaultBaseURL: provider.DefaultClaudeBaseURL},
+	{ID: agent.ProviderGemini, Name: "Google Gemini", DefaultModel: provider.DefaultGeminiModel, DefaultBaseURL: provider.DefaultGeminiBaseURL},
+	{ID: agent.ProviderGrok, Name: "Grok (xAI)", DefaultModel: provider.DefaultGrokModel, DefaultBaseURL: provider.DefaultGrokBaseURL},
+	{ID: agent.ProviderKimi, Name: "Kimi (Moonshot)", DefaultModel: provider.DefaultKimiModel, DefaultBaseURL: provider.DefaultKimiBaseURL},
+	{ID: agent.ProviderMiniMax, Name: "MiniMax", DefaultModel: provider.DefaultMiniMaxModel, DefaultBaseURL: provider.DefaultMiniMaxBaseURL},
 }
 
 // defaultModelConfigs returns the unconfigured placeholder entries shown when a user has no models yet.

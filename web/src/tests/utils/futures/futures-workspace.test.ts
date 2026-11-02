@@ -1,8 +1,8 @@
 import { beforeEach, expect, it } from 'vitest'
 import type { Plan, FuturesState } from '@/api/futures'
+import { deferredEntries } from '@/utils/futures/futures-plans'
 import {
   batchPlans,
-  comparablePlans,
   readBatch,
   saveBatch,
   workspaceKey,
@@ -46,15 +46,37 @@ it('restores only the saved batch for the same user, account and market', () => 
   localStorage.setItem(key, '{bad')
   expect(readBatch(key)).toBeNull()
 })
-it('excludes expired and differently sized plans from a comparison', () => {
-  const a = make('a', 'market').plan,
-    b = make('b', 'limit').plan
-  const resized = make('resized', 'twap', '250').plan
-  const expired = {
-    ...make('expired', 'ladder').plan,
-    expires: '2000-01-01T00:00:00Z',
-  }
+it('keeps why a way of entering left no plan until it leaves one', () => {
+  const check = (kind: string, status: string, reason?: string) => ({
+    id: kind,
+    name: kind,
+    kind,
+    status,
+    reason,
+  })
+  const entries = deferredEntries(undefined, [
+    check('market', 'deferred', 'Extended'),
+    check('ladder', 'rejected', 'Below minimum'),
+    check('twap', 'rejected', 'Too thin'),
+    check('twap', 'saved'),
+  ])
+  expect(entries).toEqual([
+    { kind: 'market', reason: 'Extended' },
+    { kind: 'ladder', reason: 'Below minimum', rejected: true },
+  ])
+})
+it('lists every plan of a generation in execution order', () => {
+  const records = [
+    make('twap', 'twap'),
+    make('limit-high', 'limit'),
+    make('limit-low', 'limit'),
+    make('market', 'market'),
+  ]
   expect(
-    comparablePlans([a, b, resized, expired], Date.now()).map((p) => p.id)
-  ).toEqual(['a', 'b'])
+    batchPlans(records, {
+      id: 'turn',
+      ids: ['twap', 'limit-high', 'limit-low', 'market'],
+      created: 'now',
+    }).map((p) => p.id)
+  ).toEqual(['market', 'limit-high', 'limit-low', 'twap'])
 })

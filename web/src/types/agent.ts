@@ -7,6 +7,8 @@ export interface AgentModel {
   apiKey?: string
   customApiUrl?: string
   customModelName?: string
+  // On a supported provider: what it uses unless told otherwise.
+  defaultBaseUrl?: string
 }
 
 export interface UpdateModelConfigRequest {

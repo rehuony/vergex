@@ -15,7 +15,7 @@ import {
   streamFutures,
 } from '@/api/futures'
 import { formatRequestError } from '@/utils/request-errors'
-import type { PlanBatch } from '@/utils/futures/futures-workspace'
+import { readBatch, type PlanBatch } from '@/utils/futures/futures-workspace'
 import {
   deferredEntries,
   executionRank,
@@ -35,6 +35,7 @@ interface FuturesAssistantOptions {
   busy: boolean
   setBusy: Dispatch<SetStateAction<boolean>>
   modelID: string
+  modelName: string
   accountId: string
   venue: string
   symbol: string
@@ -62,6 +63,7 @@ export function useFuturesAssistant({
   busy,
   setBusy,
   modelID,
+  modelName,
   accountId,
   venue,
   symbol,
@@ -124,10 +126,14 @@ export function useFuturesAssistant({
     }
     setBusy(true)
     setFuturesBusy(true)
+    // Changing one plan leaves the rest of its generation where they were.
+    const previous = revisionID ? readBatch(batchKey) : null
+    const kept = previous?.ids.filter((id) => id !== revisionID) ?? []
     const generation: PlanBatch = {
       id: crypto.randomUUID(),
       ids: [],
       created: new Date().toISOString(),
+      deferred: previous?.deferred,
     }
     setError('')
     setOrderNotice('')
@@ -148,12 +154,14 @@ export function useFuturesAssistant({
         {
           account_id: accountId,
           agent_model_id: modelID,
+          agent_model_name: modelName || undefined,
           symbol,
           venue,
           interval: context.interval,
           visible_from: context.visible_from,
           visible_to: context.visible_to,
           message: text,
+          language,
           plan_id: revisionID,
           execution_kind: 'auto',
           compare_structures: compareStructures,
@@ -173,7 +181,10 @@ export function useFuturesAssistant({
               { role: 'assistant', content: String(event.data.message) },
             ])
           if (event.type === 'error') {
-            const message = formatRequestError(String(event.data.message), 'en')
+            const message = formatRequestError(
+              String(event.data.message),
+              language
+            )
             setError(message)
           }
           if (
@@ -182,7 +193,10 @@ export function useFuturesAssistant({
             waiting &&
             event.data.stop_reason === 'completed'
           ) {
-            rememberBatch({ ...generation, waiting: true }, batchKey)
+            rememberBatch(
+              { ...generation, ids: kept, waiting: kept.length === 0 },
+              batchKey
+            )
             setSelected('')
             setCompare([])
           }
@@ -209,7 +223,11 @@ export function useFuturesAssistant({
               )
             if (plans?.length) {
               generation.ids = [
-                ...new Set([...generation.ids, ...plans.map((p) => p.id)]),
+                ...new Set([
+                  ...kept,
+                  ...generation.ids,
+                  ...plans.map((p) => p.id),
+                ]),
               ]
               rememberBatch({ ...generation }, batchKey)
               setLimits(plans[0].constraints)
@@ -238,7 +256,7 @@ export function useFuturesAssistant({
     } catch (e) {
       if (!controller.signal.aborted) {
         if (!streamStarted) setMessages(separateDraft ? [] : messages)
-        const message = formatRequestError(e, 'en')
+        const message = formatRequestError(e, language)
         setError(message)
         setTrace((items) =>
           recordActivity(

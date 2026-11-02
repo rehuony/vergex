@@ -47,7 +47,7 @@ export function PlanReviewDialog({
             disabled={busy || expired}
             onClick={onConfirm}
           >
-            {label('confirm')}
+            {label(plan.snapshot.testnet ? 'confirmTestnet' : 'confirm')}
           </Button>
         </>
       }

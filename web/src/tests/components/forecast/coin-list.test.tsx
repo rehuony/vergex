@@ -93,7 +93,7 @@ it('marks the coin in view and says why another has no forecast', () => {
   const rows = screen.getAllByRole('row')
   expect(rows[1]).toHaveAttribute('aria-current', 'true')
   expect(rows[2]).toHaveAttribute('title', 'Not enough history')
-  expect(rows[2]).toHaveTextContent('—')
+  expect(rows[2]).not.toHaveTextContent('—')
 })
 
 it('stars a coin without opening it, and filters to the watchlist and to calls', () => {

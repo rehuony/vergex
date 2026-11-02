@@ -72,21 +72,18 @@ export function FAQLayout() {
   }
 
   return (
-    <Page
-      title={t('helpNav', language)}
-      actions={
-        <div className="w-full md:w-72">
+    <Page title={t('helpNav', language)}>
+      <div className="flex flex-col gap-4 lg:flex-row lg:gap-8">
+        {/* Stays in view beside the topics. It ends 48px above the viewport, the page's bottom
+            padding, so at the end of the page the column never pushes it up. A phone has no
+            room for the topics and keeps the search. */}
+        <aside className="flex shrink-0 flex-col gap-4 lg:sticky lg:top-24 lg:h-[calc(100dvh-9rem)] lg:w-64 lg:self-start">
           <FAQSearchBar
             searchTerm={searchTerm}
             onSearchChange={setSearchTerm}
             placeholder={t('helpSearch', language)}
             clearLabel={t('clearSearch', language)}
           />
-        </div>
-      }
-    >
-      <div className="flex gap-8">
-        <aside className="hidden w-64 shrink-0 lg:block">
           <FAQSidebar
             categories={sidebarCategories}
             activeItemId={activeItemId}

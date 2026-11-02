@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AppSelect } from '@/components/ui/select'
 import { useLanguage } from '@/contexts/language-context'
+import { connectionModel, useModelChoices } from '@/hooks/use-connections'
 import { t } from '@/i18n'
 import type { AgentModel } from '@/types'
 import { AssistantThread } from './assistant-thread'
@@ -21,6 +22,9 @@ const STARTERS = [
 
 export type AssistantPane = 'chat' | 'plans'
 
+// A model picked from the list: which connection, and which of its provider's models.
+const choiceValue = (id: string, name: string) => `${id} ${name}`
+
 interface FuturesAssistantProps {
   pane: AssistantPane
   onPaneChange: (pane: AssistantPane) => void
@@ -29,7 +33,9 @@ interface FuturesAssistantProps {
   futuresBusy: boolean
   models: AgentModel[]
   modelID: string
-  onModelChange: (id: string) => void
+  modelName: string
+  // Another of that connection's models, or blank for the one it is set to.
+  onModelChange: (id: string, name?: string) => void
   instruction: string
   onInstructionChange: (instruction: string) => void
   onSend: (text?: string, compareStructures?: boolean) => void
@@ -59,6 +65,7 @@ export function FuturesAssistant({
   futuresBusy,
   models,
   modelID,
+  modelName,
   onModelChange,
   instruction,
   onInstructionChange,
@@ -76,6 +83,8 @@ export function FuturesAssistant({
   const { language } = useLanguage()
   const label = (key: string) => t(`futures.${key}`, language)
   const input = useRef<HTMLTextAreaElement>(null)
+  const choices = useModelChoices(models)
+  const current = models.find((model) => model.id === modelID)
   return (
     <aside
       id="futures-assistant"
@@ -125,33 +134,26 @@ export function FuturesAssistant({
         actions
       ) : (
         <div className="shrink-0 space-y-2 p-2">
-          {messages.length === 0 && (
+          {messages.length === 0 && !hasPlan && (
             <div
               role="group"
               aria-label={label('suggestions')}
-              className="space-y-2 px-2"
+              className="flex flex-wrap gap-1.5 px-2"
             >
-              <p className="text-xs text-vergex-muted">
-                {label(hasPlan ? 'planOnChart' : 'welcome')}
-              </p>
-              {!hasPlan && (
-                <div className="flex flex-wrap gap-1.5">
-                  {STARTERS.map(([name, prompt]) => (
-                    <Button
-                      key={name}
-                      type="button"
-                      size="sm"
-                      className="h-7 px-2.5 text-xs font-normal max-sm:h-10"
-                      onClick={() => {
-                        onInstructionChange(label(prompt))
-                        input.current?.focus()
-                      }}
-                    >
-                      {label(name)}
-                    </Button>
-                  ))}
-                </div>
-              )}
+              {STARTERS.map(([name, prompt]) => (
+                <Button
+                  key={name}
+                  type="button"
+                  size="sm"
+                  className="h-7 px-2.5 text-xs font-normal max-sm:h-10"
+                  onClick={() => {
+                    onInstructionChange(label(prompt))
+                    input.current?.focus()
+                  }}
+                >
+                  {label(name)}
+                </Button>
+              ))}
             </div>
           )}
           <form
@@ -186,13 +188,26 @@ export function FuturesAssistant({
                 {models.length > 0 ? (
                   <AppSelect
                     aria-label={label('agentModel')}
-                    className="mr-auto h-8 w-auto min-w-0 max-w-[40%] border-transparent px-2 text-[13px] hover:bg-vergex-surface-muted max-sm:h-10"
-                    value={modelID}
+                    className="mr-auto h-8 w-auto min-w-0 border-transparent px-2 text-[13px] hover:bg-vergex-surface-muted max-sm:h-10"
+                    value={choiceValue(
+                      modelID,
+                      modelName || (current ? connectionModel(current) : '')
+                    )}
                     disabled={busy}
-                    onChange={onModelChange}
-                    options={models.map((model) => ({
-                      value: model.id,
-                      label: model.customModelName || model.name,
+                    onChange={(value) => {
+                      const { id, name } = choices.find(
+                        (choice) =>
+                          choiceValue(choice.id, choice.name) === value
+                      )!
+                      const model = models.find((row) => row.id === id)
+                      onModelChange(
+                        id,
+                        model && name === connectionModel(model) ? '' : name
+                      )
+                    }}
+                    options={choices.map(({ id, name }) => ({
+                      value: choiceValue(id, name),
+                      label: name,
                     }))}
                   />
                 ) : (

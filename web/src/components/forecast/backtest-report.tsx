@@ -25,7 +25,7 @@ const pct = (value: number) => `${(value * 100).toFixed(1)}%`
 
 // Returns are only known where a call was made.
 const afterFees = (metrics: BacktestMetrics) =>
-  metrics.signals > 0 ? fmtPct(metrics.avg_return_after_fee_pct, true) : '—'
+  fmtPct(metrics.signals > 0 ? metrics.avg_return_after_fee_pct : 0, true)
 
 const metricsRow = (name: string, metrics: BacktestMetrics): BreakdownRow => ({
   name,
@@ -39,10 +39,10 @@ const metricsRow = (name: string, metrics: BacktestMetrics): BreakdownRow => ({
 const sortedRows = (group: Record<string, BacktestMetrics>) =>
   Object.entries(group).sort(([a], [b]) => a.localeCompare(b))
 
-const correlationText = (edge: FactorEdge) =>
-  edge.correlation === null
-    ? '—'
-    : `${edge.correlation > 0 ? '+' : ''}${edge.correlation.toFixed(3)}`
+const correlationText = (edge: FactorEdge) => {
+  const correlation = edge.correlation ?? 0
+  return `${correlation > 0 ? '+' : ''}${correlation.toFixed(3)}`
+}
 
 // One run's result, led by its hit rate against chance and what it made after fees.
 export function BacktestReportView({

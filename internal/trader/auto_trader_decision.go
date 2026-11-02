@@ -2,6 +2,7 @@ package trader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/shopspring/decimal"
 	"math"
@@ -67,10 +68,12 @@ func (at *AutoTrader) saveDecision(record *DecisionRecord) error {
 	return nil
 }
 
+// summarizeDecisionExecution marks a cycle as failed if an action on the exchange failed.
+// A rule stopping an action is the rule working, not a fault.
 func summarizeDecisionExecution(record *DecisionRecord) {
 	failed, attempted := 0, 0
 	for _, action := range record.Decisions {
-		if action.Action == "hold" || action.Action == "wait" {
+		if action.Action == "hold" || action.Action == "wait" || action.Blocked {
 			continue
 		}
 		attempted++
@@ -81,7 +84,7 @@ func summarizeDecisionExecution(record *DecisionRecord) {
 	if failed > 0 {
 		record.Success = false
 		if record.ErrorMessage == "" {
-			record.ErrorMessage = fmt.Sprintf("%d of %d trade actions failed or were blocked", failed, attempted)
+			record.ErrorMessage = fmt.Sprintf("%d of %d trade actions failed", failed, attempted)
 		}
 	}
 }
@@ -108,8 +111,6 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"call_count":      at.callCount,
 		"initial_balance": at.initialBalance,
 		"scan_interval":   at.config.ScanInterval.String(),
-		"stop_until":      at.stopUntil.Format(time.RFC3339),
-		"last_reset_time": at.lastResetTime.Format(time.RFC3339),
 		"agent_provider":  agentProvider,
 	}
 
@@ -119,6 +120,10 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		result["grid_symbol"] = at.config.Grid.Symbol
 	} else {
 		result["kind"] = kind.Agent
+	}
+
+	if halt := at.ActiveHalt(); halt != nil {
+		result["halted"] = halt
 	}
 
 	// Runtime health: safe mode + agent fee wallet, so the dashboard can show a
@@ -202,37 +207,64 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 			totalUnrealizedProfit, totalUnrealizedPnLCalculated, diff)
 	}
 
-	totalPnL := totalEquity - at.initialBalance
-	totalPnLPct := 0.0
-	if at.initialBalance > 0 {
-		totalPnLPct = (totalPnL / at.initialBalance) * 100
-	} else {
-		logger.Infof("⚠️ Initial Balance abnormal: %.2f, cannot calculate P&L percentage", at.initialBalance)
-	}
-
 	marginUsedPct := 0.0
 	if totalEquity > 0 {
 		marginUsedPct = (totalMarginUsed / totalEquity) * 100
 	}
 
-	return map[string]interface{}{
+	info := map[string]interface{}{
 		// Core fields
 		"total_equity":      totalEquity,           // Account equity = wallet + unrealized
 		"wallet_balance":    totalWalletBalance,    // Wallet balance (excluding unrealized P&L)
 		"unrealized_profit": totalUnrealizedProfit, // Unrealized P&L (official value from exchange API)
 		"available_balance": availableBalance,      // Available balance
 
-		// P&L statistics
-		"total_pnl":       totalPnL,          // Total P&L = equity - initial
-		"total_pnl_pct":   totalPnLPct,       // Total P&L percentage
 		"initial_balance": at.initialBalance, // Initial balance
-		"daily_pnl":       at.dailyPnL,       // Daily P&L
 
 		// Position information
 		"position_count":  len(positions),  // Position count
 		"margin_used":     totalMarginUsed, // Margin used
 		"margin_used_pct": marginUsedPct,   // Margin usage rate
-	}, nil
+	}
+
+	// P&L statistics. Without them the interface shows a dash rather than a wrong figure.
+	if totalPnL, err := at.ownProfit(positions); err != nil {
+		logger.Warnf("Trader %s: read its profit: %v", at.id, err)
+	} else {
+		info["total_pnl"] = totalPnL
+		if at.initialBalance > 0 {
+			info["total_pnl_pct"] = totalPnL / at.initialBalance * 100
+		} else {
+			logger.Infof("⚠️ Initial Balance abnormal: %.2f, cannot calculate P&L percentage", at.initialBalance)
+		}
+	}
+	return info, nil
+}
+
+// ownProfit is what this trader has made by the ledger: what it realized after fees and
+// what the positions it holds stand at on the exchange. The account's equity is not used,
+// since other traders, Futures and transfers all move it.
+func (at *AutoTrader) ownProfit(positions []map[string]interface{}) (float64, error) {
+	if at.stores == nil {
+		return 0, errors.New("no ledger")
+	}
+	profit, err := at.stores.Positions.NetOfTrader(at.id)
+	if err != nil {
+		return 0, err
+	}
+	for _, position := range positions {
+		symbol, _ := position["symbol"].(string)
+		side, _ := position["side"].(string)
+		held, err := at.stores.Positions.GetOpenPositionBySymbol(at.id, symbol, side)
+		if err != nil {
+			return 0, err
+		}
+		if held != nil {
+			unrealized, _ := position["unRealizedProfit"].(float64)
+			profit += unrealized
+		}
+	}
+	return profit, nil
 }
 
 // recordOrder puts a placed order in the ledger, with what only placing it knows: who
@@ -316,5 +348,13 @@ func (at *AutoTrader) saveOrder(order *account.LedgerOrder, symbol string) error
 		return err
 	}
 	order.InstrumentID = instrumentID
+	// The exchange took the quantity rounded to the market's step.
+	if at.trader != nil {
+		if formatted, err := at.trader.FormatQuantity(symbol, order.Quantity.InexactFloat64()); err == nil {
+			if rounded, err := decimal.NewFromString(formatted); err == nil && rounded.IsPositive() {
+				order.Quantity = rounded
+			}
+		}
+	}
 	return at.stores.Ledger.RecordOrder(order)
 }

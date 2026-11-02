@@ -4,12 +4,14 @@ import { Check, Loader2, Minus, TriangleAlert, X } from 'lucide-react'
 import { api } from '@/api'
 import { ApiError } from '@/api/http-client'
 import { Dialog } from '@/components/common/dialog'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { SettingsLink } from '@/components/settings/settings-link'
 import { Button } from '@/components/ui/button'
 import { t, type Language } from '@/i18n'
 import type { LaunchCheck, LaunchCheckStatus } from '@/types'
 import { cn } from '@/utils/cn'
+import { codedText } from '@/utils/request-errors'
+import { haltReasonText } from './halt-reason'
 
 const STATUS_ICON = {
   ok: { icon: Check, className: 'text-vergex-success' },
@@ -21,6 +23,20 @@ const STATUS_ICON = {
 function amount(check: LaunchCheck) {
   if (check.actual == null || !check.required) return null
   return `${check.actual.toFixed(2)} / ${check.required} ${check.asset ?? ''}`
+}
+
+// A check's wording comes from its code, an account's from what the account's state says,
+// and a halt's from its reason. Anything else stays as the server said it.
+function checkMessage(check: LaunchCheck, language: Language) {
+  const message = check.message ?? ''
+  if (check.id === 'halted') return haltReasonText(message, language)
+  return codedText(
+    'startTrader.code',
+    check.code,
+    codedText('accountError', check.code, message, language),
+    language,
+    check.params
+  )
 }
 
 function CheckRow({
@@ -53,7 +69,7 @@ function CheckRow({
         </div>
         {check.status !== 'ok' && check.message && (
           <p className="mt-0.5 text-xs break-words text-vergex-muted">
-            {check.message}
+            {checkMessage(check, language)}
             {needsSettings && (
               <>
                 {' '}
@@ -113,7 +129,6 @@ export function StartTraderDialog({
   })
   const [starting, setStarting] = useState(false)
   const [failure, setFailure] = useState('')
-  const checking = isFetching && !preflight
 
   async function start() {
     setStarting(true)
@@ -230,9 +245,7 @@ export function StartTraderDialog({
           </Button>
         </PanelState>
       ) : (
-        <PanelState role="status">
-          {checking ? label('checking') : t('loading', language)}
-        </PanelState>
+        <PanelLoading />
       )}
     </Dialog>
   )

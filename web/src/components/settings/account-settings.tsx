@@ -1,16 +1,8 @@
 import { useEffect, useId, useState, type FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  Check,
-  Copy,
-  ExternalLink,
-  Landmark,
-  Plus,
-  RefreshCw,
-  Trash2,
-} from 'lucide-react'
+import { Check, Copy, Landmark, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
-import type { Account, AccountState } from '@/types'
+import type { Account, AccountState, KeyPermissions } from '@/types'
 import { t, type Language } from '@/i18n'
 import { api } from '@/api'
 import { cn } from '@/utils/cn'
@@ -24,9 +16,12 @@ import {
   useTraders,
 } from '@/hooks/use-connections'
 import { dialogInputClass } from '@/components/common/dialog'
+import { PanelLoading } from '@/components/common/panel'
 import { getVenueIcon } from '@/components/common/venue-icons'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { AppSelect } from '@/components/ui/select'
+import { AccountLedger } from './account-ledger'
 import {
   SettingActions,
   SettingBack,
@@ -36,13 +31,33 @@ import {
   SettingRow,
   SettingState,
 } from '@/components/common/setting-row'
+import { codedText } from '@/utils/request-errors'
 
 const inputClass = cn(dialogInputClass, 'h-9')
 
 const VENUES: Record<string, string> = { binance: 'Binance', okx: 'OKX' }
 
-const BINANCE_KEY_GUIDE =
-  'https://www.binance.com/en/support/faq/how-to-create-api-keys-on-binance-360002502072'
+// Which environment an account is on: "Binance", or "Binance · Testnet".
+const environment = (
+  account: Pick<Account, 'venue' | 'testnet'>,
+  language: Language
+) =>
+  [
+    VENUES[account.venue] ?? account.venue,
+    account.testnet && t('connections.testnet', language),
+  ]
+    .filter(Boolean)
+    .join(' · ')
+
+// The accounts by environment. The server sends them in that order, by name within it.
+function byEnvironment(accounts: Account[], language: Language) {
+  const groups = new Map<string, Account[]>()
+  for (const account of accounts) {
+    const name = environment(account, language)
+    groups.set(name, [...(groups.get(name) ?? []), account])
+  }
+  return [...groups]
+}
 
 const venueIcon = (type: string) =>
   getVenueIcon(type, { width: 20, height: 20 }) || (
@@ -121,6 +136,20 @@ const listPhase = (
         ? 'failed'
         : undefined
 
+// What a key may do, as far as its venue says.
+const permissionNames = (permissions: KeyPermissions, language: Language) =>
+  (
+    [
+      [permissions.read, 'read'],
+      [permissions.trade, 'trade'],
+      [permissions.withdraw, 'withdraw'],
+      [permissions.ip_restricted, 'ipRestricted'],
+    ] as const
+  )
+    .filter(([on]) => on)
+    .map(([, name]) => t(`connections.permissions.${name}`, language))
+    .join(' · ')
+
 /** Accounts that Futures and traders trade on. */
 export function AccountSettings({ language }: { language: Language }) {
   // null shows the list, '' a new account, an id that account.
@@ -175,59 +204,92 @@ export function AccountSettings({ language }: { language: Language }) {
           {t('connections.loadFailed', language)}
         </SettingState>
       ) : isLoading || !accounts ? (
-        <SettingState role="status">
-          {t('connections.loading', language)}
-        </SettingState>
+        <PanelLoading className="flex-1" />
       ) : saved.length === 0 ? (
         <SettingState>
           <Landmark className="size-6" aria-hidden="true" />
           {t('connections.noAccounts', language)}
         </SettingState>
       ) : (
-        saved.map((account) => {
-          const state = states.data?.states?.[account.id]
-          const name = account.name || account.venue_name
-          const phase = rows[account.id] ?? listPhase(state, states)
-          return (
-            <SettingItem
-              key={account.id}
-              icon={venueIcon(account.venue)}
-              title={name}
-              badge={stateBadge(state, phase, language)}
-              detail={[
-                VENUES[account.venue] ?? account.venue,
-                state?.status === 'ok' && balance(state),
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-            >
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                aria-label={`${t('connections.verify', language)} ${name}`}
-                disabled={phase === 'checking'}
-                onClick={() => void verify(account.id)}
-                // An icon alone on phones, where the name needs the room.
-                className="max-sm:w-9 max-sm:px-0"
-              >
-                <RefreshCw className="size-4 sm:hidden" aria-hidden="true" />
-                <span className="max-sm:sr-only">
-                  {t('connections.verify', language)}
-                </span>
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                aria-label={`${t('connections.edit', language)} ${name}`}
-                onClick={() => setEditing(account.id)}
-              >
-                {t('connections.edit', language)}
-              </Button>
-            </SettingItem>
-          )
-        })
+        byEnvironment(saved, language).map(([group, members]) => (
+          <section
+            key={group}
+            aria-label={group}
+            className="border-t border-vergex-line pt-3 first:border-t-0 first:pt-1"
+          >
+            <h4 className="text-xs font-medium text-vergex-muted">{group}</h4>
+            <div>
+              {members.map((account) => {
+                const state = states.data?.states?.[account.id]
+                const name = account.name || account.venue_name
+                const phase = rows[account.id] ?? listPhase(state, states)
+                const money = state?.status === 'ok' ? balance(state) : ''
+                const may =
+                  state?.permissions &&
+                  permissionNames(state.permissions, language)
+                return (
+                  <SettingItem
+                    key={account.id}
+                    icon={venueIcon(account.venue)}
+                    title={name}
+                    badge={
+                      <>
+                        {stateBadge(state, phase, language)}
+                        {state?.permissions?.withdraw && (
+                          <SettingBadge tone="danger">
+                            {t('connections.permissions.canWithdraw', language)}
+                          </SettingBadge>
+                        )}
+                      </>
+                    }
+                    // Always a line, so a row keeps its height as the answer comes.
+                    detail={
+                      phase === 'checking' ? (
+                        <Skeleton className="w-28" />
+                      ) : money || may ? (
+                        <>
+                          {money && <span className="mono">{money}</span>}
+                          {money && may && ' · '}
+                          {may}
+                        </>
+                      ) : (
+                        '\u00a0'
+                      )
+                    }
+                  >
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      aria-label={`${t('connections.verify', language)} ${name}`}
+                      disabled={phase === 'checking'}
+                      onClick={() => void verify(account.id)}
+                      // An icon alone on phones, where the name needs the room.
+                      className="max-sm:w-9 max-sm:px-0"
+                    >
+                      <RefreshCw
+                        className="size-4 sm:hidden"
+                        aria-hidden="true"
+                      />
+                      <span className="max-sm:sr-only">
+                        {t('connections.verify', language)}
+                      </span>
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      aria-label={`${t('connections.edit', language)} ${name}`}
+                      onClick={() => setEditing(account.id)}
+                    >
+                      {t('connections.edit', language)}
+                    </Button>
+                  </SettingItem>
+                )
+              })}
+            </div>
+          </section>
+        ))
       )}
     </SettingList>
   )
@@ -257,7 +319,8 @@ function useKeysCanTravel() {
   return ok
 }
 
-// Adds an account, or edits one: blank keys keep the saved ones.
+// Adds an account, or edits one: its name, and any keys typed in. Blank keys keep the
+// saved ones. What it trades on, its venue and whether it is on testnet, stays as it began.
 function AccountForm({
   existing,
   language,
@@ -273,38 +336,53 @@ function AccountForm({
   const states = useAccountStates({ refetchOnMount: false })
   const { data: traders } = useTraders()
   const [type, setType] = useState(existing?.venue ?? 'binance')
-  const [accountName, setAccountName] = useState('')
+  const [accountName, setAccountName] = useState(existing?.name ?? '')
+  const [testnet, setTestnet] = useState(false)
   const [apiKey, setApiKey] = useState('')
   const [secretKey, setSecretKey] = useState('')
   const [passphrase, setPassphrase] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [copied, setCopied] = useState(false)
+  const [ledgerOpen, setLedgerOpen] = useState(false)
   const canTravel = useKeysCanTravel()
   const { data: serverIP } = useQuery({
     queryKey: ['server-ip'],
     queryFn: () => api.getServerIP(),
-    enabled: type === 'binance',
     refetchOnWindowFocus: false,
   })
   const okx = type === 'okx'
   const state = existing && states.data?.states?.[existing.id]
-  // A new account needs every key; an edit replaces the ones typed in.
+  const problem =
+    state?.error_message &&
+    codedText('accountError', state.error_code, state.error_message, language)
+  const name = accountName.trim()
+  const renamed = Boolean(existing) && name !== existing?.name
+  const keysTyped = [apiKey, secretKey, passphrase].some(
+    (key) => key.trim() !== ''
+  )
+  // A new account needs every key; an edit saves a new name and the keys typed in.
   const ready = existing
-    ? [apiKey, secretKey, passphrase].some((key) => key.trim() !== '')
-    : accountName.trim() !== '' &&
+    ? name !== '' && (renamed || keysTyped)
+    : name !== '' &&
       apiKey.trim() !== '' &&
       secretKey.trim() !== '' &&
       (!okx || passphrase.trim() !== '')
+  // Only keys need the encrypted route.
+  const canSave = ready && (!keysTyped || Boolean(canTravel))
 
-  const run = async (action: () => Promise<void>, failed: string) => {
+  const run = async (
+    action: () => Promise<void>,
+    failed: string,
+    recheck = true
+  ) => {
     if (busy) return
     setBusy(true)
     setMessage('')
     try {
       await action()
       // Check the account again with what was just saved.
-      await Promise.all([refetch(), states.refetch()])
+      await Promise.all([refetch(), recheck && states.refetch()])
       onDone()
     } catch {
       setMessage(t(failed, language))
@@ -315,29 +393,36 @@ function AccountForm({
 
   const save = (e: FormEvent) => {
     e.preventDefault()
-    if (!ready || !canTravel) return
+    if (!canSave) return
     const keys = {
       api_key: apiKey.trim(),
       secret_key: secretKey.trim(),
       passphrase: okx ? passphrase.trim() : '',
     }
-    void run(async () => {
-      if (existing) {
-        await api.updateAccountsEncrypted({
-          accounts: {
-            [existing.id]: keys,
-          },
-        })
-        toast.success(t('agentTradersToast.accountUpdated', language))
-      } else {
-        await api.createAccountEncrypted({
-          ...keys,
-          venue: type,
-          name: accountName.trim(),
-        })
-        toast.success(t('agentTradersToast.accountCreated', language))
-      }
-    }, 'saveConfigFailed')
+    void run(
+      async () => {
+        if (existing) {
+          if (renamed) await api.renameAccount(existing.id, name)
+          if (keysTyped)
+            await api.updateAccountsEncrypted({
+              accounts: {
+                [existing.id]: keys,
+              },
+            })
+          toast.success(t('agentTradersToast.accountUpdated', language))
+        } else {
+          await api.createAccountEncrypted({
+            ...keys,
+            venue: type,
+            name,
+            testnet,
+          })
+          toast.success(t('agentTradersToast.accountCreated', language))
+        }
+      },
+      'saveConfigFailed',
+      !existing || keysTyped
+    )
   }
 
   const remove = async () => {
@@ -400,6 +485,16 @@ function AccountForm({
     </SettingRow>
   )
 
+  if (existing && ledgerOpen) {
+    return (
+      <AccountLedger
+        account={existing}
+        language={language}
+        onBack={() => setLedgerOpen(false)}
+      />
+    )
+  }
+
   return (
     <form onSubmit={save} aria-label={t('accountsTab', language)}>
       <SettingBack
@@ -411,77 +506,92 @@ function AccountForm({
             ? existing.name || existing.venue_name
             : t('connections.addAccount', language)
         }
-        detail={existing && (VENUES[type] ?? type)}
+        badge={
+          existing && stateBadge(state, listPhase(state, states), language)
+        }
+        detail={
+          existing && (
+            <span title={problem || undefined}>
+              {[environment(existing, language), problem]
+                .filter(Boolean)
+                .join(' · ')}
+            </span>
+          )
+        }
       >
-        {type === 'binance' && (
-          <Button asChild variant="link" size="sm" className="text-[13px]">
-            <a
-              href={BINANCE_KEY_GUIDE}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              {t('accountConfig.viewTutorial', language)}
-              <ExternalLink className="size-3.5" />
-            </a>
+        {existing && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="max-sm:h-10"
+            onClick={() => setLedgerOpen(true)}
+          >
+            {t('connections.ledger.title', language)}
           </Button>
         )}
       </SettingBack>
-      {existing ? (
-        <>
-          <SettingRow label={t('status', language)}>
-            {stateBadge(state, listPhase(state, states), language)}
-            {state?.error_message && (
-              <span className="min-w-0 truncate text-xs text-vergex-muted">
-                {state.error_message}
-              </span>
-            )}
-          </SettingRow>
-          {state?.status === 'ok' && (
-            <SettingRow label={t('connections.balance', language)}>
-              <span className="text-sm tabular-nums text-vergex-ink">
+      {!existing && (
+        <SettingRow
+          label={t('connections.venue', language)}
+          htmlFor={`${id}-type`}
+        >
+          <AppSelect
+            id={`${id}-type`}
+            value={type}
+            onChange={setType}
+            options={Object.entries(VENUES).map(([value, label]) => ({
+              value,
+              label,
+            }))}
+            className="h-9 w-auto min-w-0 flex-1"
+          />
+          <Button
+            type="button"
+            variant="option"
+            aria-pressed={testnet}
+            onClick={() => setTestnet((on) => !on)}
+          >
+            {t('connections.testnet', language)}
+          </Button>
+        </SettingRow>
+      )}
+      <SettingRow
+        label={t('connections.accountName', language)}
+        htmlFor={`${id}-name`}
+      >
+        <input
+          id={`${id}-name`}
+          type="text"
+          required
+          value={accountName}
+          onChange={(e) => setAccountName(e.target.value)}
+          placeholder={t('accountConfig.accountNamePlaceholder', language)}
+          className={inputClass}
+        />
+      </SettingRow>
+      {existing && (
+        <SettingRow label={t('connections.equity', language)}>
+          {state?.status === 'ok' ? (
+            <>
+              <span className="mono text-sm text-vergex-ink">
                 {balance(state)}
               </span>
               {state.available_balance !== undefined && (
-                <span className="text-xs tabular-nums text-vergex-muted">
+                <span className="text-xs text-vergex-muted">
                   {t('connections.available', language)}{' '}
-                  {funds(state.available_balance)} {state.asset}
+                  <span className="mono">
+                    {funds(state.available_balance)} {state.asset}
+                  </span>
                 </span>
               )}
-            </SettingRow>
+            </>
+          ) : listPhase(state, states) === 'checking' ? (
+            <Skeleton className="w-28" />
+          ) : (
+            <span className="mono text-sm text-vergex-muted">—</span>
           )}
-        </>
-      ) : (
-        <>
-          <SettingRow
-            label={t('connections.venue', language)}
-            htmlFor={`${id}-type`}
-          >
-            <AppSelect
-              id={`${id}-type`}
-              value={type}
-              onChange={setType}
-              options={Object.entries(VENUES).map(([value, label]) => ({
-                value,
-                label,
-              }))}
-              className="h-9"
-            />
-          </SettingRow>
-          <SettingRow
-            label={t('connections.accountName', language)}
-            htmlFor={`${id}-name`}
-          >
-            <input
-              id={`${id}-name`}
-              type="text"
-              required
-              value={accountName}
-              onChange={(e) => setAccountName(e.target.value)}
-              placeholder={t('accountConfig.accountNamePlaceholder', language)}
-              className={inputClass}
-            />
-          </SettingRow>
-        </>
+        </SettingRow>
       )}
       {keyRow(
         'API Key',
@@ -508,35 +618,31 @@ function AccountForm({
           'enterPassphrase',
           existing?.has_passphrase
         )}
-      {type === 'binance' && (
-        <SettingRow label={t('connections.whitelistIP', language)}>
-          {serverIP?.public_ip ? (
-            <>
-              <code className="font-mono text-sm text-vergex-ink">
-                {serverIP.public_ip}
-              </code>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="h-7 px-2 text-xs"
-                onClick={() => void copyIP(serverIP.public_ip)}
-              >
-                {copied ? (
-                  <Check className="size-3.5" />
-                ) : (
-                  <Copy className="size-3.5" />
-                )}
-                {t(copied ? 'ipCopied' : 'copyIP', language)}
-              </Button>
-            </>
-          ) : (
-            <span className="text-sm text-vergex-muted">
-              {t('loadingServerIP', language)}
-            </span>
-          )}
-        </SettingRow>
-      )}
+      <SettingRow label={t('connections.serverIP', language)}>
+        {serverIP?.public_ip ? (
+          <>
+            <code className="font-mono text-sm text-vergex-ink">
+              {serverIP.public_ip}
+            </code>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              onClick={() => void copyIP(serverIP.public_ip)}
+            >
+              {copied ? (
+                <Check className="size-3.5" />
+              ) : (
+                <Copy className="size-3.5" />
+              )}
+              {t(copied ? 'ipCopied' : 'copyIP', language)}
+            </Button>
+          </>
+        ) : (
+          <Skeleton className="w-28" />
+        )}
+      </SettingRow>
       <SettingActions
         message={
           message ||
@@ -559,7 +665,7 @@ function AccountForm({
           type="submit"
           size="sm"
           variant="primary"
-          disabled={!ready || !canTravel || busy}
+          disabled={!canSave || busy}
         >
           {busy ? t('saving', language) : t('saveConfig', language)}
         </Button>

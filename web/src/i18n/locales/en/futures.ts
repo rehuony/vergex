@@ -7,18 +7,16 @@ export const futures = {
     marketsFailed: 'Public markets could not be loaded.',
     retry: 'Retry',
     chartTimeframe: 'Chart timeframe',
-    loadingMarkets: 'Loading exchange markets…',
     openTyped: 'Press Enter to open this symbol.',
     noMarkets: 'This venue returned no markets.',
     chartOnly: 'Chart only',
     chartOnlyHint: 'No verified execution adapter for this market.',
-    marketsMeta: '{count} markets by 24h volume · as of {time}',
+    marketsMeta: '{count} markets · {time}',
     noAccount: 'No account',
     addAccount: 'Add an account',
     equity: 'Account equity',
     available: 'Available',
     balanceUnavailable: 'Balance unavailable',
-    loadingBalance: 'Loading balance…',
     entry: 'Entry',
     stopLoss: 'Stop loss',
     takeProfit: 'Take profit',
@@ -33,30 +31,28 @@ export const futures = {
       failed: 'The forecast could not be loaded.',
       loading: 'Loading the forecast…',
     },
-    fitPlan: 'Fit selected plan',
     comparePlans: 'Compare plans',
     exitCompare: 'Exit comparison',
     addModel: 'Add a model',
+    chartRetrying: 'Could not read candles. Trying again…',
     newIdea: 'New idea',
     validatingOrder: 'Validating account and order details…',
     composerHint: 'Ask about this market, or describe a trade…',
     generatePlans: 'Generate plans',
     stopFutures: 'Stop planning',
     send: 'Send',
-    welcome: 'Describe a trade, or start from one of these.',
     suggestions: 'Trade idea suggestions',
     starterPullback: 'Find a pullback entry',
     starterCompare: 'Compare ways to enter',
     starterLevels: 'Explore key price levels',
-    starterPullbackPrompt: 'Find a pullback entry with clear risk and exits.',
+    starterPullbackPrompt:
+      'Find a pullback entry from the current structure: the level, what invalidates it and where to take profit. If there is no good level yet, say what to wait for.',
     starterComparePrompt:
-      'Compare market, single-limit, price-ladder and TWAP entries for this market.',
+      'Compare market, single-limit, price-ladder and TWAP entries for this market: the net reward-to-risk of each and when it fits, then say which you would pick.',
     starterLevelsPrompt:
-      'Mark support and resistance, without creating orders.',
+      'Mark the key support and resistance levels on the chart and say why each matters. Analysis only: do not draft a plan.',
     comparePrompt:
-      'Compare four plans in this order: market entry, single limit, weighted ladder and TWAP for this market.',
-    planOnChart:
-      'This plan is on the chart. Ask to explain or revise it, then review the order when you are ready.',
+      'Draft plans for this market in this order: market entry, single limit, weighted ladder and TWAP. For any that does not fit, say why and what to wait for.',
     sections: 'Futures sections',
     tradeTab: 'Trade',
     settingsTab: 'Settings',
@@ -68,8 +64,6 @@ export const futures = {
     waitingForEntry: 'Waiting for an entry',
     latestPlans: 'Your latest plans',
     savedIdea: 'Saved idea',
-    waitingHint:
-      'No new entry selected. See the assistant’s explanation and conditions to watch.',
     chartLine: {
       long: 'Long {leverage}x · {quantity}',
       short: 'Short {leverage}x · {quantity}',
@@ -84,8 +78,7 @@ export const futures = {
     },
     chartSwitching:
       'The chart is still switching markets. Try again once it is ready.',
-    noPlans:
-      'Generate plans to compare market, limit, ladder and TWAP entries.',
+    noPlansYet: 'No plans yet',
     finishedPlans: 'Finished plans',
     realized: 'Realized',
     orderType: 'Type',
@@ -93,12 +86,21 @@ export const futures = {
     orderState: 'State',
     filledQuantity: 'Filled quantity',
     unconfirmed: 'Unconfirmed',
-    earlierDrafts: 'Earlier drafts',
+    expiredDrafts: 'Expired drafts',
     conversations: 'Conversations',
-    noHistory:
-      'Finished plans, earlier drafts and conversations will show here.',
+    noHistory: 'Nothing yet',
     continueConversation: 'Continue',
-    loadingConversation: 'Loading the conversation…',
+    renameConversation: 'Rename',
+    conversationName: 'Conversation name',
+    deleteConversation: 'Delete conversation',
+    deleteConversationMessage:
+      'Delete {name} and everything said in it? Plans it drafted stay.',
+    deleteDraft: 'Delete draft',
+    deleteDraftMessage: 'Delete the draft {name}?',
+    deleteCancel: 'Cancel',
+    historyActions: 'More actions',
+    historySearch: 'Search history',
+    historyNoMatch: 'No matches',
     conversationFailed: 'The conversation could not be loaded.',
     dismiss: 'Dismiss',
     agentModel: 'Model',
@@ -133,8 +135,8 @@ export const futures = {
     },
     structure: {
       market: 'Market',
-      limit: 'Single limit',
-      ladder: 'Weighted ladder',
+      limit: 'Limit',
+      ladder: 'Ladder',
       twap: 'TWAP',
     },
     validation: {
@@ -161,9 +163,6 @@ export const futures = {
       heading: 'Account positions and orders',
       noAccount: 'No {venue} account yet.',
       addAccount: 'Add an account',
-      openAccount: 'Open exchange ↗',
-      checking: 'Checking…',
-      refresh: 'Refresh account',
       buyLong: 'Buy / Long',
       sellShort: 'Sell / Short',
       traderRunning:
@@ -239,15 +238,22 @@ export const futures = {
       accountId: 'Exchange ID',
       entry: 'Entry',
       notConfirmed: 'Not confirmed',
-      recordsNote:
-        'Order records are not a substitute for a successful live exchange read.',
       noActive: 'No active execution.',
+      exitsMove: 'Stop and target',
+      exitsTitle: 'Stop and target of {market}',
+      exitsBreakeven: 'To breakeven',
+      exitsSave: 'Move',
+      exitsCancel: 'Cancel',
+      exitsSaved: 'Stop and target moved.',
+      cancelOrder: 'Cancel order',
+      cancelOrderMessage: 'Cancel the {symbol} order at {price}?',
+      orderCancelled: 'Order cancelled.',
       closeTitle: 'Close {market} {side}?',
       closeDescription: '{account} · {venue} · full position {quantity}',
       keepPosition: 'Keep position',
       confirmClose: 'Confirm market close',
       closeBody:
-        'This sends a market close through Vergex. Remaining Futures entry orders for this market are stopped first. Slippage and fees apply. No typed phrase is needed.',
+        'This sends a market close through Vergex. Remaining Futures entry orders for this market are stopped first. Slippage and fees apply.',
     },
     schedule: {
       twapName: 'TWAP release schedule',
@@ -257,10 +263,6 @@ export const futures = {
       preview: 'Preview · starts only after approval',
       limit: 'Limit {price}',
       together: 'Placed together at start',
-      twapNote:
-        'This seconds-based release axis is separate from candle time. T+0 is execution start, not a past candle. Each slice remains a limit order and may not fill.',
-      ladderNote:
-        'Each price level is a separate limit order. A level may never fill. All children share the displayed stop and target.',
     },
     blocker: {
       name: 'Current trade status',
@@ -301,14 +303,13 @@ export const futures = {
       previewOnly:
         'Equity preview only: no free margin was available. Amounts use account equity as a reference, not available funds. Refresh and review with available margin before trading.',
       availableAtSizing:
-        'Available margin at sizing: {available} {quote} · This plan uses {percent}% before costs. Fees and slippage are reserved separately.',
-      savedSize:
-        'Saved plan size. Review again to size a new order from current available margin.',
+        'Available margin {available} {quote} · uses {percent}%',
       oldCap:
         'This saved plan used the previous top-of-book size cap. New plans use available margin × leverage, with execution costs reserved.',
-      riskReduced: 'Size reduced by this plan’s maximum loss budget.',
+      riskReduced: 'Size reduced by the maximum loss',
     },
     review: {
+      title: 'Review {side} {symbol}',
       long: 'Long',
       short: 'Short',
       estEntry: 'Est. market entry',
@@ -317,6 +318,7 @@ export const futures = {
       target: 'Target',
       back: 'Back to review',
       confirm: 'Confirm and place live order',
+      confirmTestnet: 'Confirm and place testnet order',
       summary:
         'Total quantity {quantity} · Planned loss {loss} {quote} · {orders} child orders · {leverage}x leverage',
       replaces:
@@ -341,6 +343,7 @@ export const futures = {
       kind: 'Type',
       rewardRisk: 'R:R',
       refreshFirst: 'Refresh before trading',
+      closePlan: 'Close plan',
       waitEntry: 'Wait for entry',
       notFeasible: 'Not feasible',
       evaluating: 'Evaluating',
@@ -351,6 +354,7 @@ export const futures = {
       stop: 'Stop',
       target: 'Target',
       illustrative: 'Illustrative size · connect an account to size this trade',
+      illustrativeShort: 'Illustrative size',
       plannedLoss: 'Planned loss',
       targetReturn: 'Target return',
       viewOnChartName: 'View on chart: {name}',
@@ -358,6 +362,7 @@ export const futures = {
     tools: {
       riskLimits: 'Risk limits',
       noMinimum: '0 = no minimum',
+      ofEquity: '% of equity, 0 = no limit',
       calculators: 'Entry calculators',
       noCalculators: 'This conversation has built no calculators.',
       calculatorsFailed: 'The calculators could not be read.',
@@ -367,6 +372,7 @@ export const futures = {
       limit: {
         equity: 'Equity budget',
         max_risk: 'Maximum planned loss',
+        max_risk_pct: 'Maximum loss per trade',
         max_notional: 'Maximum notional',
         min_reward_risk: 'Minimum net reward/risk',
         fee_bps: 'Fee assumption',
@@ -396,8 +402,8 @@ export const futures = {
       method: 'Entry method',
       methodName: 'Custom entry method',
       market: 'Market',
-      limit: 'Single limit',
-      ladder: 'Price ladder',
+      limit: 'Limit',
+      ladder: 'Ladder',
       twap: 'TWAP fixed limit',
       direction: 'Direction',
       directionName: 'Custom direction',
@@ -410,11 +416,44 @@ export const futures = {
         'Enter one price and quantity weight per line; weights must sum to 1',
       slices: 'Slices',
       interval: 'Interval / seconds',
-      marketNote:
-        'Entry uses the current market quote when you create the draft. Actual fill may differ.',
-      draftNote: 'This creates an unapproved draft only. No orders are sent.',
+    },
+    rejection: {
+      exitPrice: 'The new price is not a valid number.',
+      exitSide:
+        'That price would fire at once. The market is at {bid} / {ask}.',
+      exitNotOpen:
+        'Only an open, fully protected position can have its stop or target moved.',
+      exitRefused:
+        'The exchange refused the new order, and the old one stays: {reason}',
+      orderInPlan:
+        'This order belongs to a running plan. Change or stop the plan instead.',
+      orderGone: 'This order is no longer open.',
+      tick: "A price is not on the market's tick size.",
+      direction: 'The stop and target must sit on opposite sides of the entry.',
+      entryFar: 'The entry is more than 10% from the market price.',
+      stopMargin:
+        'The stop and costs would use over 80% of the margin at this leverage. Lower the leverage.',
+      targetCosts: 'The target does not cover estimated fees and slippage.',
+      rewardRisk:
+        'Net reward/risk {ratio} is below the minimum {minimum} after fees and slippage.',
+      belowMinimum:
+        "The margin and risk budget allow {quantity} (worth {notional}), below the market's minimum of {minQty} or {minNotional}.",
+      staleBook: 'The order book is over 15 seconds old. Try again.',
+      clock:
+        'The exchange clock is over 10 seconds ahead of this machine. Synchronize the clock.',
+      expired: 'This plan has expired. Make it again and approve it.',
+      rulesChanged: "The market's rules changed. Make the plan again.",
+      marketMoved:
+        'The price moved past the approved slippage. Make the plan again.',
+      liquidity: 'There is not enough visible liquidity.',
+      depth:
+        'Not enough order-book depth within the approved price: {need} needed, {available} available. Size was not reduced. Refresh the plan or use a limit or split entry.',
+      traderRunning:
+        'A trader is running on this account. Stop it before using a one-time plan.',
     },
     activity: {
+      planningOnly:
+        'No free margin is available. Planning uses account equity as a reference, so these are comparison drafts rather than funded orders. Review with available margin before trading.',
       name: 'Live planning activity',
       thinking: 'Thinking',
       thinkingFor: 'Thinking · {seconds}s',
@@ -448,6 +487,13 @@ export const futures = {
       candleProgress: '{interval} · {count} / {target} candles · {scope}',
       candles: '{count} candles',
       limitedHistory: 'Limited exchange history',
+      latestHistory: 'Latest history · independent of chart view',
+      metric: {
+        funding_rate: 'Funding rate',
+        mark_price: 'Mark price',
+        open_interest: 'Open interest',
+        contracts: 'contracts',
+      },
       completed: 'Completed',
       stepFailed: 'Could not complete this step',
       candidateWait: '{kind} · Wait',

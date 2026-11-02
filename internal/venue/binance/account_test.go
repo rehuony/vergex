@@ -344,7 +344,7 @@ func TestNewAccount(t *testing.T) {
 	defer mockServer.Close()
 
 	// Test successful creation
-	t1 := NewAccount("test_api_key", "test_secret_key")
+	t1 := NewAccount("test_api_key", "test_secret_key", false)
 
 	// Modify client to use mock server
 	t1.client.BaseURL = mockServer.URL

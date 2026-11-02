@@ -53,7 +53,10 @@ func must(d Decimal) *big.Rat {
 // Snapshot is a single observed book, not a prediction. Rules are retrieved
 // from venue instrument metadata rather than guessed from a symbol name.
 type Snapshot struct {
-	Venue         string      `json:"venue"`
+	Venue string `json:"venue"`
+	// Testnet binds a plan to a venue's test environment. A real plan's bytes, and so
+	// its digest, do not mention it.
+	Testnet       bool        `json:"testnet,omitempty"`
 	Symbol        string      `json:"symbol"`
 	Kind          string      `json:"kind"`
 	BaseAsset     string      `json:"base_asset,omitempty"`
@@ -128,12 +131,12 @@ func (s Snapshot) Validate(now time.Time) error {
 		return errors.New("stale market snapshot")
 	}
 	if !s.SourceTime.IsZero() && now.Sub(s.SourceTime) > 15*time.Second {
-		return errors.New("Venue order book is over 15 seconds old; cannot plan or execute with stale data")
+		return rejected("staleBook", nil, "Venue order book is over 15 seconds old; cannot plan or execute with stale data")
 	}
 	// A small forward clock difference is distinct from stale data. The local
 	// machine measured ~7s behind exchange clocks; still bound the tolerance.
 	if !s.SourceTime.IsZero() && s.SourceTime.After(now.Add(10*time.Second)) {
-		return errors.New("Venue time is over 10 seconds ahead of the local clock. Synchronize the clock before planning or execution.")
+		return rejected("clock", nil, "Venue time is over 10 seconds ahead of the local clock. Synchronize the clock before planning or execution.")
 	}
 	return nil
 }
@@ -146,10 +149,12 @@ type Constraints struct {
 	AvailableMargin Decimal `json:"available_margin,omitempty"`
 	Equity          Decimal `json:"equity"`
 	MaxRisk         Decimal `json:"max_risk"`
-	MaxNotional     Decimal `json:"max_notional"`
-	MinRewardRisk   Decimal `json:"min_reward_risk"`
-	FeeBPS          Decimal `json:"fee_bps"`
-	SlippageBPS     Decimal `json:"slippage_bps"`
+	// MaxRiskPct is the share of equity an account-sized plan's stop may lose. 0 lifts it.
+	MaxRiskPct    Decimal `json:"max_risk_pct,omitempty"`
+	MaxNotional   Decimal `json:"max_notional"`
+	MinRewardRisk Decimal `json:"min_reward_risk"`
+	FeeBPS        Decimal `json:"fee_bps"`
+	SlippageBPS   Decimal `json:"slippage_bps"`
 }
 
 // With no policy, for limits given by hand, sizing also stays within visible liquidity.
@@ -180,6 +185,12 @@ func (c Constraints) Validate() error {
 	}
 	if c.Leverage < 0 || c.Leverage > 20 {
 		return errors.New("planning leverage must be between 1x and 20x")
+	}
+	if c.MaxRiskPct != "" {
+		pct, err := rat(c.MaxRiskPct)
+		if err != nil || pct.Sign() < 0 || pct.Cmp(big.NewRat(100, 1)) > 0 {
+			return errors.New("maximum loss per trade must be between 0 and 100 percent; 0 lifts the limit")
+		}
 	}
 	if c.PlanningOnly {
 		available, err := rat(c.AvailableMargin)
@@ -261,28 +272,28 @@ func Compile(s Snapshot, c Constraints, i Idea, now time.Time) (Plan, error) {
 			return p, errors.New("invalid idea price")
 		}
 		if !aligned(must(d), must(s.Tick)) {
-			return p, errors.New("price violates tick size")
+			return p, rejected("tick", nil, "price violates tick size")
 		}
 	}
 	e, st, tp := must(i.Entry), must(i.Stop), must(i.Target)
 	if (i.Side == "long" && (st.Cmp(e) >= 0 || tp.Cmp(e) <= 0)) || (i.Side == "short" && (st.Cmp(e) <= 0 || tp.Cmp(e) >= 0)) {
-		return p, errors.New("invalid stop/target direction")
+		return p, rejected("direction", nil, "invalid stop/target direction")
 	}
 	mid := div(add(must(s.Bid), must(s.Ask)), big.NewRat(2, 1))
 	if div(abs(sub(e, mid)), mid).Cmp(big.NewRat(1, 10)) > 0 {
-		return p, errors.New("entry more than 10% from book")
+		return p, rejected("entryFar", nil, "entry more than 10% from book")
 	}
 	cost := div(add(must(c.FeeBPS), must(c.SlippageBPS)), big.NewRat(10000, 1))
 	loss := add(abs(sub(e, st)), mul(add(e, st), cost))
 	if c.EffectiveLeverage() > 1 && mul(loss, big.NewRat(int64(c.EffectiveLeverage()), 1)).Cmp(mul(e, big.NewRat(4, 5))) >= 0 {
-		return p, errors.New("stop and costs consume over 80% of initial margin at this leverage; reduce leverage")
+		return p, rejected("stopMargin", nil, "stop and costs consume over 80% of initial margin at this leverage; reduce leverage")
 	}
 	gain := sub(abs(sub(tp, e)), mul(add(e, tp), cost))
 	if gain.Sign() <= 0 {
-		return p, errors.New("target return does not cover estimated fees and slippage")
+		return p, rejected("targetCosts", nil, "target return does not cover estimated fees and slippage")
 	}
 	if must(c.MinRewardRisk).Sign() > 0 && div(gain, loss).Cmp(must(c.MinRewardRisk)) < 0 {
-		return p, fmt.Errorf("Net reward/risk %s is below minimum %s after fees and slippage; per-unit risk %s, net reward %s", number(div(gain, loss)), c.MinRewardRisk, number(loss), number(gain))
+		return p, rejected("rewardRisk", map[string]string{"ratio": string(number(div(gain, loss))), "minimum": string(c.MinRewardRisk)}, fmt.Sprintf("Net reward/risk %s is below minimum %s after fees and slippage; per-unit risk %s, net reward %s", number(div(gain, loss)), c.MinRewardRisk, number(loss), number(gain)))
 	}
 	// Keep the former top-level cap only for previously signed plans. New account
 	// sizing uses margin; market execution checks depth without resizing the order.
@@ -294,7 +305,7 @@ func Compile(s Snapshot, c Constraints, i Idea, now time.Time) (Plan, error) {
 	q := floorStep(size, must(s.Step))
 	if q.Cmp(must(s.MinQty)) < 0 || mul(q, e).Cmp(must(s.MinNotional)) < 0 {
 		if c.SizingPolicy == SizingAccountMargin {
-			return p, fmt.Errorf("Available margin and risk budget allow quantity %s (notional %s), below venue minimum quantity %s or notional %s", number(q), number(mul(q, e)), s.MinQty, s.MinNotional)
+			return p, rejected("belowMinimum", map[string]string{"quantity": string(number(q)), "notional": string(number(mul(q, e))), "minQty": string(s.MinQty), "minNotional": string(s.MinNotional)}, fmt.Sprintf("Available margin and risk budget allow quantity %s (notional %s), below venue minimum quantity %s or notional %s", number(q), number(mul(q, e)), s.MinQty, s.MinNotional))
 		}
 		return p, fmt.Errorf("Risk, notional and liquidity constraints allow quantity %s (notional %s), below venue minimum quantity %s or notional %s. Top-of-book side size is %s; participation is capped at 10%%. Changing the target cannot remove liquidity or minimum-order limits.", number(q), number(mul(q, e)), s.MinQty, s.MinNotional, number(liquidity))
 	}
@@ -319,12 +330,28 @@ func (p Plan) Digest() string {
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:])
 }
+
+// Rejection is a plan refused for a reason the user can act on. Key names its wording in
+// the interface and Params fills it in. Error stays in English, which is what the model
+// reads.
+type Rejection struct {
+	Key    string
+	Params map[string]string
+	Text   string
+}
+
+func (r Rejection) Error() string { return r.Text }
+
+func rejected(key string, params map[string]string, text string) error {
+	return Rejection{Key: key, Params: params, Text: text}
+}
+
 func (p Plan) Verify(now time.Time) error {
 	if p.Hash != p.Digest() || p.ID != p.Hash[:16] {
 		return errors.New("plan integrity failure")
 	}
 	if !now.Before(p.Expires) {
-		return errors.New("plan expired; replan and approve again")
+		return rejected("expired", nil, "plan expired; replan and approve again")
 	}
 	rebuilt, err := Compile(p.Snapshot, p.Constraints, p.Idea, p.Created)
 	if err != nil {
@@ -340,26 +367,50 @@ func (p Plan) Verify(now time.Time) error {
 	return nil
 }
 
+// CheckExit says whether a stop or target can be moved to a price now: on the market's tick,
+// and on the side of the fresh book that does not fire at once.
+func CheckExit(p Plan, role string, price Decimal, s Snapshot, now time.Time) error {
+	if err := s.Validate(now); err != nil {
+		return err
+	}
+	if !Positive(price) {
+		return rejected("exitPrice", nil, "the new price is not a positive decimal")
+	}
+	if !aligned(must(price), must(s.Tick)) {
+		return rejected("tick", nil, "price violates tick size")
+	}
+	bid, ask, value := must(s.Bid), must(s.Ask), must(price)
+	// A long's stop sells below the market and its target above, and a short's the other way.
+	var below bool
+	if (role == "sl") == (p.Idea.Side == "long") {
+		below = true
+	}
+	if (below && value.Cmp(bid) >= 0) || (!below && value.Cmp(ask) <= 0) {
+		return rejected("exitSide", map[string]string{"bid": string(s.Bid), "ask": string(s.Ask)}, fmt.Sprintf("the new price would fire at once against a market of %s / %s", s.Bid, s.Ask))
+	}
+	return nil
+}
+
 func CheckBook(p Plan, s Snapshot, now time.Time) error {
 	if err := s.Validate(now); err != nil {
 		return err
 	}
 	a := p.Snapshot
-	if s.Venue != a.Venue || s.Symbol != a.Symbol || s.Kind != a.Kind || s.Tick != a.Tick || s.Step != a.Step || s.MinQty != a.MinQty || s.MinNotional != a.MinNotional || s.ContractValue != a.ContractValue {
-		return errors.New("instrument rules changed; replan")
+	if s.Venue != a.Venue || s.Testnet != a.Testnet || s.Symbol != a.Symbol || s.Kind != a.Kind || s.Tick != a.Tick || s.Step != a.Step || s.MinQty != a.MinQty || s.MinNotional != a.MinNotional || s.ContractValue != a.ContractValue {
+		return rejected("rulesChanged", nil, "instrument rules changed; replan")
 	}
 	quote, size := s.Ask, s.AskSize
 	if p.Idea.Side == "short" {
 		quote, size = s.Bid, s.BidSize
 	}
 	if div(abs(sub(must(quote), must(originalQuote(p)))), must(originalQuote(p))).Cmp(div(must(p.Constraints.SlippageBPS), big.NewRat(10000, 1))) > 0 {
-		return fmt.Errorf("market moved beyond approved slippage; replan")
+		return rejected("marketMoved", nil, "market moved beyond approved slippage; replan")
 	}
 	if p.Constraints.SizingPolicy == SizingAccountMargin {
 		return checkMarketDepth(p, s)
 	}
 	if must(p.Quantity).Cmp(div(must(size), big.NewRat(10, 1))) > 0 {
-		return errors.New("insufficient visible liquidity")
+		return rejected("liquidity", nil, "insufficient visible liquidity")
 	}
 	return nil
 }
@@ -395,7 +446,7 @@ func checkMarketDepth(p Plan, s Snapshot) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("Insufficient order-book depth within the approved market price bound: need %s, available %s. Size was not reduced; refresh the plan or choose a limit or split entry", p.Quantity, number(available))
+	return rejected("depth", map[string]string{"need": string(p.Quantity), "available": string(number(available))}, fmt.Sprintf("Insufficient order-book depth within the approved market price bound: need %s, available %s. Size was not reduced; refresh the plan or choose a limit or split entry", p.Quantity, number(available)))
 }
 
 func originalQuote(p Plan) Decimal {

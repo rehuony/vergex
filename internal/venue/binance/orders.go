@@ -622,6 +622,7 @@ func (t *Account) GetOpenOrders(symbol string) ([]account.OpenOrder, error) {
 				Side:         string(algoOrder.Side),
 				PositionSide: string(algoOrder.PositionSide),
 				Type:         string(algoOrder.OrderType),
+				Conditional:  true,
 				Price:        0, // Algo orders use stop price
 				StopPrice:    triggerPrice,
 				Quantity:     quantity,
@@ -721,10 +722,16 @@ func (t *Account) GetOrderStatus(symbol string, orderID string) (map[string]inte
 	avgPrice, _ := strconv.ParseFloat(order.AvgPrice, 64)
 	executedQty, _ := strconv.ParseFloat(order.ExecutedQuantity, 64)
 
+	// A status not known here stays as it came, and whoever reads it leaves it alone.
+	status, err := orderStatus(order.Status)
+	if err != nil {
+		status = string(order.Status)
+	}
+
 	result := map[string]interface{}{
 		"orderId":     order.OrderID,
 		"symbol":      order.Symbol,
-		"status":      string(order.Status),
+		"status":      status,
 		"avgPrice":    avgPrice,
 		"executedQty": executedQty,
 		"side":        string(order.Side),

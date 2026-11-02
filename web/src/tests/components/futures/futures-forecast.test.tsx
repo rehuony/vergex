@@ -49,6 +49,7 @@ interface ShownProps {
   venue?: string
   symbol?: string
   interval?: string
+  candlesReady?: boolean
   comparing?: boolean
 }
 
@@ -68,6 +69,7 @@ function Shown(props: ShownProps) {
         symbol="BTCUSDT"
         interval="1h"
         scene={1}
+        candlesReady
         comparing={false}
         {...props}
       />
@@ -150,6 +152,36 @@ it('says why there is nothing to overlay, without asking the server', () => {
   show({ venue: 'okx', symbol: 'BTC-USD-SWAP' })
   expect(screen.getByText('No forecast for this market.')).toBeVisible()
   expect(mocks.overlay).not.toHaveBeenCalled()
+})
+
+it('does not ask for the forecast or draw it before the real candles are on the chart', async () => {
+  localStorage.setItem('vergex.futures.forecast', 'on')
+  const candlesReady = (ready: boolean) => (
+    <MemoryRouter>
+      <QueryWrapper>
+        <Shown candlesReady={ready} />
+      </QueryWrapper>
+    </MemoryRouter>
+  )
+  const { rerender } = render(candlesReady(false))
+  expect(mocks.overlay).not.toHaveBeenCalled()
+  expect(mocks.setForecast).toHaveBeenLastCalledWith(
+    'binance',
+    'BTCUSDT',
+    '1h',
+    []
+  )
+  expect(screen.queryByRole('status')).toBeNull()
+  rerender(candlesReady(true))
+  await waitFor(() =>
+    expect(mocks.setForecast).toHaveBeenLastCalledWith(
+      'binance',
+      'BTCUSDT',
+      '1h',
+      rows
+    )
+  )
+  expect(mocks.overlay).toHaveBeenCalledTimes(1)
 })
 
 it('passes on why a coin has no forecast yet', async () => {

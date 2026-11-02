@@ -3,6 +3,7 @@ package account
 import (
 	"fmt"
 	"time"
+	"vergex/internal/database"
 
 	"gorm.io/gorm"
 )
@@ -111,6 +112,12 @@ func (s *OrderStore) UpdatedSince(sinceMs int64, limit int) ([]*TraderOrder, err
 	var orders []*TraderOrder
 	err := s.orders().Where("o.updated_at >= ?", time.UnixMilli(sinceMs).UTC()).Order("o.updated_at ASC").Limit(limit).Find(&orders).Error
 	return orders, err
+}
+
+// FillCursorAt returns where to read on from with FillsAfter to see the fills from a time
+// on.
+func (s *OrderStore) FillCursorAt(at time.Time) (int64, error) {
+	return database.CursorAt(s.db, "account.fills", "executed_at", at)
 }
 
 // FillsAfter returns the fills past an ID and no older than a time, oldest first.

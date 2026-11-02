@@ -171,13 +171,16 @@ export function comparisonShapes(plans: Plan[], selected: string | undefined) {
       ? p.orders
       : [{ price: p.idea.entry, quantity: p.quantity }]
     const total = orders.reduce((n, o) => n + Number(o.quantity), 0)
-    const entry = total
-      ? orders.reduce((n, o) => n + Number(o.price) * Number(o.quantity), 0) /
-        total
-      : Number(p.idea.entry)
+    const kind = p.idea.execution?.kind
+    // A ladder goes by the average of its orders. A market order's price is only its bound,
+    // so it goes by where it is expected to fill, like every other plan.
+    const entry =
+      kind === 'ladder' && total
+        ? orders.reduce((n, o) => n + Number(o.price) * Number(o.quantity), 0) /
+          total
+        : Number(p.idea.entry)
     const active = p.id === selected
     const color = colors.ink
-    const tag = 'ABCD'[i]
     const x1 = { frac: left + i * lane + 0.005 },
       x2 = { frac: left + (i + 1) * lane - 0.005 }
     for (const [price, c] of [
@@ -194,9 +197,10 @@ export function comparisonShapes(plans: Plan[], selected: string | undefined) {
         alpha: active ? 0.16 : 0.07,
         border: active ? 1 : 0,
       })
-    const lines: [number, string][] = active
-      ? orders.map((o) => [Number(o.price), color])
-      : [[entry, color]]
+    const lines: [number, string][] =
+      active && kind === 'ladder'
+        ? orders.map((o) => [Number(o.price), color])
+        : [[entry, color]]
     lines.push([Number(p.idea.stop), colors.down])
     lines.push([Number(p.idea.target), colors.up])
     for (const [price, c] of lines)
@@ -210,26 +214,27 @@ export function comparisonShapes(plans: Plan[], selected: string | undefined) {
         width: active ? 2 : 1,
         dashed: !active,
       })
-    const entryLabel =
-      orders.length > 1 && p.idea.execution?.kind === 'ladder'
-        ? 'Average entry ≈ '
-        : p.idea.execution?.kind === 'market'
-          ? 'Est. market entry '
-          : 'Entry '
+    // A lane is narrow: its colours say which price is which, as in the plan's row. An
+    // entry that is an estimate or an average says so.
+    const estimated = kind === 'ladder' || kind === 'market'
+    const digits = p.snapshot.tick.split('.')[1]?.length ?? 0
+    const stop = Number(p.idea.stop),
+      target = Number(p.idea.target)
     const labels: [number, string, string, number][] = [
-      [
-        Number(p.idea.target),
-        tag +
-          ' · ' +
-          (p.idea.side === 'long' ? 'Long' : 'Short') +
-          ' Target ' +
-          fmt(p.idea.target),
-        colors.up,
-        13,
-      ],
-      [entry, entryLabel + fmt(entry), color, 13],
-      [Number(p.idea.stop), 'Stop loss ' + fmt(p.idea.stop), colors.down, 12],
+      [target, fmt(target), colors.up, 13],
+      [entry, (estimated ? '≈' : '') + fmt(entry.toFixed(digits)), color, 13],
+      [stop, fmt(stop), colors.down, 12],
     ]
+    shapes.push({
+      type: 'text',
+      x: x1,
+      p: Math.max(entry, stop, target),
+      text: t(`futures.structure.${kind || 'limit'}`, activeLanguage()),
+      color,
+      size: 12,
+      bold: true,
+      raise: 19,
+    })
     for (const [price, text, c, size] of labels)
       shapes.push({
         type: 'text',

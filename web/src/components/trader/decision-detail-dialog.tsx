@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api'
 import { t, type Language } from '@/i18n'
 import { Dialog } from '@/components/common/dialog'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { StoredText } from '@/components/common/stored-text'
 import { cn } from '@/utils/cn'
 import { LogLine } from './decision-log'
@@ -61,7 +61,7 @@ export function DecisionDetailDialog({
         error ? (
           <PanelState role="alert">{label('decisionsFailed')}</PanelState>
         ) : (
-          <PanelState role="status">{t('loading', language)}</PanelState>
+          <PanelLoading />
         )
       ) : (
         <>
@@ -128,10 +128,10 @@ export function DecisionDetailDialog({
                             {fmtPx(action.price)}
                           </td>
                           <td className={cn(cellClass, 'text-right')}>
-                            {action.leverage ? `${action.leverage}×` : '—'}
+                            {action.leverage ?? 0}×
                           </td>
                           <td className={cn(cellClass, 'text-right')}>
-                            {action.confidence ?? '—'}
+                            {action.confidence ?? 0}
                           </td>
                           <td className={cn(cellClass, 'whitespace-normal')}>
                             {hold ? (

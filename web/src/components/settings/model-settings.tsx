@@ -1,4 +1,5 @@
-import { useId, useState, type FormEvent } from 'react'
+import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Brain, ExternalLink, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { AgentModel, ModelTest, TraderInfo } from '@/types'
@@ -8,15 +9,18 @@ import { cn } from '@/utils/cn'
 import { confirmToast } from '@/components/common/notify'
 import {
   configuredModels,
+  MODEL_CATALOG_KEY,
   useModelConfigs,
   useSupportedModels,
   useTraders,
 } from '@/hooks/use-connections'
 import { dialogInputClass } from '@/components/common/dialog'
+import { PanelLoading } from '@/components/common/panel'
 import { getModelIcon } from '@/components/common/model-icons'
 import { AGENT_PROVIDER_CONFIG } from '@/constants/model-providers'
 import { Button } from '@/components/ui/button'
 import { AppSelect } from '@/components/ui/select'
+import { ModelField } from './model-field'
 import {
   SettingActions,
   SettingBack,
@@ -27,7 +31,7 @@ import {
   SettingState,
 } from '@/components/common/setting-row'
 
-const inputClass = cn(dialogInputClass, 'h-9')
+const inputClass = cn(dialogInputClass, 'max-sm:h-10 max-sm:text-base')
 
 const modelIcon = (model: AgentModel) =>
   getModelIcon(model.provider || model.id, { width: 20, height: 20 }) || (
@@ -54,6 +58,7 @@ export function ModelSettings({ language }: { language: Language }) {
         key={editing}
         existing={saved.find((m) => m.id === editing)}
         choices={unused}
+        supported={supported}
         language={language}
         onDone={() => setEditing(null)}
       />
@@ -79,9 +84,7 @@ export function ModelSettings({ language }: { language: Language }) {
           {t('connections.loadFailed', language)}
         </SettingState>
       ) : isLoading || !models ? (
-        <SettingState role="status">
-          {t('connections.loading', language)}
-        </SettingState>
+        <PanelLoading className="flex-1" />
       ) : saved.length === 0 ? (
         <SettingState>
           <Brain className="size-6" aria-hidden="true" />
@@ -125,22 +128,34 @@ export function ModelSettings({ language }: { language: Language }) {
 function ModelForm({
   existing,
   choices,
+  supported,
   language,
   onDone,
 }: {
   existing?: AgentModel
   choices: AgentModel[]
+  supported: AgentModel[]
   language: Language
   onDone: () => void
 }) {
   const id = useId()
+  const client = useQueryClient()
   const { refetch } = useModelConfigs()
   const { data: traders } = useTraders()
   const [provider, setProvider] = useState(choices[0]?.id ?? '')
   const model = existing ?? choices.find((m) => m.id === provider)
   const [apiKey, setApiKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState(existing?.customApiUrl ?? '')
-  const [modelName, setModelName] = useState(existing?.customModelName ?? '')
+  // null until edited: the field shows the provider's own endpoint.
+  const [baseUrl, setBaseUrl] = useState<string | null>(
+    existing?.customApiUrl || null
+  )
+  // Like the endpoint: null until edited, and the field shows the provider's own.
+  const [modelName, setModelName] = useState<string | null>(
+    existing?.customModelName || null
+  )
+  // What the provider offers with what is in the form, and whether that is still coming.
+  const [catalog, setCatalog] = useState<string[]>([])
+  const [listing, setListing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   // The last test of the values in the form; editing a field clears it.
@@ -148,6 +163,45 @@ function ModelForm({
   const keySaved = Boolean(existing?.has_api_key)
   const ready = Boolean(model) && (apiKey.trim() !== '' || keySaved)
   const keyLink = model && AGENT_PROVIDER_CONFIG[model.provider]?.apiUrl
+  const officialUrl =
+    supported.find((row) => row.provider === model?.provider)?.defaultBaseUrl ??
+    ''
+  const shownUrl = baseUrl ?? officialUrl
+  // The official endpoint is saved as none, so it stays whatever the provider's default is.
+  const customUrl = shownUrl.trim() === officialUrl ? '' : shownUrl.trim()
+  const key = apiKey.trim()
+  const officialModel = model ? defaultModel(model) : ''
+  const shownModel = modelName ?? officialModel
+  // The provider's own default is saved as none, as the endpoint is.
+  const customModel =
+    shownModel.trim() === officialModel ? '' : shownModel.trim()
+  const modelNames = [...new Set([officialModel, ...catalog])]
+    .filter(Boolean)
+    .sort()
+
+  useEffect(() => {
+    setCatalog([])
+    if (!model || !ready) return
+    let live = true
+    setListing(true)
+    const timer = setTimeout(() => {
+      api
+        .listAvailableModels({
+          agent_model_id: model.id,
+          api_key: key,
+          custom_api_url: customUrl,
+        })
+        .then((names) => live && setCatalog(names))
+        // Only a convenience: a name can still be typed.
+        .catch(() => {})
+        .finally(() => live && setListing(false))
+    }, 500)
+    return () => {
+      live = false
+      clearTimeout(timer)
+      setListing(false)
+    }
+  }, [model?.id, ready, key, customUrl])
 
   const write = async (
     fields: {
@@ -165,6 +219,7 @@ function ModelForm({
     try {
       await api.updateModelConfigs({ models: { [model.id]: fields } })
       await refetch()
+      void client.invalidateQueries({ queryKey: [MODEL_CATALOG_KEY] })
       toast.success(t(done, language))
       onDone()
     } catch {
@@ -187,9 +242,9 @@ function ModelForm({
       setTest(
         await api.testModelConfig({
           agent_model_id: model.id,
-          api_key: apiKey.trim(),
-          custom_api_url: baseUrl.trim(),
-          custom_model_name: modelName.trim(),
+          api_key: key,
+          custom_api_url: customUrl,
+          custom_model_name: customModel,
         })
       )
     } catch (err) {
@@ -230,9 +285,9 @@ function ModelForm({
     void write(
       {
         enabled: true,
-        api_key: apiKey.trim(),
-        custom_api_url: baseUrl.trim(),
-        custom_model_name: modelName.trim(),
+        api_key: key,
+        custom_api_url: customUrl,
+        custom_model_name: customModel,
       },
       'agentTradersToast.modelConfigUpdated',
       'saveConfigFailed'
@@ -297,7 +352,12 @@ function ModelForm({
           <AppSelect
             id={`${id}-provider`}
             value={provider}
-            onChange={edit(setProvider)}
+            onChange={(next) => {
+              edit(setProvider)(next)
+              // What was filled in was for the provider before.
+              setBaseUrl(null)
+              setModelName(null)
+            }}
             options={choices.map((m) => ({ value: m.id, label: m.name }))}
             className="h-9"
           />
@@ -325,9 +385,9 @@ function ModelForm({
         <input
           id={`${id}-url`}
           type="url"
-          value={baseUrl}
+          value={shownUrl}
           onChange={(e) => edit(setBaseUrl)(e.target.value)}
-          placeholder="https://api.example.com/v1"
+          placeholder={officialUrl}
           className={inputClass}
         />
       </SettingRow>
@@ -335,13 +395,15 @@ function ModelForm({
         label={t('connections.modelName', language)}
         htmlFor={`${id}-model`}
       >
-        <input
+        <ModelField
           id={`${id}-model`}
-          type="text"
-          value={modelName}
-          onChange={(e) => edit(setModelName)(e.target.value)}
-          placeholder={model && defaultModel(model)}
+          value={shownModel}
+          placeholder={officialModel}
+          names={modelNames}
+          listing={listing}
           className={inputClass}
+          language={language}
+          onChange={edit(setModelName)}
         />
       </SettingRow>
       <SettingActions message={status.text} messageTone={status.tone}>

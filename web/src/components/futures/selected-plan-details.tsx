@@ -1,11 +1,14 @@
+import { X } from 'lucide-react'
 import type { FuturesState } from '@/api/futures'
 import { StatStrip } from '@/components/common/figures'
+import { Button } from '@/components/ui/button'
 import { ExecutionSchedule } from './execution-schedule'
 import { PlanFunding } from './plan-funding'
 import { useFuturesLabel } from './use-futures-label'
 
 interface SelectedPlanDetailsProps {
   record: FuturesState['records'][string]
+  onClose: () => void
 }
 
 const money = (value: string) =>
@@ -15,15 +18,31 @@ const money = (value: string) =>
 
 // SelectedPlanDetails is what the plan on the chart rests on: its reasoning, what it risks
 // and how it is paid for, and its child orders. Its prices are in its row, and on the chart.
-export function SelectedPlanDetails({ record }: SelectedPlanDetailsProps) {
+export function SelectedPlanDetails({
+  record,
+  onClose,
+}: SelectedPlanDetailsProps) {
   const label = useFuturesLabel('structures')
   const { plan } = record
   return (
     <div>
       <div className="px-4 py-3">
-        <h3 className="text-[13px] font-medium text-vergex-ink">
-          {plan.idea.name}
-        </h3>
+        <div className="flex items-start gap-2">
+          <h3 className="min-w-0 flex-1 text-[13px] font-medium text-vergex-ink">
+            {plan.idea.name}
+          </h3>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="-mr-2 -mt-1.5 size-8 max-sm:size-10"
+            aria-label={label('closePlan')}
+            title={label('closePlan')}
+            onClick={onClose}
+          >
+            <X className="size-4" aria-hidden="true" />
+          </Button>
+        </div>
         {plan.idea.rationale && (
           <p className="mt-1 text-[13px] leading-relaxed text-vergex-ink-soft">
             {plan.idea.rationale}

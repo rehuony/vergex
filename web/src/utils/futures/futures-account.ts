@@ -47,6 +47,15 @@ export function accountPositions(value: unknown): AccountPosition[] {
     .filter((p) => p.quantity > 0)
 }
 
+// A position at a newer mark price than the exchange read it at. This is for reading only:
+// closing always goes by the exchange's own figures.
+export function atMark(position: AccountPosition, mark?: number) {
+  if (!mark || mark <= 0) return position
+  const move =
+    position.side === 'long' ? mark - position.entry : position.entry - mark
+  return { ...position, mark, pnl: move * position.quantity }
+}
+
 // Expand JavaScript scientific notation without rounding exchange observations.
 export function positionDecimal(value: number): string {
   if (!Number.isFinite(value) || value <= 0)

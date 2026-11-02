@@ -25,6 +25,23 @@ const show = async (record: Partial<DecisionRecord>) => {
   await waitFor(() => expect(screen.getByText('Cycle 7')).toBeInTheDocument())
 }
 
+it('says a rule stopped an order without calling it a fault', async () => {
+  await show({
+    success: true,
+    decisions: [
+      {
+        action: 'open_long',
+        symbol: 'SOLUSDT',
+        success: false,
+        blocked: true,
+        timestamp: '2026-08-15T12:00:00Z',
+      } as DecisionRecord['decisions'][number],
+    ],
+  })
+  expect(screen.getByText('1 stopped by a rule')).toBeInTheDocument()
+  expect(screen.queryByText(/Fault/)).toBeNull()
+})
+
 it('marks success=true cycles as faults when their orders failed', async () => {
   await show({
     success: true,

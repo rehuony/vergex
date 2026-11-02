@@ -114,3 +114,24 @@ func TestFixedExitDecisionStillRequiresTakeProfit(t *testing.T) {
 		t.Fatal("ordinary fixed-exit strategy should still reject zero take profit")
 	}
 }
+
+func TestABadDecisionTakesOnlyItselfOut(t *testing.T) {
+	reply := `<decision>[
+		{"symbol":"BTCUSDT","action":"close_long","reasoning":"take the gain"},
+		{"symbol":"SOLUSDT","action":"open_long","leverage":0,"position_size_usd":100,"stop_loss":50,"take_profit":200,"reasoning":"no leverage"},
+		{"symbol":"ETHUSDT","action":"dance","reasoning":"no such thing"}
+	]</decision>`
+	full, err := parseFullDecisionResponse(reply, 1000, 5, 5, 5, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(full.Decisions) != 3 {
+		t.Fatalf("decisions: %+v", full.Decisions)
+	}
+	if full.Decisions[0].Rejected != "" {
+		t.Fatalf("the close was refused: %s", full.Decisions[0].Rejected)
+	}
+	if full.Decisions[1].Rejected == "" || full.Decisions[2].Rejected == "" {
+		t.Fatalf("bad decisions passed: %+v", full.Decisions)
+	}
+}

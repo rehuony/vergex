@@ -5,7 +5,7 @@ import { api } from '@/api'
 import { THEME_EVENT } from '@/contexts/theme-context'
 import { t, type Language } from '@/i18n'
 import type { EquityPoint, EquityRange } from '@/types'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { Segmented } from '@/components/common/segmented'
 import { pollEvery } from '@/utils/poll'
 
@@ -156,9 +156,11 @@ export function EquityCurve({
           <PanelState role="alert" className="h-full">
             {label('equityFailed')}
           </PanelState>
+        ) : isLoading ? (
+          <PanelLoading className="h-full" />
         ) : (
           <PanelState role="status" className="h-full">
-            {isLoading ? t('loading', language) : label('noEquity')}
+            {label('noEquity')}
           </PanelState>
         )}
       </div>

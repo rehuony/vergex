@@ -52,10 +52,10 @@ it('lists running traders first, then by the chosen column', () => {
   show({ traders: [trader('Alpha'), trader('Beta'), trader('Gamma', true)] })
   expect(names()).toEqual(['Gamma', 'Alpha', 'Beta'])
 
-  fireEvent.click(screen.getByRole('button', { name: 'Equity' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Account equity' }))
   expect(names()).toEqual(['Beta', 'Alpha', 'Gamma'])
 
-  fireEvent.click(screen.getByRole('button', { name: 'Equity' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Account equity' }))
   expect(names()).toEqual(['Alpha', 'Beta', 'Gamma'])
 })
 

@@ -141,3 +141,23 @@ func TestEstimateTokensCountsWhatItReads(t *testing.T) {
 		t.Fatal("more coins and indicators should cost more")
 	}
 }
+
+func TestLossLimitsStayInRangeAndZeroIsOff(t *testing.T) {
+	for _, tt := range []struct{ in, want float64 }{{0, 0}, {-3, 0}, {0.1, MinLossLimitPct}, {5, 5}, {400, MaxLossLimitPct}} {
+		config := DefaultAgent()
+		config.RiskControl.MaxDailyLossPct, config.RiskControl.MaxDrawdownPct = tt.in, tt.in
+		if err := config.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if config.RiskControl.MaxDailyLossPct != tt.want || config.RiskControl.MaxDrawdownPct != tt.want {
+			t.Fatalf("%v became %v and %v", tt.in, config.RiskControl.MaxDailyLossPct, config.RiskControl.MaxDrawdownPct)
+		}
+	}
+	missing, err := Decode(Agent, []byte(`{"coin_source":{"source_type":"static","static_coins":["BTCUSDT"]},"risk_control":{"max_positions":3}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if risk := missing.(*AgentConfig).RiskControl; risk.MaxDailyLossPct != 0 || risk.MaxDrawdownPct != 0 {
+		t.Fatalf("a config without them: %+v", risk)
+	}
+}

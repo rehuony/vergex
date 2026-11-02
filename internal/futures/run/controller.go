@@ -23,15 +23,21 @@ type Market interface {
 	Snapshot(context.Context, string, string) (plan.Snapshot, error)
 }
 type Controller struct {
-	DB       *gorm.DB
-	Factory  Factory
-	Market   Market
-	mu       sync.Mutex
-	workers  map[string]context.CancelFunc
-	stopped  bool
-	runLocks sync.Map
-	workerWG sync.WaitGroup
-	ledgerWG sync.WaitGroup
+	DB      *gorm.DB
+	Factory Factory
+	Market  Market
+	// TestnetMarket reads the books of plans made for a test environment.
+	TestnetMarket Market
+	// steppedByHand leaves watching a run to whoever is testing it.
+	steppedByHand bool
+	mu            sync.Mutex
+	workers       map[string]context.CancelFunc
+	stopped       bool
+	runLocks      sync.Map
+	workerWG      sync.WaitGroup
+	ledgerWG      sync.WaitGroup
+	// ledgerLast is each run's latest write to the ledger still under way.
+	ledgerLast map[string]<-chan struct{}
 }
 
 func New(db *gorm.DB, f Factory, m Market) (*Controller, error) {
@@ -41,6 +47,23 @@ func New(db *gorm.DB, f Factory, m Market) (*Controller, error) {
 		return nil, e
 	}
 	return c, nil
+}
+
+// book reads a fresh book from the environment a plan was made for.
+func (c *Controller) book(ctx context.Context, s plan.Snapshot) (plan.Snapshot, error) {
+	if !s.Testnet {
+		return c.Market.Snapshot(ctx, s.Venue, s.Symbol)
+	}
+	if c.TestnetMarket == nil {
+		return plan.Snapshot{}, errors.New("Test environment market data is unavailable")
+	}
+	return c.TestnetMarket.Snapshot(ctx, s.Venue, s.Symbol)
+}
+
+// brokerFits reports whether a broker is on the venue and environment a plan was made for.
+func brokerFits(b Broker, s plan.Snapshot) bool {
+	testnet, ok := b.(interface{ Testnet() bool })
+	return b.Venue() == s.Venue && (ok && testnet.Testnet()) == s.Testnet
 }
 func digest(p plan.Plan, user, exchange, account string) string {
 	raw, _ := json.Marshal([]any{p.Hash, user, exchange, account, fmt.Sprintf("LIVE/GTC/%dx/fixed-limit/partial-fill-reduce-only-protection/no-strategy", p.Constraints.EffectiveLeverage())})
@@ -132,7 +155,7 @@ func (c *Controller) ApproveReplacing(ctx context.Context, user, planID, hash, p
 	if e != nil {
 		return View{}, e
 	}
-	if broker.Venue() != p.Snapshot.Venue {
+	if !brokerFits(broker, p.Snapshot) {
 		return View{}, errors.New("Plan venue differs from the trading account. Generate a new plan.")
 	}
 	if acct == "" {
@@ -324,7 +347,7 @@ func (c *Controller) Execute(ctx context.Context, user, id, hash string) (out Vi
 	if e != nil {
 		return v, e
 	}
-	if key != v.AccountKey || b.Venue() != v.Plan.Snapshot.Venue {
+	if key != v.AccountKey || !brokerFits(b, v.Plan.Snapshot) {
 		return v, errors.New("Trading account identity changed; generate and approve a new plan")
 	}
 	account, e := b.Account(ctx, v.Plan.Snapshot.Symbol)
@@ -345,7 +368,7 @@ func (c *Controller) Execute(ctx context.Context, user, id, hash string) (out Vi
 	if cmp(account.FeeBPS, v.Plan.Constraints.FeeBPS) > 0 {
 		return v, errors.New("Actual fees including Builder fees exceed the plan assumption; generate a new plan")
 	}
-	book, e := c.Market.Snapshot(ctx, v.Plan.Snapshot.Venue, v.Plan.Snapshot.Symbol)
+	book, e := c.book(ctx, v.Plan.Snapshot)
 	if e != nil {
 		return v, e
 	}
@@ -394,7 +417,7 @@ func (c *Controller) Execute(ctx context.Context, user, id, hash string) (out Vi
 func (c *Controller) launch(id, user string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.stopped {
+	if c.stopped || c.steppedByHand {
 		return
 	}
 	if _, ok := c.workers[id]; ok {
@@ -519,7 +542,7 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 		return true
 	}
 	broker, key, e := c.Factory(ctx, user, v.AccountID)
-	if e != nil || key != v.AccountKey || broker.Venue() != v.Plan.Snapshot.Venue {
+	if e != nil || key != v.AccountKey || !brokerFits(broker, v.Plan.Snapshot) {
 		v.State = "needs_attention"
 		v.Error = "Account unavailable or identity changed. Further entries stopped; check Vergex account settings."
 		_ = c.save(&v)
@@ -544,6 +567,11 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 		}
 		result, er := broker.Lookup(ctx, *o)
 		if er != nil {
+			// A replacement the exchange never took: what it was to replace still stands.
+			if neverTaken(*o, er) {
+				o.Status, o.Error = "REJECTED", neverTakenReason
+				continue
+			}
 			receiptsValid = false
 			attention("Exchange order state is unconfirmed; no resubmission:" + er.Error())
 			continue
@@ -592,7 +620,7 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 		for _, role := range []string{"sl", "tp"} {
 			protected := plan.Decimal("0")
 			uncertain := false
-			for _, o := range v.Orders {
+			for _, o := range currentOrders(v.Orders) {
 				if o.Role != role || o.ParentID != entry.ClientID {
 					continue
 				}
@@ -659,6 +687,7 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 			}
 		}
 	}
+	finishReplacements(ctx, broker, &v, attention)
 	if v.State == "stopping" || v.State == "needs_attention" {
 		for i := 0; i < entries; i++ {
 			o := &v.Orders[i]
@@ -691,7 +720,7 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 				o.Status = "EXPIRED"
 				continue
 			}
-			book, er := c.Market.Snapshot(ctx, v.Plan.Snapshot.Venue, v.Plan.Snapshot.Symbol)
+			book, er := c.book(ctx, v.Plan.Snapshot)
 			if er != nil {
 				attention("Fresh market data unavailable; further entries stopped")
 				break
@@ -760,6 +789,7 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 					attention("Remaining protective order cancellation is unconfirmed")
 					break
 				}
+				v.Orders[i].Status = "CANCELED"
 			}
 		}
 		if er == nil {
@@ -858,19 +888,32 @@ func validateIntent(v View) error {
 		seen[o.ClientID] = true
 	}
 	totals := map[string]plan.Decimal{}
+	exits := map[string]Order{}
 	for _, o := range v.Orders[len(specs):] {
 		entry, ok := entries[o.ParentID]
 		price := v.Plan.Idea.Stop
 		if o.Role == "tp" {
 			price = v.Plan.Idea.Target
 		}
+		// A moved stop or target has its own price, in place of an earlier order just like it.
+		if o.Replaces != "" {
+			replaced, known := exits[o.Replaces]
+			if !known || replaced.Role != o.Role || replaced.ParentID != o.ParentID || cmp(replaced.Quantity, o.Quantity) != 0 || !plan.Positive(o.Price) {
+				return errors.New("a moved order does not match what it replaces")
+			}
+			price = o.Price
+		}
 		if o.Type != "" || o.PostOnly || o.ReduceOnly || !ok || (o.Role != "sl" && o.Role != "tp") || !plan.Positive(o.Quantity) || cmp(o.Quantity, entry.Quantity) > 0 || cmp(o.Price, price) != 0 || o.Side != entry.Side || o.Symbol != entry.Symbol || seen[o.ClientID] {
 			return errors.New("protective intent exceeds the locked basket")
 		}
 		seen[o.ClientID] = true
+		exits[o.ClientID] = o
 		if _, e := decimal(o.Filled); e != nil || cmp(o.Filled, o.Quantity) > 0 {
 			return errors.New("invalid protective fill")
 		}
+	}
+	for _, o := range currentOrders(v.Orders[len(specs):]) {
+		entry := entries[o.ParentID]
 		key := o.ParentID + o.Role
 		if totals[key] == "" {
 			totals[key] = "0"

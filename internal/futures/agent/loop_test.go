@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 	"vergex/internal/futures"
@@ -80,6 +81,49 @@ func TestRepeatedReadLoopTerminatesWithOutcome(t *testing.T) {
 	}
 }
 
+// reasoningModel runs out of length reasoning for as many rounds as it is told to.
+type reasoningModel struct {
+	loopFixture
+	ranOut int
+	calls  int
+	last   []Message
+}
+
+func (m *reasoningModel) Chat(_ context.Context, messages []Message, _ []Tool) (Message, error) {
+	m.calls++
+	m.last = messages
+	if m.calls <= m.ranOut {
+		return Message{}, errReplyRanOut
+	}
+	return Message{Role: "assistant", Content: "No trade."}, nil
+}
+
+func TestAReplyLostToReasoningIsTriedOnceMoreThenTheTurnCloses(t *testing.T) {
+	run := func(ranOut int) (*reasoningModel, outcome, error) {
+		m := &reasoningModel{ranOut: ranOut}
+		engine := Engine{Market: m, Charts: m, Model: m, Limits: plan.Constraints{Equity: "1000", MaxRisk: "10", MaxNotional: "100", MinRewardRisk: "2", FeeBPS: "10", SlippageBPS: "10"}}
+		var closed outcome
+		err := engine.Run(context.Background(), Input{Message: "plan a trade", Venue: "binance", Symbol: "BTCUSDT", Interval: "1h", Language: "en"}, func(e Event) error {
+			if e.Type == "outcome" {
+				closed = e.Data.(outcome)
+			}
+			return nil
+		})
+		return m, closed, err
+	}
+	m, closed, err := run(1)
+	if err != nil || m.calls != 2 || closed.StopReason != "completed" {
+		t.Fatal(err, m.calls, closed)
+	}
+	if !strings.Contains(m.last[len(m.last)-1].Content, "Reason briefly") {
+		t.Fatal("the model was not asked to reason less")
+	}
+	m, closed, err = run(2)
+	if err != nil || m.calls != 2 || closed.StopReason != "model_unavailable" {
+		t.Fatal(err, m.calls, closed)
+	}
+}
+
 type stalledModel struct{}
 
 func (stalledModel) Chat(ctx context.Context, _ []Message, _ []Tool) (Message, error) {
@@ -92,5 +136,81 @@ func TestStalledModelRespectsCancellation(t *testing.T) {
 	_, err := chatWithProgress(ctx, stalledModel{}, nil, nil, func(Event) error { return nil })
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
+	}
+}
+
+type promptModel struct {
+	loopFixture
+	system string
+}
+
+func (m *promptModel) Chat(_ context.Context, messages []Message, _ []Tool) (Message, error) {
+	m.system = messages[0].Content
+	return Message{Role: "assistant", Content: "No trade."}, nil
+}
+
+// A turn that ends without the model's own words still closes in the interface's language,
+// and asking the model to close it says the same.
+func TestATurnClosesInTheInterfacesLanguage(t *testing.T) {
+	closing := func(model ChatPlanner, explain bool) string {
+		t.Helper()
+		said := ""
+		engine := Engine{Model: model}
+		err := engine.finishTurn(context.Background(), nil, outcome{StopReason: "budget"}, "zh-CN", func(event Event) error {
+			if event.Type == "assistant" {
+				said = event.Data.(map[string]string)["message"]
+			}
+			return nil
+		}, explain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return said
+	}
+	if said := closing(nil, false); !strings.Contains(said, "没有计划通过校验") || !strings.Contains(said, "额度已用完") {
+		t.Errorf("closing message = %q", said)
+	}
+	asked := &lastPromptModel{}
+	closing(asked, true)
+	if strings.Contains(asked.prompt, "in English") || !strings.Contains(asked.prompt, "Write in Simplified Chinese") {
+		t.Errorf("the closing prompt = %q", asked.prompt)
+	}
+}
+
+type lastPromptModel struct{ prompt string }
+
+func (m *lastPromptModel) Chat(_ context.Context, messages []Message, _ []Tool) (Message, error) {
+	m.prompt = messages[len(messages)-1].Content
+	return Message{Role: "assistant", Content: "没有交易。"}, nil
+}
+
+func TestPlansAreWrittenInTheInterfacesLanguage(t *testing.T) {
+	system := func(language string) string {
+		t.Helper()
+		m := &promptModel{}
+		engine := Engine{Market: m, Charts: m, Model: m, Limits: plan.Constraints{Equity: "1000", MaxRisk: "10", MaxNotional: "100", MinRewardRisk: "2", FeeBPS: "10", SlippageBPS: "10"}}
+		input := Input{Message: "plan a trade", Language: language, Venue: "binance", Symbol: "BTCUSDT", Interval: "1h"}
+		if err := input.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		if err := engine.Run(context.Background(), input, func(Event) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+		return m.system
+	}
+	chinese := system("zh-CN")
+	if !strings.Contains(chinese, "Simplified Chinese") {
+		t.Errorf("no language in the prompt: %s", chinese[len(chinese)-200:])
+	}
+	for _, forced := range []string{"Use English", "English words"} {
+		if strings.Contains(chinese, forced) {
+			t.Errorf("the prompt still forces English: %q", forced)
+		}
+	}
+	if own := system(""); !strings.Contains(own, "language of the user's latest message") || strings.Contains(own, "Simplified Chinese") {
+		t.Error("a request without a language should follow the user's words alone")
+	}
+	if err := (Input{Message: "x", Language: "fr", Venue: "binance", Symbol: "BTCUSDT", Interval: "1h"}).Validate(); err == nil {
+		t.Error("an unknown language was accepted")
 	}
 }

@@ -157,6 +157,7 @@ export const dashboard: typeof template = {
     attention: {
       trader_blocked: '{name}：交易被阻断',
       trader_safe_mode: '{name} 处于安全模式',
+      trader_halted: '{name} 已熔断',
       trader_load_failed: '{name} 无法加载',
       plan_needs_attention: '{name} 上的合约交易计划需要对账',
       account_invalid_credentials: '{name}：凭证无效',

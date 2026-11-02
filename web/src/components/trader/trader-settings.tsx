@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { FlaskConical, Loader2 } from 'lucide-react'
+import { FlaskConical } from 'lucide-react'
 import { api } from '@/api'
 import { notify } from '@/components/common/notify'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { Segmented } from '@/components/common/segmented'
 import { SettingActions } from '@/components/common/setting-row'
 import { Button } from '@/components/ui/button'
@@ -143,9 +143,7 @@ export function TraderSettings({
         </Button>
       </PanelState>
     ) : (
-      <PanelState role="status">
-        <Loader2 className="size-5 animate-spin" />
-      </PanelState>
+      <PanelLoading />
     )
   }
 
@@ -164,7 +162,7 @@ export function TraderSettings({
     lockedNote ||
     (pressed
       ? label('tokensOver', {
-          tokens: tokens ?? '—',
+          tokens: tokens ?? '0',
           percent: pressed.usage_pct,
           model: pressed.name,
         })

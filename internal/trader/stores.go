@@ -15,6 +15,7 @@ type Stores struct {
 	Traders       *Store
 	Decisions     *DecisionStore
 	Equity        *EquityStore
+	Peaks         *PeakStore
 	Accounts      *account.Store
 	Ledger        *account.Ledger
 	Orders        *account.OrderStore
@@ -31,6 +32,7 @@ func NewStores(db *gorm.DB) *Stores {
 		Traders:       NewStore(db),
 		Decisions:     NewDecisionStore(db),
 		Equity:        NewEquityStore(db),
+		Peaks:         NewPeakStore(db),
 		Accounts:      account.NewStore(db),
 		Ledger:        account.NewLedger(db),
 		Orders:        account.NewOrderStore(db),

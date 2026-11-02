@@ -12,7 +12,7 @@ import {
   type ForecastIndicators,
   type ForecastInterval,
 } from '@/api/forecast'
-import { Panel, PanelState } from '@/components/common/panel'
+import { Panel, PanelLoading, PanelState } from '@/components/common/panel'
 import { Segmented } from '@/components/common/segmented'
 import {
   ChartOptionsMenu,
@@ -382,15 +382,15 @@ export function ForecastPage() {
                     className="h-full"
                   />
                 </div>
-              ) : (
+              ) : shown ? (
                 <PanelState
                   role="status"
                   className="h-[420px] lg:h-auto lg:flex-1"
                 >
-                  {shown
-                    ? label(`pendingState.${shown.pending ?? 'waiting'}`)
-                    : label('loading')}
+                  {label(`pendingState.${shown.pending ?? 'waiting'}`)}
                 </PanelState>
+              ) : (
+                <PanelLoading className="h-[420px] lg:h-auto lg:flex-1" />
               )}
             </Panel>
 
@@ -406,7 +406,7 @@ export function ForecastPage() {
                 pending={
                   current
                     ? label(`pendingState.${current.pending ?? 'waiting'}`)
-                    : label('loading')
+                    : undefined
                 }
                 language={language}
                 className="flex h-[440px] flex-col overflow-hidden"

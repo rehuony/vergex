@@ -41,7 +41,7 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		// Default values
-		MaxTokens:       getEnvInt("VERGEX_AGENT_MAX_TOKENS", 2000),
+		MaxTokens:       getEnvInt("VERGEX_AGENT_MAX_TOKENS", 8000),
 		Temperature:     DefaultTemperature,
 		MaxRetries:      MaxRetryTimes,
 		RetryWaitBase:   2 * time.Second,

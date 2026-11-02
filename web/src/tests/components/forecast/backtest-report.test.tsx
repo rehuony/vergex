@@ -37,14 +37,15 @@ const report = (overall: BacktestMetrics): BacktestReport => ({
   last_time: 2,
 })
 
-it('shows a missing hit rate as a dash', () => {
+it('shows a missing hit rate as 0', () => {
   render(
     <BacktestReportView
       report={report(metrics({ lift: -0.1, hit_rate: null }))}
       language="en"
     />
   )
-  expect(screen.getAllByText('—').length).toBeGreaterThan(0)
+  expect(screen.getAllByText('0.0%').length).toBeGreaterThan(0)
+  expect(screen.queryByText('—')).toBeNull()
 })
 
 it('shows no return where no call was made', () => {

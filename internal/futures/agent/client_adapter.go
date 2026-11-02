@@ -4,9 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"vergex/internal/agent"
 )
+
+// A thinking model's reasoning counts against the length of its reply, so a reply needs room
+// for both. A planning round reads tens of thousands of tokens of market data, and reasons at
+// length over them. Every provider takes the smaller limit, for a model that refuses this one.
+const (
+	replyLimit        = 16384
+	smallerReplyLimit = 8192
+)
+
+// errReplyRanOut is a reply whose length went on reasoning, with nothing left of an answer.
+var errReplyRanOut = errors.New("the model's reply ran out of length while it was reasoning")
 
 // ClientAdapter reuses Vergex's configured provider client and transient reasoning.
 // Credentials remain in Vergex's configured client and never enter model messages.
@@ -37,7 +49,7 @@ func (a *ClientAdapter) Chat(ctx context.Context, messages []Message, tools []To
 		}
 		defs = append(defs, agent.Tool{Type: "function", Function: agent.FunctionDef{Name: t.Function.Name, Description: t.Function.Description, Parameters: schema}})
 	}
-	maxTokens := 8192
+	maxTokens := replyLimit
 	request := &agent.Request{Ctx: ctx, Messages: wire, Tools: defs, MaxTokens: &maxTokens}
 	if len(defs) > 0 {
 		request.ToolChoice = "auto"
@@ -48,6 +60,10 @@ func (a *ClientAdapter) Chat(ctx context.Context, messages []Message, tools []To
 		request.ToolChoice = ""
 	}
 	result, e := a.Client.CallWithRequestFull(request)
+	if refusedLimit(e) {
+		maxTokens = smallerReplyLimit
+		result, e = a.Client.CallWithRequestFull(request)
+	}
 	if e != nil {
 		if ctx.Err() != nil {
 			return Message{}, ctx.Err()
@@ -58,6 +74,9 @@ func (a *ClientAdapter) Chat(ctx context.Context, messages []Message, tools []To
 	}
 	if result == nil || len(result.Content) > 24000 || len(result.ToolCalls) > 5 || len(result.ReasoningContent) > 256<<10 {
 		return Message{}, errors.New("invalid model response")
+	}
+	if result.Content == "" && len(result.ToolCalls) == 0 && (result.FinishReason == "length" || result.FinishReason == "max_tokens") {
+		return Message{}, errReplyRanOut
 	}
 	if a.TextTools {
 		if len(result.ToolCalls) != 0 {
@@ -76,4 +95,13 @@ func (a *ClientAdapter) Chat(ctx context.Context, messages []Message, tools []To
 		return Message{}, errors.New("The model did not return a final answer or a tool request")
 	}
 	return out, nil
+}
+
+// refusedLimit says a provider turned the request down for asking too long a reply.
+func refusedLimit(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := err.Error()
+	return strings.Contains(text, "status 400") && (strings.Contains(text, "max_tokens") || strings.Contains(text, "max_completion_tokens") || strings.Contains(text, "max_output"))
 }

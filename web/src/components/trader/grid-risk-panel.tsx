@@ -9,6 +9,7 @@ import {
   TrendingUp,
 } from 'lucide-react'
 import { api } from '@/api'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/utils/cn'
 import { t, type Language } from '@/i18n'
 import { Button } from '@/components/ui/button'
@@ -63,7 +64,7 @@ const usageTone = (percent: number): Tone =>
   percent < 50 ? 'good' : percent < 80 ? 'info' : 'bad'
 
 const formatPrice = (price: number) => {
-  if (price === 0) return '-'
+  if (price === 0) return '—'
   if (price >= 1000)
     return price.toLocaleString('en-US', {
       minimumFractionDigits: 2,
@@ -150,11 +151,13 @@ export function GridRiskPanel({
           error ? 'text-vergex-danger' : 'text-vergex-muted'
         )}
       >
-        {isLoading
-          ? text('loading')
-          : error
-            ? `${text('error')}: ${error instanceof Error ? error.message : String(error)}`
-            : text('notRunning')}
+        {isLoading ? (
+          <Skeleton className="h-3 w-48" />
+        ) : error ? (
+          `${text('error')}: ${error instanceof Error ? error.message : String(error)}`
+        ) : (
+          text('notRunning')
+        )}
       </section>
     )
 
@@ -279,7 +282,7 @@ export function GridRiskPanel({
                 value={
                   risk.breakout_direction
                     ? label(risk.breakout_direction, 'none')
-                    : '-'
+                    : '—'
                 }
                 tone={
                   risk.breakout_direction === 'up'
@@ -302,17 +305,13 @@ export function GridRiskPanel({
                 value={
                   risk.liquidation_price > 0
                     ? formatPrice(risk.liquidation_price)
-                    : '-'
+                    : '—'
                 }
                 tone="bad"
               />
               <Stat
                 label={text('liquidationDistance')}
-                value={
-                  risk.liquidation_distance > 0
-                    ? `${risk.liquidation_distance.toFixed(1)}%`
-                    : '-'
-                }
+                value={`${Math.max(risk.liquidation_distance, 0).toFixed(1)}%`}
                 tone="bad"
               />
             </div>

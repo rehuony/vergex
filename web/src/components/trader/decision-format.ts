@@ -76,8 +76,15 @@ export function tradeActions(record: DecisionRecord) {
 }
 
 // A cycle's own flag only says the cycle ran, so failed orders also count as a
-// fault.
+// fault. A rule stopping an order is the rule working, and is no fault.
 export function cycleFault(record: DecisionRecord) {
-  const failed = tradeActions(record).filter((a) => !a.success).length
-  return { failed, fault: !record.success || failed > 0 }
+  const trades = tradeActions(record)
+  const blocked = trades.filter((a) => a.blocked).length
+  const failed = trades.filter((a) => !a.success && !a.blocked).length
+  return {
+    failed,
+    blocked,
+    total: trades.length - blocked,
+    fault: !record.success || failed > 0,
+  }
 }

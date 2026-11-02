@@ -1,4 +1,3 @@
-import { Maximize2 } from 'lucide-react'
 import type { Plan } from '@/api/futures'
 import { PanelState } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
@@ -17,11 +16,8 @@ interface FuturesPlanDeckProps {
   selected: string
   clock: number
   connected: boolean
-  comparing: number
-  compareDisabled: boolean
-  hasPlan: boolean
+  comparing: boolean
   onChoose: (plan: Plan) => void
-  onFit: () => void
   onCompare: () => void
   onExitCompare: () => void
 }
@@ -38,26 +34,24 @@ export function FuturesPlanDeck({
   clock,
   connected,
   comparing,
-  compareDisabled,
-  hasPlan,
   onChoose,
-  onFit,
   onCompare,
   onExitCompare,
 }: FuturesPlanDeckProps) {
   const { language } = useLanguage()
   const label = (key: string, params?: Record<string, string | number>) =>
     t(`futures.${key}`, language, params)
-  const entryChecks =
-    checks.length || futuresBusy
-      ? checks
-      : (batch?.deferred || []).map((entry) => ({
-          id: `deferred_${entry.kind}`,
-          kind: entry.kind,
-          name: label('waitConditions'),
-          status: 'deferred',
-          reason: entry.reason,
-        }))
+  // What the generation left, then what this turn found, which is what a row goes by.
+  const entryChecks = [
+    ...(futuresBusy ? [] : batch?.deferred || []).map((entry) => ({
+      id: `deferred_${entry.kind}`,
+      kind: entry.kind,
+      name: label('waitConditions'),
+      status: entry.rejected ? 'rejected' : 'deferred',
+      reason: entry.reason,
+    })),
+    ...checks,
+  ]
   // Nothing has been generated: all there is to say is how to start.
   if (
     !batch &&
@@ -73,7 +67,7 @@ export function FuturesPlanDeck({
         className="h-full"
       >
         <PanelState role="status" className="h-full">
-          {label('noPlans')}
+          {label('noPlansYet')}
         </PanelState>
       </section>
     )
@@ -99,50 +93,26 @@ export function FuturesPlanDeck({
               })}
             </time>
           )}
+          {!connected && (
+            <span
+              className="min-w-0 truncate text-[11px] text-vergex-muted"
+              title={label('structures.illustrative')}
+            >
+              {label('structures.illustrativeShort')}
+            </span>
+          )}
         </div>
-        {comparing > 1 ? (
+        {plans.length > 1 && (
           <Button
             type="button"
             size="sm"
             className="max-sm:h-10"
-            onClick={onExitCompare}
+            onClick={comparing ? onExitCompare : onCompare}
           >
-            {label('exitCompare')}
-          </Button>
-        ) : (
-          <Button
-            type="button"
-            size="sm"
-            className="max-sm:h-10"
-            disabled={compareDisabled}
-            onClick={onCompare}
-          >
-            {label('comparePlans')}
+            {label(comparing ? 'exitCompare' : 'comparePlans')}
           </Button>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="size-8 max-sm:size-10"
-          aria-label={label('fitPlan')}
-          title={label('fitPlan')}
-          disabled={!hasPlan}
-          onClick={onFit}
-        >
-          <Maximize2 className="size-4" aria-hidden="true" />
-        </Button>
       </header>
-      {waitingForEntry && (
-        <p className="px-4 pb-2 text-xs text-vergex-muted">
-          {label('waitingHint')}
-        </p>
-      )}
-      {!connected && (
-        <p className="px-4 pb-2 text-xs text-vergex-muted">
-          {label('structures.illustrative')}
-        </p>
-      )}
       <PlanStructures
         checks={entryChecks}
         showAllTypes={Boolean(batch)}
@@ -152,14 +122,6 @@ export function FuturesPlanDeck({
         onSelect={onChoose}
         now={clock}
       />
-      {!plans.length &&
-        !futuresBusy &&
-        !entryChecks.length &&
-        !waitingForEntry && (
-          <p className="px-4 pb-3 text-xs text-vergex-muted">
-            {label('noPlans')}
-          </p>
-        )}
     </section>
   )
 }

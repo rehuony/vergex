@@ -63,9 +63,6 @@ export function ExecutionSchedule({ plan }: { plan: Plan }) {
           ))}
         </tbody>
       </table>
-      <p className="px-4 py-2 text-[11px] text-vergex-muted">
-        {label(timed ? 'twapNote' : 'ladderNote')}
-      </p>
     </section>
   )
 }

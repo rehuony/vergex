@@ -25,7 +25,7 @@ import type {
   TraderPreset,
   UpdateTraderRequest,
 } from '@/types'
-import { API_BASE, httpClient } from './helpers'
+import { API_BASE, httpClient, serverError } from './helpers'
 import { ApiError } from './http-client'
 
 // Create/update/start legitimately run long: stopping a live trader waits for
@@ -144,9 +144,20 @@ export const traderApi = {
     }
   },
 
-  async stopTrader(traderId: string): Promise<void> {
-    const result = await httpClient.post(`${API_BASE}/traders/${traderId}/stop`)
+  /** Says whether a grid's orders could not be cancelled as it stopped. */
+  async stopTrader(traderId: string): Promise<{ ordersLeft: boolean }> {
+    const result = await httpClient.post<{ warning?: string }>(
+      `${API_BASE}/traders/${traderId}/stop`
+    )
     if (!result.success) throw new Error('Failed to stop trader')
+    return { ordersLeft: result.data?.warning === 'orders_left' }
+  },
+
+  async resumeTrader(traderId: string): Promise<void> {
+    const result = await httpClient.post(
+      `${API_BASE}/traders/${traderId}/resume`
+    )
+    if (!result.success) throw new Error('Failed to resume trader')
   },
 
   async closePosition(
@@ -269,7 +280,7 @@ export const traderApi = {
       `${API_BASE}/traders/${traderId}/open-positions`,
       { silent }
     )
-    if (!result.success) throw new Error('Failed to fetch positions')
+    if (!result.success) throw serverError(result, 'Failed to fetch positions')
     return result.data!.map(normalizePosition)
   },
 

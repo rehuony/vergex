@@ -447,3 +447,64 @@ func TestFuturesLookupRejectsForeignRoute(t *testing.T) {
 		t.Fatalf("a route with another prefix must not resolve, got %q", got)
 	}
 }
+
+func TestATestnetAccountReachesTheTestEnvironment(t *testing.T) {
+	real := NewExecutionTrader("key", "secret").onEnvironment(false)
+	if real.client.BaseURL != "https://fapi.binance.com" || real.Testnet() {
+		t.Fatalf("real account: %s, %v", real.client.BaseURL, real.Testnet())
+	}
+	test := NewExecutionTrader("key", "secret").onEnvironment(true)
+	if test.client.BaseURL != testnetBaseURL || !test.Testnet() {
+		t.Fatalf("testnet account: %s, %v", test.client.BaseURL, test.Testnet())
+	}
+	if got := NewPublicClient(http.DefaultClient).Futures; got != "https://fapi.binance.com" {
+		t.Fatalf("real book: %s", got)
+	}
+	if got := NewTestnetPublicClient(http.DefaultClient).Futures; got != testnetBaseURL {
+		t.Fatalf("testnet book: %s", got)
+	}
+}
+
+func TestAnOrderExpiredInMatchingHasEnded(t *testing.T) {
+	for _, tt := range []struct {
+		status string
+		want   string
+	}{
+		{"EXPIRED_IN_MATCH", "EXPIRED"},
+		{"PARTIALLY_FILLED", "PARTIALLY_FILLED"},
+		{"SOMETHING_NEW", ""},
+	} {
+		t.Run(tt.status, func(t *testing.T) {
+			o := futuresOrder()
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprintf(w, `{"orderId":7,"clientOrderId":%q,"symbol":"BTCUSDT","origQty":"0.001","price":"100000","avgPrice":"100000","executedQty":"0.0005","side":"BUY","type":"LIMIT","status":%q}`, o.VenueClientID, tt.status)
+			}))
+			defer s.Close()
+			b := NewExecutionTrader("test", "test")
+			b.client.BaseURL = s.URL
+			b.client.HTTPClient = s.Client()
+
+			got, err := b.LookupOrder(context.Background(), o)
+			if tt.want == "" {
+				if err == nil || got.Status != o.Status {
+					t.Fatalf("an unknown status was taken: %+v, %v", got, err)
+				}
+			} else if err != nil || got.Status != tt.want || got.Filled != "0.0005" {
+				t.Fatalf("got %+v, %v", got, err)
+			}
+
+			state, err := b.GetOrderStatus("BTCUSDT", "7")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := tt.want
+			if want == "" {
+				want = tt.status
+			}
+			if state["status"] != want {
+				t.Fatalf("status for the ledger: %v", state["status"])
+			}
+		})
+	}
+}

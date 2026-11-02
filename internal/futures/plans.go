@@ -70,6 +70,13 @@ func (d *PlanStore) Accounts() map[string]string {
 	return accounts
 }
 
+// OnAccount lists the plans drafted on this store's account.
+func (d *PlanStore) OnAccount() ([]string, error) {
+	var ids []string
+	e := d.DB.Model(&Plan{}).Where("user_id = ? AND account_id = ?", d.UserID, d.AccountID).Pluck("id", &ids).Error
+	return ids, e
+}
+
 // Find returns one of the user's plans.
 func (d *PlanStore) Find(id string) (*Plan, error) {
 	var row Plan
@@ -83,6 +90,30 @@ func (d *PlanStore) Find(id string) (*Plan, error) {
 func (d *PlanStore) HasDraft(id string) bool {
 	row, e := d.Find(id)
 	return e == nil && row.AccountID == d.AccountID && row.Status == "draft"
+}
+
+// ErrPlanRan refuses to delete a plan that went to the exchange: its run is the record of
+// what was sent.
+var ErrPlanRan = errors.New("a plan that ran is kept as the record of its orders")
+
+// Delete removes a plan nothing ever came of. A plan that revised it stays, without the link.
+func (d *PlanStore) Delete(id string) error {
+	return d.DB.Transaction(func(tx *gorm.DB) error {
+		if _, e := (&PlanStore{DB: tx, UserID: d.UserID}).Find(id); e != nil {
+			return e
+		}
+		var runs int64
+		if e := tx.Table("futures.runs").Where("plan_id = ?", id).Count(&runs).Error; e != nil {
+			return e
+		}
+		if runs > 0 {
+			return ErrPlanRan
+		}
+		if e := tx.Exec("UPDATE futures.plans SET revises_plan_id = NULL WHERE revises_plan_id = ?", id).Error; e != nil {
+			return e
+		}
+		return tx.Where("user_id = ? AND id = ?", d.UserID, id).Delete(&Plan{}).Error
+	})
 }
 
 func (d *PlanStore) Add(plans []plan.Plan) error {

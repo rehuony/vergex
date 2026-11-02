@@ -12,6 +12,7 @@ import {
 import { FuturesOrderBlocker } from '@/components/futures/futures-order-blocker'
 import { FuturesAccount } from '@/components/futures/futures-account'
 import {
+  accountLabel,
   defaultMarket,
   preferredAccount as preferredTradingAccount,
   rememberAccount,
@@ -19,7 +20,6 @@ import {
 import { nativeMarket } from '@/utils/futures/futures-account'
 import {
   batchPlans,
-  comparablePlans,
   readBatch,
   saveBatch,
   saveLimits,
@@ -69,6 +69,7 @@ import { useFuturesTrades } from '@/hooks/futures/use-futures-trades'
 import { useLanguage } from '@/contexts/language-context'
 import { notify } from '@/components/common/notify'
 import { t } from '@/i18n'
+import type { Account } from '@/types'
 
 type FuturesTab = 'trade' | 'positions' | 'history' | 'settings'
 
@@ -82,12 +83,12 @@ export function FuturesPage() {
   const label = (key: string) => t(`futures.${key}`, language)
   const [params, setParams] = useSearchParams()
   const [tab, setTab] = useState(() => readTab(params.get('tab')))
-  // Which side of the assistant is open, once the reader has chosen. Until then it opens
-  // on plans a conversation left behind, and on the conversation otherwise.
-  const [chosenPane, setChosenPane] = useState<AssistantPane | null>(null)
+  // Which side of the assistant is open. It opens on the conversation, whatever plans were
+  // left from before, and goes to the plans when a turn leaves some or one is chosen.
+  const [pane, setPane] = useState<AssistantPane>('chat')
   const [forecastOn, setForecastOn] = useForecastSwitch()
   const [linkedPlan, setLinkedPlan] = useState(() => params.get('plan'))
-  const focusLinkedPlan = useRef(false)
+  const fitPlan = useRef(false)
   const openSettings = useOpenSettings()
   const [limits, setLimits] = useState<Constraints>(savedLimits)
   const [selected, setSelected] = useState(''),
@@ -111,7 +112,8 @@ export function FuturesPage() {
     accountId,
     setAccountId,
     modelID,
-    setModelID,
+    modelName,
+    chooseModel,
     venue,
     setVenue,
     requestedVenue,
@@ -119,12 +121,22 @@ export function FuturesPage() {
     symbol,
     setSymbol,
   } = market
-  const accountCheck = useAccountCheck(accountId, venue)
-  const accountWatch = useAccountWatch(accountId, symbol)
+  const accountCheck = useAccountCheck(accountId, venue, tab === 'positions')
+  const accountWatch = useAccountWatch(accountId, symbol, tab === 'positions')
   const observation = accountWatch.observation
-  const { data, reload, history, refreshHistory, preferences, setPreferences } =
-    useFuturesData(setError)
+  const {
+    data,
+    reload,
+    history,
+    refreshHistory,
+    renameConversation,
+    deleteConversation,
+    deletePlan,
+    preferences,
+    setPreferences,
+  } = useFuturesData(setError, accountId)
   const account = accounts.find((a) => a.id === accountId)
+  const accountName = (row?: Account) => row && accountLabel(row, accounts)
   const records = useMemo(
     () => marketRecords(data, accountId, symbol, venue),
     [data, accountId, symbol, venue]
@@ -168,6 +180,7 @@ export function FuturesPage() {
     resolution,
     changeResolution,
     scene,
+    candlesReady,
   } = useFuturesChart(
     venue,
     symbol,
@@ -181,6 +194,7 @@ export function FuturesPage() {
     busy,
     setBusy,
     modelID,
+    modelName,
     accountId,
     venue,
     symbol,
@@ -220,6 +234,15 @@ export function FuturesPage() {
     setSelected,
     setCompare,
     onShowAccount: () => setTab('positions'),
+    // The refreshed plan takes its row, so what is on the chart is what is listed.
+    onPlanSized: (old, sized) => {
+      fitPlan.current = true
+      if (currentBatch?.ids.includes(old))
+        rememberBatch({
+          ...currentBatch,
+          ids: currentBatch.ids.map((id) => (id === old ? sized : id)),
+        })
+    },
   })
   const {
     review,
@@ -278,12 +301,18 @@ export function FuturesPage() {
     setSymbol(nativeMarket(plan.snapshot.symbol, plan.snapshot.venue))
     setSelected(linkedPlan)
     setCompare([])
-    setChosenPane('plans')
-    focusLinkedPlan.current = true
+    fitPlan.current = true
   }, [linkedPlan, market.configsLoaded, data.now])
+  // New plans are what the user asked for, so a turn that leaves some shows them.
+  useEffect(() => {
+    if (assistant.futuresBusy || assistant.turnPlanIDs.length === 0) return
+    setTab('trade')
+    setPane('plans')
+    fitPlan.current = true
+  }, [assistant.futuresBusy, assistant.turnPlanIDs.length])
   // It fits on the chart showing its market, which may still be coming up.
   useEffect(() => {
-    if (!focusLinkedPlan.current || !current || !chart.current) return
+    if (!fitPlan.current || !current || !chart.current) return
     const shown = chart.current.context()
     if (shown.venue !== current.plan.snapshot.venue) return
     if (
@@ -291,11 +320,11 @@ export function FuturesPage() {
       nativeMarket(current.plan.snapshot.symbol, current.plan.snapshot.venue)
     )
       return
-    focusLinkedPlan.current = false
+    fitPlan.current = false
     void chart.current
       .plot(current.plan, current.state, [])
       .then(() => chart.current?.focusPlan())
-  }, [current, scene])
+  }, [current, scene, assistant.futuresBusy, compare.length])
   // What the account holds on this market stays on the chart, whatever else is drawn.
   useEffect(() => {
     const orders = accountWatch.orders
@@ -334,6 +363,9 @@ export function FuturesPage() {
     setSelected('')
     setCompare([])
     resetTurn()
+    // A conversation stays with the account it started on.
+    setMessages([])
+    session.current = crypto.randomUUID()
   }
   function openMarket(next: string) {
     marketChosen.current = true
@@ -341,7 +373,7 @@ export function FuturesPage() {
     setPrice('—')
     setSymbol(next)
     setSelected('')
-    setChosenPane(null)
+    setPane('chat')
     resetTurn()
     setCompare([])
     setMessages([])
@@ -350,16 +382,14 @@ export function FuturesPage() {
     setOrderNotice('')
     session.current = crypto.randomUUID()
   }
-  async function choose(p: Plan) {
+  function choose(p: Plan) {
     setSelected(p.id)
     setCompare([])
     setError('')
     setTab('trade')
-    setChosenPane('plans')
+    setPane('plans')
+    fitPlan.current = true
     scrollTo('futures-chart')
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
-    await chart.current?.plot(p, data.records[p.id]?.state || 'draft', [])
-    await chart.current?.focusPlan()
   }
   function changeAccount(
     id: string,
@@ -396,9 +426,11 @@ export function FuturesPage() {
     )
     setSelected(trade.plan_id)
     setCompare([])
-    setChosenPane('plans')
+    setPane('plans')
     resetTurn()
     setMessages([])
+    // What comes next is another conversation, maybe on another account.
+    session.current = crypto.randomUUID()
   }
   function manualEntry(side: 'long' | 'short') {
     trades.setBuilderIdea({
@@ -417,7 +449,7 @@ export function FuturesPage() {
     session.current = crypto.randomUUID()
     setMessages([])
     setSelected('')
-    setChosenPane('chat')
+    setPane('chat')
     resetTurn()
     setCompare([])
     setTrace([])
@@ -429,30 +461,23 @@ export function FuturesPage() {
       const { messages } = await futuresAPI<{ messages: ChatMessage[] }>(
         `conversations/${h.id}`
       )
-      // A conversation may have no account, or one since removed.
-      changeAccount(
-        accounts.some((a) => a.id === h.account_id)
-          ? h.account_id
-          : preferredTradingAccount(accounts, venue)
-      )
       session.current = h.id
       setSymbol(h.symbol)
-      setModelID(h.agent_model_id)
+      chooseModel(h.agent_model_id)
       setMessages(messages)
       setSelected('')
       setTab('trade')
-      setChosenPane('chat')
+      setPane('chat')
       resetTurn()
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     }
   }
-  // New plans are what the user asked for, so a turn that leaves some shows them.
-  useEffect(() => {
-    if (assistant.futuresBusy || assistant.turnPlanIDs.length === 0) return
-    setTab('trade')
-    setChosenPane('plans')
-  }, [assistant.futuresBusy, assistant.turnPlanIDs.length])
+  async function removeConversation(h: FuturesConversation) {
+    await deleteConversation(h.id)
+    // What is on the trade tab went with it, and must not be saved under its ID again.
+    if (session.current === h.id) newSession()
+  }
   // The line that says what went wrong is on the trade tab.
   useEffect(() => {
     if (error && tab !== 'trade') notify.error(error)
@@ -461,16 +486,12 @@ export function FuturesPage() {
   const waitingForEntry = Boolean(
     currentBatch?.waiting && !assistant.futuresBusy
   )
-  const comparisonPlans = comparablePlans(deckPlans, clock)
+  // A plan that ran is listed with its run.
   const archivedRecords = records.filter(
-    (r) => !deckPlans.some((p) => p.id === r.plan.id)
+    (r) =>
+      !deckPlans.some((p) => p.id === r.plan.id) &&
+      !data.runs.some((run) => run.plan_id === r.plan.id)
   )
-  const pane =
-    chosenPane ??
-    ((deckPlans.length > 0 || waitingForEntry) &&
-    assistant.messages.length === 0
-      ? 'plans'
-      : 'chat')
   return (
     <Page
       className="vergex-screen animate-page-in"
@@ -535,19 +556,21 @@ export function FuturesPage() {
               symbol={symbol}
               interval={interval}
               scene={scene}
+              candlesReady={candlesReady}
               comparing={compare.length >= 2}
             />
           }
         />
         <FuturesAssistant
           pane={pane}
-          onPaneChange={setChosenPane}
+          onPaneChange={setPane}
           planCount={deckPlans.length}
           busy={busy}
           futuresBusy={assistant.futuresBusy}
           models={models}
           modelID={modelID}
-          onModelChange={setModelID}
+          modelName={modelName}
+          onModelChange={chooseModel}
           instruction={assistant.instruction}
           onInstructionChange={assistant.setInstruction}
           onSend={send}
@@ -600,26 +623,30 @@ export function FuturesPage() {
                 selected={selected}
                 clock={clock}
                 connected={Boolean(accountId)}
-                comparing={compare.length}
-                compareDisabled={busy || comparisonPlans.length < 2}
-                hasPlan={Boolean(current)}
-                onChoose={choose}
-                onFit={() => chart.current?.focusPlan()}
-                onCompare={() => {
-                  setCompare(comparisonPlans.slice(0, 4).map((p) => p.id))
+                comparing={compare.length >= 2}
+                onChoose={(p) => {
+                  // Pressing the plan that is open closes it, unless it is being compared.
+                  if (p.id === selected && compare.length < 2) setSelected('')
+                  else choose(p)
                 }}
+                onCompare={() => setCompare(deckPlans.map((p) => p.id))}
                 onExitCompare={() => setCompare([])}
               />
-              {current && <SelectedPlanDetails record={current} />}
+              {current && (
+                <SelectedPlanDetails
+                  record={current}
+                  onClose={() => setSelected('')}
+                />
+              )}
             </>
           }
           actions={
             <SelectedPlanActions
               record={current}
               run={run}
-              accountName={
-                accounts.find((a) => a.id === data.accounts[selected])?.name
-              }
+              accountName={accountName(
+                accounts.find((a) => a.id === data.accounts[selected])
+              )}
               connected={Boolean(accountId)}
               reviewDisabled={
                 busy || (!!accountId && data.accounts[selected] !== accountId)
@@ -643,6 +670,7 @@ export function FuturesPage() {
           symbol={symbol}
           runs={data.runs}
           busy={busy}
+          active={tab === 'positions'}
           onView={(trade) => {
             viewTrade(trade)
             setTab('trade')
@@ -667,6 +695,9 @@ export function FuturesPage() {
           busy={busy}
           onChoose={choose}
           onOpenConversation={openConversation}
+          onRenameConversation={renameConversation}
+          onDeleteConversation={removeConversation}
+          onDeleteDraft={(plan) => deletePlan(plan.id)}
         />
       </div>
       <div role="tabpanel" hidden={tab !== 'settings'}>
@@ -686,7 +717,7 @@ export function FuturesPage() {
       {review && (
         <PlanReviewDialog
           plan={review}
-          accountName={account?.name}
+          accountName={accountName(account)}
           replacement={trades.reviewReplacement}
           busy={busy}
           expired={expired(review, clock)}
@@ -698,7 +729,7 @@ export function FuturesPage() {
         <ManualEntryDialog
           symbol={symbol}
           venue={venue}
-          accountName={account?.name}
+          accountName={accountName(account)}
           leverage={leverage}
           onLeverageChange={setLeverage}
           idea={trades.builderIdea}

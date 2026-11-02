@@ -4,6 +4,7 @@ export interface Account {
   venue: string // "binance" or "okx"
   name: string // User-defined account name
   venue_name: string // How the interface names the venue
+  testnet?: boolean // On the venue's test environment; fixed when created
   has_api_key?: boolean
   has_secret_key?: boolean
   has_passphrase?: boolean
@@ -19,6 +20,14 @@ export type AccountStatus =
   | 'permission_denied'
   | 'unavailable'
 
+// What an account's API key may do, as its venue reports it.
+export interface KeyPermissions {
+  read: boolean
+  trade: boolean
+  withdraw: boolean
+  ip_restricted: boolean
+}
+
 export interface AccountState {
   account_id: string
   status: AccountStatus
@@ -26,6 +35,7 @@ export interface AccountState {
   asset?: string
   total_equity?: number
   available_balance?: number
+  permissions?: KeyPermissions
   checked_at: string
   error_code?: string
   error_message?: string
@@ -41,6 +51,7 @@ export interface CreateAccountRequest {
   api_key?: string
   secret_key?: string
   passphrase?: string
+  testnet?: boolean
 }
 
 export interface UpdateAccountConfigRequest {

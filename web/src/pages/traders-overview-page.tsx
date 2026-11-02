@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { StatStrip } from '@/components/common/figures'
-import { Panel, PanelState } from '@/components/common/panel'
+import { Panel, PanelLoading, PanelState } from '@/components/common/panel'
 import { SearchField } from '@/components/common/search-field'
 import {
   traderMetricsQuery,
@@ -10,6 +10,7 @@ import {
 import { TradersFrame } from '@/components/trader/traders-frame'
 import { TradersList } from '@/components/trader/traders-list'
 import { useAuth } from '@/contexts/auth-context'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useLanguage } from '@/contexts/language-context'
 import {
   configuredAccounts,
@@ -18,7 +19,7 @@ import {
   useModelConfigs,
 } from '@/hooks/use-connections'
 import { t } from '@/i18n'
-import type { TraderInfo, TraderMetrics } from '@/types'
+import type { Account, TraderInfo, TraderMetrics } from '@/types'
 import { fmtUsd } from '@/utils/trader-format'
 
 const SEARCH_FROM = 8
@@ -27,12 +28,15 @@ const SEARCH_FROM = 8
 // trader stores the equity of the whole account, so adding them up would count it twice.
 function accountEquity(
   traders: TraderInfo[],
-  metrics: Record<string, TraderMetrics> | undefined
+  metrics: Record<string, TraderMetrics> | undefined,
+  accounts: Account[] | undefined
 ) {
   const latest = new Map<string, { equity: number; at: number }>()
   for (const trader of traders) {
     const row = metrics?.[trader.trader_id]
     if (row?.equity == null) continue
+    // Test money does not add up with real money.
+    if (accounts?.find((a) => a.id === trader.account_id)?.testnet) continue
     const at = Number(row.equity_at) || 0
     const account = trader.account_id ?? trader.trader_id
     const known = latest.get(account)
@@ -60,7 +64,7 @@ export function TradersOverviewPage() {
     enabled: Boolean(user && token),
   })
   const all = traders ?? []
-  const equity = accountEquity(all, metrics)
+  const equity = accountEquity(all, metrics, accounts.data)
   const closed = all.reduce(
     (sum, trader) => sum + (metrics?.[trader.trader_id]?.total_trades ?? 0),
     0
@@ -74,7 +78,7 @@ export function TradersOverviewPage() {
           error ? (
             <PanelState role="alert">{label('loadFailed')}</PanelState>
           ) : (
-            <PanelState role="status">{t('loading', language)}</PanelState>
+            <PanelLoading />
           )
         ) : (
           <>
@@ -86,7 +90,12 @@ export function TradersOverviewPage() {
                 },
                 {
                   name: label('accountEquity'),
-                  value: fmtUsd(equity ?? undefined),
+                  value:
+                    metrics && accounts.data ? (
+                      fmtUsd(equity ?? undefined)
+                    ) : (
+                      <Skeleton className="w-28" />
+                    ),
                 },
                 { name: label('closedTrades'), value: closed },
               ]}

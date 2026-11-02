@@ -61,10 +61,13 @@ const toRows = (buckets: Bucket[]): Row[] =>
 export function TraderBreakdown({
   symbols,
   positions,
+  failed,
   language,
 }: {
   symbols?: SymbolStats[]
   positions?: HistoricalPosition[]
+  // The last read failed: what was read before stays, marked.
+  failed?: boolean
   language: Language
 }) {
   const label = (key: string, params?: Record<string, string | number>) =>
@@ -117,13 +120,24 @@ export function TraderBreakdown({
   ].filter((group) => group.rows.length > 0)
 
   if (groups.length === 0)
-    return <EmptyLine role="status">{label('noClosedTrades')}</EmptyLine>
+    return failed ? (
+      <EmptyLine role="alert">{label('breakdownFailed')}</EmptyLine>
+    ) : (
+      <EmptyLine role="status">{label('noClosedTrades')}</EmptyLine>
+    )
 
   return (
     <table className={wideTableClass}>
       <thead className="sticky top-0 z-10">
         <tr>
-          <th className={headClass}>{groups[0].title}</th>
+          <th className={headClass}>
+            {groups[0].title}
+            {failed && (
+              <span role="status" className="ml-2 text-vergex-warning">
+                {label('notUpdating')}
+              </span>
+            )}
+          </th>
           <th className={cn(headClass, 'w-20 text-right')}>
             {label('trades')}
           </th>
@@ -159,7 +173,7 @@ export function TraderBreakdown({
                 {row.winRate.toFixed(0)}%
               </td>
               <td className={cn(cellClass, numberClass, 'max-sm:hidden')}>
-                {row.fees == null ? '—' : fmtUsd(row.fees)}
+                {fmtUsd(row.fees)}
               </td>
               <td className={cn(cellClass, numberClass, gainTone(row.net))}>
                 {fmtUsd(row.net, true)}

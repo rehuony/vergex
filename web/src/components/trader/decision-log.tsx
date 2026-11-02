@@ -11,7 +11,7 @@ import {
 import { api } from '@/api'
 import { t, type Language } from '@/i18n'
 import type { DecisionRecord } from '@/types'
-import { PanelState } from '@/components/common/panel'
+import { PanelLoading, PanelState } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/utils/cn'
 import { pollEvery } from '@/utils/poll'
@@ -64,7 +64,7 @@ function Cycle({
   onOpen: () => void
   language: Language
 }) {
-  const { failed, fault } = cycleFault(record)
+  const { failed, blocked, total, fault } = cycleFault(record)
   const trades = tradeActions(record)
   const logs = record.execution_log ?? []
   const label = (key: string, params?: Record<string, string | number>) =>
@@ -113,8 +113,13 @@ function Cycle({
             {fault && (
               <span className="whitespace-nowrap text-xs font-semibold text-vergex-danger">
                 {failed > 0
-                  ? label('faultCount', { failed, total: trades.length })
+                  ? label('faultCount', { failed, total })
                   : label('fault')}
+              </span>
+            )}
+            {blocked > 0 && (
+              <span className="whitespace-nowrap text-xs text-vergex-muted">
+                {label('blockedCount', { count: blocked })}
               </span>
             )}
           </span>
@@ -196,9 +201,11 @@ export function DecisionLog({
   return (
     <>
       {!newest ? (
-        <PanelState role={error ? 'alert' : 'status'}>
-          {error ? label('decisionsFailed') : t('loading', language)}
-        </PanelState>
+        error ? (
+          <PanelState role="alert">{label('decisionsFailed')}</PanelState>
+        ) : (
+          <PanelLoading />
+        )
       ) : records.length === 0 ? (
         <PanelState role="status">{label('noDecisions')}</PanelState>
       ) : (

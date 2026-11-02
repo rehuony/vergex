@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 	"vergex/internal/account"
 	"vergex/internal/logger"
 	"vergex/internal/trader"
@@ -799,6 +800,27 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 }
 
 // handleStopTrader Stop trader
+func (s *Server) handleResumeTrader(c *gin.Context) {
+	userID := c.GetString("user_id")
+	traderID := c.Param("id")
+	if _, err := s.stores.Traders.GetFullConfig(userID, traderID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Trader does not exist or no access permission"})
+		return
+	}
+	var err error
+	if at, loadErr := s.traderManager.GetTrader(traderID); loadErr == nil {
+		err = at.Resume()
+	} else {
+		now := time.Now().UTC()
+		err = s.stores.Traders.ClearHalt(traderID, &now)
+	}
+	if err != nil {
+		SafeInternalError(c, "Resume trader", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Trader resumed"})
+}
+
 func (s *Server) handleStopTrader(c *gin.Context) {
 	userID := c.GetString("user_id")
 	traderID := c.Param("id")
@@ -833,5 +855,9 @@ func (s *Server) handleStopTrader(c *gin.Context) {
 	}
 
 	logger.Infof("⏹  Trader %s stopped", trader.GetName())
+	if stopErr := trader.StopError(); stopErr != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "Trader stopped", "warning": "orders_left"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "Trader stopped"})
 }

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"time"
+	"vergex/internal/database"
 
 	"gorm.io/gorm"
 )
@@ -53,6 +54,11 @@ func (s *CallStore) Record(call *Call) error {
 		call.CostUSD = 0
 	}
 	return s.db.Create(call).Error
+}
+
+// CursorAt returns where to read on from with After to see the calls from a time on.
+func (s *CallStore) CursorAt(at time.Time) (int64, error) {
+	return database.CursorAt(s.db, "agent.calls", "created_at", at)
 }
 
 // After returns the calls past an ID and no older than since, oldest first.

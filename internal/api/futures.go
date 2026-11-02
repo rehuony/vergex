@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,8 +40,18 @@ type futuresServices struct {
 	brokers    sync.Map
 	feedSlots  chan struct{}
 	source     *futures.Market
+	testnet    *futures.Market
 	controller *run.Controller
 	turns      sync.Map
+}
+
+// books is where an account's plans read their book: orders on a test environment have
+// to meet that environment's prices. Charts stay on the real market either way.
+func (p *futuresServices) books(ex *account.Account) *futures.Market {
+	if ex.Testnet {
+		return p.testnet
+	}
+	return p.source
 }
 
 func (s *Server) futuresService() (*futuresServices, error) {
@@ -57,12 +69,13 @@ func (s *Server) futuresService() (*futuresServices, error) {
 			return
 		}
 		source := futures.NewMarket()
-		p := &futuresServices{source: source, feedSlots: make(chan struct{}, 16)}
+		p := &futuresServices{source: source, testnet: futures.NewTestnetMarket(), feedSlots: make(chan struct{}, 16)}
 		controller, e := run.New(s.stores.DB, s.futuresBroker, source)
 		if e != nil {
 			s.futuresError = e
 			return
 		}
+		controller.TestnetMarket = p.testnet
 		p.controller = controller
 		s.futures = p
 	})
@@ -70,10 +83,6 @@ func (s *Server) futuresService() (*futuresServices, error) {
 }
 
 func (s *Server) futuresBroker(ctx context.Context, user, id string) (run.Broker, string, error) {
-	ex, e := s.futuresAccount(user, id)
-	if e != nil {
-		return nil, "", e
-	}
 	running, er := s.stores.Traders.ListByAccountID(user, id)
 	if er != nil {
 		return nil, "", errors.New("cannot verify automatic trader state")
@@ -88,8 +97,18 @@ func (s *Server) futuresBroker(ctx context.Context, user, id string) (run.Broker
 			}
 		}
 		if active {
-			return nil, "", errors.New("Automatic trading is running on this account. Stop it before using an approved one-time plan.")
+			return nil, "", plan.Rejection{Key: "traderRunning", Text: "Automatic trading is running on this account. Stop it before using an approved one-time plan."}
 		}
+	}
+	return s.futuresReadBroker(ctx, user, id)
+}
+
+// futuresReadBroker connects to an account for reading, which a trader running on it does
+// not prevent. Whatever places orders goes through futuresBroker.
+func (s *Server) futuresReadBroker(ctx context.Context, user, id string) (run.Broker, string, error) {
+	ex, e := s.futuresAccount(user, id)
+	if e != nil {
+		return nil, "", e
 	}
 	stampBytes, _ := json.Marshal([]any{ex.UpdatedAt, string(ex.APIKey), string(ex.SecretKey), string(ex.Passphrase)})
 	stampHash := sha256.Sum256(stampBytes)
@@ -114,7 +133,7 @@ func (s *Server) futuresBroker(ctx context.Context, user, id string) (run.Broker
 		if ex.APIKey == "" || ex.SecretKey == "" {
 			return nil, "", errors.New("Connect a Binance futures account in Vergex settings first")
 		}
-		t, err := binance.NewReadOnlyAccount(ctx, string(ex.APIKey), string(ex.SecretKey))
+		t, err := binance.NewReadOnlyAccount(ctx, string(ex.APIKey), string(ex.SecretKey), ex.Testnet)
 		if err != nil {
 			return nil, "", err
 		}
@@ -123,7 +142,7 @@ func (s *Server) futuresBroker(ctx context.Context, user, id string) (run.Broker
 		if ex.APIKey == "" || ex.SecretKey == "" || ex.Passphrase == "" {
 			return nil, "", errors.New("Connect the exchange API key, secret and passphrase in Vergex first")
 		}
-		return cache(run.ExecutorBroker{Executor: okx.NewReadOnlyAccount(string(ex.APIKey), string(ex.SecretKey), string(ex.Passphrase))}, key)
+		return cache(run.ExecutorBroker{Executor: okx.NewReadOnlyAccount(string(ex.APIKey), string(ex.SecretKey), string(ex.Passphrase), ex.Testnet)}, key)
 	default:
 		return nil, "", errors.New("This exchange is not supported for futures trading; no exchange fallback is allowed")
 	}
@@ -158,7 +177,18 @@ func (s *Server) futuresWorkspace(user, id, venue string) (*account.Account, err
 	return &account.Account{UserID: user, Venue: venue}, nil
 }
 
-func futuresError(c *gin.Context, e error) { c.JSON(http.StatusBadRequest, gin.H{"error": e.Error()}) }
+// futuresError answers with what went wrong, and where the interface has wording for it
+// in the user's language, which wording.
+func futuresError(c *gin.Context, e error) {
+	out := gin.H{"error": e.Error()}
+	var rejection plan.Rejection
+	if errors.As(e, &rejection) {
+		out["error_key"] = "futures.rejection." + rejection.Key
+		out["error_params"] = rejection.Params
+	}
+	c.JSON(http.StatusBadRequest, out)
+}
+
 func (s *Server) registerFutures(api, protected *gin.RouterGroup) {
 	api.GET("/futures/markets", s.handleFuturesMarkets)
 	for _, path := range []string{"instrument", "candles", "feed"} {
@@ -173,10 +203,15 @@ func (s *Server) registerFutures(api, protected *gin.RouterGroup) {
 	protected.POST("/futures/approve", s.handleFuturesApprove)
 	protected.POST("/futures/execute", s.handleFuturesExecute)
 	protected.POST("/futures/stop", s.handleFuturesStop)
+	protected.POST("/futures/amend-exit", s.handleFuturesAmendExit)
+	protected.POST("/futures/cancel-order", s.handleFuturesCancelOrder)
 	protected.POST("/futures/reconcile", s.handleFuturesReconcile)
 	protected.POST("/futures/check-status", s.handleFuturesCheckStatus)
 	protected.GET("/futures/conversations", s.handleFuturesConversations)
 	protected.GET("/futures/conversations/:id", s.handleFuturesConversation)
+	protected.PUT("/futures/conversations/:id", s.handleFuturesConversationRename)
+	protected.DELETE("/futures/conversations/:id", s.handleFuturesConversationDelete)
+	protected.DELETE("/futures/plans/:id", s.handleFuturesPlanDelete)
 	protected.GET("/futures/preferences", s.handleFuturesPreferences)
 	protected.PUT("/futures/preferences", s.handleFuturesPreferences)
 	protected.GET("/futures/entry-plugins", s.handleFuturesEntryPlugins)
@@ -290,7 +325,7 @@ func (s *Server) handleFuturesCompile(c *gin.Context) {
 		futuresError(c, e)
 		return
 	}
-	snapshot, e := p.source.Snapshot(c.Request.Context(), ex.Venue, in.Symbol)
+	snapshot, e := p.books(ex).Snapshot(c.Request.Context(), ex.Venue, in.Symbol)
 	if e != nil {
 		futuresError(c, e)
 		return
@@ -318,17 +353,28 @@ func (s *Server) handleFuturesCompile(c *gin.Context) {
 	}
 	c.JSON(200, draft)
 }
+
+// modelNamePattern is what a model's name can look like, on any provider.
+var modelNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$`)
+
 func (s *Server) handleFuturesChat(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 	var in struct {
 		futuresagent.Input
-		AccountID    string           `json:"account_id"`
-		AgentModelID string           `json:"agent_model_id"`
-		Constraints  plan.Constraints `json:"constraints"`
-		AutoSize     bool             `json:"auto_size"`
+		AccountID    string `json:"account_id"`
+		AgentModelID string `json:"agent_model_id"`
+		// AgentModelName is another of the provider's models for this turn, instead of
+		// the one the connection is set to.
+		AgentModelName string           `json:"agent_model_name"`
+		Constraints    plan.Constraints `json:"constraints"`
+		AutoSize       bool             `json:"auto_size"`
 	}
 	if e := c.ShouldBindJSON(&in); e != nil {
 		futuresError(c, errors.New("invalid planning input"))
+		return
+	}
+	if in.AgentModelName != "" && !modelNamePattern.MatchString(in.AgentModelName) {
+		futuresError(c, errors.New("invalid model name"))
 		return
 	}
 	user := c.GetString("user_id")
@@ -363,7 +409,11 @@ func (s *Server) handleFuturesChat(c *gin.Context) {
 		futuresError(c, errors.New("This model provider is not registered in Vergex"))
 		return
 	}
-	client.SetAPIKey(string(agentModel.APIKey), agentModel.CustomAPIURL, agentModel.CustomModelName)
+	modelName := agentModel.CustomModelName
+	if in.AgentModelName != "" {
+		modelName = in.AgentModelName
+	}
+	client.SetAPIKey(string(agentModel.APIKey), agentModel.CustomAPIURL, modelName)
 	client.SetTimeout(90 * time.Second)
 	agent.TagUsage(client, agent.FeatureFutures, "")
 	p, e := s.futuresService()
@@ -387,7 +437,7 @@ func (s *Server) handleFuturesChat(c *gin.Context) {
 		futuresError(c, e)
 		return
 	}
-	engine := futuresagent.Engine{Store: ds, Market: p.source, Charts: p.source, Model: &futuresagent.ClientAdapter{Client: client}, Limits: in.Constraints, Forge: forge.NewRegistry(s.stores.DB), Plugins: registry}
+	engine := futuresagent.Engine{Store: ds, Market: p.books(ex), Charts: p.source, Model: &futuresagent.ClientAdapter{Client: client}, Limits: in.Constraints, Forge: forge.NewRegistry(s.stores.DB), Plugins: registry}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 180*time.Second)
 	defer cancel()
 	if in.SessionID != "" {
@@ -397,7 +447,7 @@ func (s *Server) handleFuturesChat(c *gin.Context) {
 			Feature:      agent.FeatureFutures,
 			AgentModelID: agentModel.ID,
 			Title:        conversationTitle(in.Message),
-			Context:      map[string]string{"account_id": ex.ID, "symbol": in.Symbol},
+			Context:      map[string]string{futuresConversationAccount: ex.ID, "symbol": in.Symbol},
 		}
 		if e = s.stores.Conversations.Open(&conversation); e != nil {
 			futuresError(c, errors.New("invalid planning input"))
@@ -543,6 +593,133 @@ func (s *Server) handleFuturesStop(c *gin.Context) {
 	}
 	c.JSON(200, v)
 }
+
+// handleFuturesAmendExit moves the stop or target of a position a run holds.
+func (s *Server) handleFuturesAmendExit(c *gin.Context) {
+	var in struct {
+		ID    string       `json:"id"`
+		Role  string       `json:"role"`
+		Price plan.Decimal `json:"price"`
+	}
+	if c.ShouldBindJSON(&in) != nil {
+		futuresError(c, errors.New("invalid change"))
+		return
+	}
+	p, e := s.futuresService()
+	if e != nil {
+		futuresError(c, e)
+		return
+	}
+	v, e := p.controller.AmendExit(c.Request.Context(), c.GetString("user_id"), in.ID, in.Role, in.Price)
+	if e != nil {
+		futuresError(c, e)
+		return
+	}
+	c.JSON(200, v)
+}
+
+// handleFuturesCancelOrder cancels an order on an account that no live run is responsible
+// for. It goes by what the exchange lists now, not by what the page last saw. Cancelling is
+// safe to repeat, so nothing is recorded before it is sent.
+func (s *Server) handleFuturesCancelOrder(c *gin.Context) {
+	var in struct {
+		AccountID string `json:"account_id"`
+		Symbol    string `json:"symbol"`
+		OrderID   string `json:"order_id"`
+	}
+	if c.ShouldBindJSON(&in) != nil || !instrument.ValidSymbol(in.Symbol) || in.OrderID == "" {
+		futuresError(c, errors.New("invalid cancellation"))
+		return
+	}
+	p, e := s.futuresService()
+	if e != nil {
+		futuresError(c, e)
+		return
+	}
+	user := c.GetString("user_id")
+	ctx := c.Request.Context()
+	// Refuses while a trader runs on the account, whose orders are its own.
+	broker, _, e := s.futuresBroker(ctx, user, in.AccountID)
+	if e != nil {
+		futuresError(c, e)
+		return
+	}
+	canceller, ok := broker.(interface {
+		CancelOpen(context.Context, string, string, bool) error
+	})
+	if !ok {
+		futuresError(c, errors.New("this account cannot cancel orders from Vergex"))
+		return
+	}
+	reader, e := s.accountReadClient(user, "", in.AccountID)
+	if e != nil {
+		futuresError(c, e)
+		return
+	}
+	open, e := reader.GetOpenOrders(in.Symbol)
+	if e != nil {
+		futuresError(c, errors.New("could not read the account's open orders; nothing was cancelled"))
+		return
+	}
+	runs, e := p.controller.ListContext(ctx, user)
+	if e != nil {
+		futuresError(c, errors.New("could not read the running plans; nothing was cancelled"))
+		return
+	}
+	order, e := cancellableOrder(open, runs, in.AccountID, in.OrderID)
+	if e != nil {
+		futuresError(c, e)
+		return
+	}
+	if e := canceller.CancelOpen(ctx, in.Symbol, order.OrderID, order.Conditional); e != nil {
+		futuresError(c, e)
+		return
+	}
+	s.settleCancelledOrder(user, in.AccountID, in.Symbol, order.OrderID)
+	c.JSON(200, gin.H{"ok": true})
+}
+
+// cancellableOrder finds an order the user may cancel from here. One in a plan that has not
+// finished is that plan's, and leaving a position without its stop is not done by hand.
+func cancellableOrder(open []account.OpenOrder, runs []run.View, accountID, orderID string) (account.OpenOrder, error) {
+	for _, row := range runs {
+		if row.AccountID != accountID || row.State == "completed" || row.State == "cancelled" || row.State == "expired" {
+			continue
+		}
+		for _, order := range row.Orders {
+			if order.OrderID == account.PlainOrderID(orderID) {
+				return account.OpenOrder{}, plan.Rejection{Key: "orderInPlan", Text: "This order belongs to a running plan. Change or stop the plan instead."}
+			}
+		}
+	}
+	for _, order := range open {
+		if order.OrderID == orderID {
+			return order, nil
+		}
+	}
+	return account.OpenOrder{}, plan.Rejection{Key: "orderGone", Text: "This order is no longer open."}
+}
+
+// settleCancelledOrder ends the order in the ledger, if the ledger knows it. Failing is only
+// logged: the order is gone from the exchange either way.
+func (s *Server) settleCancelledOrder(user, accountID, symbol, orderID string) {
+	ex, err := s.stores.Accounts.GetByID(user, accountID)
+	if err != nil {
+		return
+	}
+	native := instrument.Normalize(symbol)
+	if ex.Venue == "okx" {
+		native = okx.InstrumentID(native)
+	}
+	instrumentID, err := instrument.Ensure(s.stores.DB, ex.Venue, instrument.KindPerpetual, instrument.Normalize(symbol), native)
+	if err == nil {
+		err = s.stores.Ledger.SettleExchangeOrder(accountID, instrumentID, orderID, account.OrderCanceled)
+	}
+	if err != nil {
+		logger.Warnf("Futures: settle cancelled order %s: %v", orderID, err)
+	}
+}
+
 func (s *Server) handleFuturesCheckStatus(c *gin.Context) {
 	var in struct {
 		ID string `json:"id"`
@@ -562,6 +739,13 @@ func (s *Server) handleFuturesCheckStatus(c *gin.Context) {
 	if e != nil {
 		futuresError(c, e)
 		return
+	}
+	// After a restart nothing watches a position until now. Something has to notice when
+	// its stop or target fires, and cancel the other one.
+	if v.State == "position_open" {
+		if _, e := p.controller.ReconcileContext(ctx, c.GetString("user_id"), in.ID); e != nil {
+			logger.Warnf("Futures: watch run %s again: %v", in.ID, e)
+		}
 	}
 	c.JSON(200, v)
 }
@@ -585,8 +769,14 @@ func (s *Server) handleFuturesReconcile(c *gin.Context) {
 	}
 	c.JSON(200, v)
 }
+
+// futuresConversationAccount is where a Futures conversation's context keeps its account.
+// It belongs to the account it started on, and is empty for one started without any.
+const futuresConversationAccount = "account_id"
+
+// handleFuturesConversations lists an account's conversations.
 func (s *Server) handleFuturesConversations(c *gin.Context) {
-	rows, e := s.stores.Conversations.List(c.GetString("user_id"), agent.FeatureFutures, 50)
+	rows, e := s.stores.Conversations.ListByContext(c.GetString("user_id"), agent.FeatureFutures, futuresConversationAccount, c.Query("account_id"), 50)
 	if e != nil {
 		futuresError(c, e)
 		return
@@ -600,9 +790,8 @@ func (s *Server) handleFuturesConversations(c *gin.Context) {
 
 // handleFuturesConversation returns a conversation with what was said in it.
 func (s *Server) handleFuturesConversation(c *gin.Context) {
-	row, e := s.stores.Conversations.Get(c.GetString("user_id"), c.Param("id"))
-	if e != nil || row.Feature != agent.FeatureFutures {
-		c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
+	row := s.futuresConversationOf(c)
+	if row == nil {
 		return
 	}
 	messages, e := s.stores.Conversations.Transcript(row.ID, 0)
@@ -611,6 +800,69 @@ func (s *Server) handleFuturesConversation(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"conversation": newFuturesConversation(*row), "messages": messages})
+}
+
+// handleFuturesConversationRename gives a conversation the name the user chose.
+func (s *Server) handleFuturesConversationRename(c *gin.Context) {
+	row := s.futuresConversationOf(c)
+	if row == nil {
+		return
+	}
+	var in struct {
+		Title string `json:"title"`
+	}
+	title := ""
+	if e := c.ShouldBindJSON(&in); e == nil {
+		title = conversationTitle(in.Title)
+	}
+	if title == "" {
+		futuresError(c, errors.New("a conversation needs a name"))
+		return
+	}
+	if e := s.stores.Conversations.Rename(row, title); e != nil {
+		futuresError(c, e)
+		return
+	}
+	c.JSON(200, gin.H{"title": title})
+}
+
+// handleFuturesConversationDelete removes a conversation with what was said in it.
+func (s *Server) handleFuturesConversationDelete(c *gin.Context) {
+	row := s.futuresConversationOf(c)
+	if row == nil {
+		return
+	}
+	if e := s.stores.Conversations.Delete(row); e != nil {
+		futuresError(c, e)
+		return
+	}
+	c.JSON(200, gin.H{"ok": true})
+}
+
+// futuresConversationOf finds the conversation a request names, or answers that there is
+// none and returns nil.
+func (s *Server) futuresConversationOf(c *gin.Context) *agent.Conversation {
+	row, e := s.stores.Conversations.Get(c.GetString("user_id"), c.Param("id"))
+	if e != nil || row.Feature != agent.FeatureFutures {
+		c.JSON(http.StatusNotFound, gin.H{"error": "conversation not found"})
+		return nil
+	}
+	return row
+}
+
+// handleFuturesPlanDelete removes a plan that never ran.
+func (s *Server) handleFuturesPlanDelete(c *gin.Context) {
+	e := futures.NewPlanStore(s.stores.DB, c.GetString("user_id"), "", "").Delete(c.Param("id"))
+	switch {
+	case errors.Is(e, gorm.ErrRecordNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "plan not found"})
+	case errors.Is(e, futures.ErrPlanRan):
+		c.JSON(http.StatusConflict, gin.H{"error": e.Error()})
+	case e != nil:
+		futuresError(c, e)
+	default:
+		c.JSON(200, gin.H{"ok": true})
+	}
 }
 
 // futuresConversation is a conversation as the Futures page lists it.
@@ -626,7 +878,7 @@ type futuresConversation struct {
 func newFuturesConversation(row agent.Conversation) futuresConversation {
 	return futuresConversation{
 		ID:           row.ID,
-		AccountID:    row.Context["account_id"],
+		AccountID:    row.Context[futuresConversationAccount],
 		AgentModelID: row.AgentModelID,
 		Symbol:       row.Context["symbol"],
 		Title:        row.Title,
@@ -693,7 +945,7 @@ func (s *Server) handleFuturesReadAccount(c *gin.Context) {
 		futuresError(c, e)
 		return
 	}
-	b, _, e := s.futuresBroker(c.Request.Context(), c.GetString("user_id"), c.Query("account_id"))
+	b, _, e := s.futuresReadBroker(c.Request.Context(), c.GetString("user_id"), c.Query("account_id"))
 	if e != nil {
 		futuresError(c, e)
 		return
