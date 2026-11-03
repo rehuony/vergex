@@ -17,7 +17,7 @@ vi.mock('@/contexts/language-context', () => ({
 afterEach(cleanup)
 const run = {
   account_id: 'account',
-  state: 'needs_attention',
+  status: 'needs_attention',
   plan: {
     snapshot: { venue: 'binance', symbol: 'BTC', quote_asset: 'USDC' },
   },
@@ -127,7 +127,7 @@ it('does not claim a position is open using stale or other-account data', () => 
 })
 it('distinguishes an approved unsent order from a live position', () => {
   render(
-    <FuturesOrderBlocker {...actions} run={{ ...run, state: 'approved' }} />
+    <FuturesOrderBlocker {...actions} run={{ ...run, status: 'approved' }} />
   )
   const shown = details('BTC order not submitted')
   expect(

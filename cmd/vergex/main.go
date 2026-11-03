@@ -104,7 +104,7 @@ func main() {
 	traderStores := trader.NewStores(db)
 	traderManager := trader.NewManager(traderStores)
 
-	// Load all traders from database to memory (may auto-start traders with IsRunning=true)
+	// Load all traders from database to memory (may auto-start traders with Running=true)
 	if err := traderManager.LoadTradersFromStore(); err != nil {
 		logger.Fatalf("❌ Failed to load traders: %v", err)
 	}
@@ -126,14 +126,13 @@ func main() {
 		server.SetMarketData(marketData)
 
 		forecastStore = forecast.NewStore(marketStore.DB())
-		engine := forecast.NewEngine(forecastStore, marketData, func(ctx context.Context, text string) error {
+		engine := forecast.NewEngine(forecastStore, marketData, func(ctx context.Context, alert forecast.Alert) error {
 			cfg, err := telegramStores.Telegram.Get()
 			if err != nil || cfg.BotToken == "" || cfg.ChatID == 0 || cfg.AlertMuted(telegram.AlertForecast) {
 				return nil
 			}
-			return telegram.Notify(ctx, telegramStores.Telegram, text)
+			return telegram.NotifyForecast(ctx, telegramStores.Telegram, alert)
 		})
-		engine.Language = telegramStores.Telegram.GetLanguage
 		engine.Start(marketCtx)
 		server.SetForecast(engine)
 	}

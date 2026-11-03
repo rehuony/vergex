@@ -377,7 +377,7 @@ type Trader struct {
 	InitialBalance      float64
 	ScanIntervalMinutes int
 	MarginMode          string
-	IsRunning           bool
+	Running             bool
 }
 
 // AddTrader creates a trader with an account, a model and a config of its own, and a
@@ -418,10 +418,10 @@ func AddTrader(t testing.TB, db *gorm.DB, trader *Trader) *Trader {
 	if trader.MarginMode == "" {
 		trader.MarginMode = "cross"
 	}
-	err := db.Exec(`INSERT INTO trader.traders (id, user_id, name, kind, config, agent_model_id, account_id, initial_balance, scan_interval_minutes, margin_mode, is_running)
+	err := db.Exec(`INSERT INTO trader.traders (id, user_id, name, kind, config, agent_model_id, account_id, initial_balance, scan_interval_minutes, margin_mode, running)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		trader.ID, trader.UserID, trader.Name, trader.Kind, string(trader.Config), trader.AgentModelID, trader.AccountID,
-		trader.InitialBalance, trader.ScanIntervalMinutes, trader.MarginMode, trader.IsRunning).Error
+		trader.InitialBalance, trader.ScanIntervalMinutes, trader.MarginMode, trader.Running).Error
 	if err != nil {
 		t.Fatalf("create trader: %v", err)
 	}

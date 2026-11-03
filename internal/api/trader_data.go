@@ -22,10 +22,10 @@ func (s *Server) handleTraderList(c *gin.Context) {
 	result := make([]map[string]interface{}, 0, len(traders))
 	for _, trader := range traders {
 		// Get real-time running status
-		isRunning := trader.IsRunning
+		isRunning := trader.Running
 		if at, err := s.traderManager.GetTrader(trader.ID); err == nil {
 			status := at.GetStatus()
-			if running, ok := status["is_running"].(bool); ok {
+			if running, ok := status["running"].(bool); ok {
 				isRunning = running
 			}
 		}
@@ -36,7 +36,7 @@ func (s *Server) handleTraderList(c *gin.Context) {
 			"trader_name":           trader.Name,
 			"agent_model":           trader.AgentModelID, // Use complete ID
 			"account_id":            trader.AccountID,
-			"is_running":            isRunning,
+			"running":               isRunning,
 			"initial_balance":       trader.InitialBalance,
 			"kind":                  trader.Kind,
 			"scan_interval_minutes": trader.ScanIntervalMinutes,
@@ -64,10 +64,10 @@ func (s *Server) handleGetTraderConfig(c *gin.Context) {
 	traderConfig := fullCfg.Trader
 
 	// Get real-time running status
-	isRunning := traderConfig.IsRunning
+	isRunning := traderConfig.Running
 	if at, err := s.traderManager.GetTrader(traderID); err == nil {
 		status := at.GetStatus()
-		if running, ok := status["is_running"].(bool); ok {
+		if running, ok := status["running"].(bool); ok {
 			isRunning = running
 		}
 	}
@@ -85,7 +85,7 @@ func (s *Server) handleGetTraderConfig(c *gin.Context) {
 		"initial_balance":       traderConfig.InitialBalance,
 		"scan_interval_minutes": traderConfig.ScanIntervalMinutes,
 		"is_cross_margin":       traderConfig.IsCrossMargin(),
-		"is_running":            isRunning,
+		"running":               isRunning,
 	}
 
 	c.JSON(http.StatusOK, result)

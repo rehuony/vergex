@@ -25,10 +25,10 @@ func (c *Controller) FinishManualClose(ctx context.Context, user, id string) (Vi
 		if err != nil {
 			return err
 		}
-		if v.State == "completed" || v.State == "cancelled" {
+		if v.Status == "completed" || v.Status == "cancelled" {
 			return nil
 		}
-		if v.State == "approved" || v.State == "starting" || v.State == "running" {
+		if v.Status == "approved" || v.Status == "starting" || v.Status == "running" {
 			return errors.New("Stop remaining entries before closing")
 		}
 		broker, key, err := c.Factory(ctx, user, v.AccountID)
@@ -83,11 +83,11 @@ func (c *Controller) CheckStatus(ctx context.Context, user, id string) (View, er
 	if err != nil {
 		return v, err
 	}
-	if v.State == "approved" && !time.Now().Before(v.Plan.Expires) {
+	if v.Status == "approved" && !time.Now().Before(v.Plan.Expires) {
 		err = c.retireUnusedApproval(&v, "expired", "Unused approval expired; no order was submitted.")
 		return v, err
 	}
-	if v.State != "needs_attention" && v.State != "position_open" && v.State != "stopping" {
+	if v.Status != "needs_attention" && v.Status != "position_open" && v.Status != "stopping" {
 		return v, nil
 	}
 	broker, key, err := c.Factory(ctx, user, v.AccountID)
@@ -107,7 +107,7 @@ func (c *Controller) CheckStatus(ctx context.Context, user, id string) (View, er
 			continue
 		}
 		if lookupErr != nil || (order.OrderID != "" && order.OrderID != observed.OrderID) || !validReceipt(order, observed) || cmp(observed.Filled, order.Filled) < 0 {
-			v.State = "needs_attention"
+			v.Status = "needs_attention"
 			v.Error = fmt.Sprintf("Could not confirm %s order %s. Check Positions & orders; new plans can still be generated, but another entry cannot be submitted yet.", orderRoleName(order.Role), order.OrderID)
 			if err := c.save(&v); err != nil {
 				return v, err
@@ -134,11 +134,11 @@ func (c *Controller) CheckStatus(ctx context.Context, user, id string) (View, er
 				v.Orders[i].Status = "CANCELED"
 			}
 		}
-		v.State, v.Error = "position_open", ""
+		v.Status, v.Error = "position_open", ""
 		return v, c.save(&v)
 	}
 	if !confirmedClosedTrade(v.Orders, account) {
-		v.State = "needs_attention"
+		v.Status = "needs_attention"
 		v.Error = "This trade still has a position or order that could not be fully reconciled. Check Positions & orders before submitting another entry. You can still generate new plans."
 		if err = c.save(&v); err != nil {
 			return v, err
@@ -155,7 +155,7 @@ func (c *Controller) complete(v *View) error {
 			v.Orders[i].Status = "CANCELED"
 		}
 	}
-	v.State, v.Error = "completed", ""
+	v.Status, v.Error = "completed", ""
 	err := c.DB.Transaction(func(tx *gorm.DB) error {
 		if err := writeRun(tx, v); err != nil {
 			return err

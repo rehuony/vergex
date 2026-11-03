@@ -67,7 +67,7 @@ func TestAConfigWithAWrongChoiceIsRefused(t *testing.T) {
 
 func TestDuplicatingATraderCopiesItsConfigNotItsState(t *testing.T) {
 	st := NewStores(testdb.Open(t))
-	source := testdb.AddTrader(t, st.DB, &testdb.Trader{Name: "Mine", IsRunning: true})
+	source := testdb.AddTrader(t, st.DB, &testdb.Trader{Name: "Mine", Running: true})
 	r := traderRoutes(t, st)
 
 	w := httptest.NewRecorder()
@@ -87,7 +87,7 @@ func TestDuplicatingATraderCopiesItsConfigNotItsState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if copied.Name != "Copy" || copied.Kind != source.Kind || copied.IsRunning || copied.InitialBalance != 0 {
+	if copied.Name != "Copy" || copied.Kind != source.Kind || copied.Running || copied.InitialBalance != 0 {
 		t.Fatalf("copied = %+v", copied)
 	}
 	var want, got map[string]any

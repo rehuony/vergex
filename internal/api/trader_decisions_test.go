@@ -24,7 +24,7 @@ const (
 // conversationOf keeps a cycle's exchange with the model, as the trader does.
 func conversationOf(t *testing.T, st *Stores, user, traderID, prompt string) string {
 	t.Helper()
-	conversation := agent.Conversation{ID: uuid.NewString(), UserID: user, Feature: agent.FeatureTrader, SourceID: traderID}
+	conversation := agent.Conversation{ID: uuid.NewString(), UserID: user, Feature: agent.FeatureTrader}
 	if err := st.Conversations.Open(&conversation); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func getJSON(t *testing.T, r http.Handler, url string, out any) int {
 func TestDecisionSummariesOmitPromptsAndPageBackwards(t *testing.T) {
 	s, r := traderDataServer(t)
 	for i := 1; i <= 3; i++ {
-		if err := s.stores.Decisions.LogDecision(&trader.DecisionRecord{TraderID: aliceTrader, CycleNumber: i, ConversationID: conversationOf(t, s.stores, testdb.UserID, aliceTrader, "secret prompt")}); err != nil {
+		if err := s.stores.Decisions.LogDecision(&trader.DecisionRecord{TraderID: aliceTrader, Seq: i, ConversationID: conversationOf(t, s.stores, testdb.UserID, aliceTrader, "secret prompt")}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -77,7 +77,7 @@ func TestDecisionSummariesOmitPromptsAndPageBackwards(t *testing.T) {
 	if code := getJSON(t, r, "/traders/"+aliceTrader+"/decisions/summary?limit=2", &page); code != http.StatusOK {
 		t.Fatalf("status %d", code)
 	}
-	if len(page) != 2 || page[0].CycleNumber != 3 || page[1].CycleNumber != 2 {
+	if len(page) != 2 || page[0].Seq != 3 || page[1].Seq != 2 {
 		t.Fatalf("expected the newest two, got %+v", page)
 	}
 	if page[0].SystemPrompt != "" || page[0].RawResponse != "" {
@@ -86,7 +86,7 @@ func TestDecisionSummariesOmitPromptsAndPageBackwards(t *testing.T) {
 
 	var older []trader.DecisionRecord
 	getJSON(t, r, fmt.Sprintf("/traders/%s/decisions/summary?before=%d", aliceTrader, page[1].ID), &older)
-	if len(older) != 1 || older[0].CycleNumber != 1 {
+	if len(older) != 1 || older[0].Seq != 1 {
 		t.Fatalf("expected the oldest, got %+v", older)
 	}
 

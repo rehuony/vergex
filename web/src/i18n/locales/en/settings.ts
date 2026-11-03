@@ -14,6 +14,7 @@ export const settings = {
       trader: 'Traders',
       futures: 'Futures',
       telegram: 'Telegram',
+      assistant: 'Assistant',
       test: 'Tests',
     },
     failedShort: 'Failed',

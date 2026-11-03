@@ -15,16 +15,16 @@ import (
 	"vergex/internal/venue/binance"
 )
 
-func engineFixture(t *testing.T) (*Engine, *feed.Series, *[]string, *time.Time) {
+func engineFixture(t *testing.T) (*Engine, *feed.Series, *[]Alert, *time.Time) {
 	t.Helper()
 	marketStore := feed.NewStore(testdb.Open(t))
 	if err := marketStore.SaveSettings(true, []string{"BTCUSDT"}, 0); err != nil {
 		t.Fatal(err)
 	}
 	store := NewStore(marketStore.DB())
-	sent := &[]string{}
-	engine := NewEngine(store, feed.NewService(marketStore), func(_ context.Context, text string) error {
-		*sent = append(*sent, text)
+	sent := &[]Alert{}
+	engine := NewEngine(store, feed.NewService(marketStore), func(_ context.Context, alert Alert) error {
+		*sent = append(*sent, alert)
 		return nil
 	})
 	clock := time.UnixMilli(1000 * hour)
@@ -102,7 +102,7 @@ func TestDueSignalsLeaveOutWhatCannotBeJudged(t *testing.T) {
 
 	save := func(seriesID, target int64) {
 		t.Helper()
-		_, err := engine.Store.SaveSignal(&Signal{StrategyID: strategy.ID, SeriesID: seriesID, OpenTime: target - 4*hour, TargetTime: target, Horizon: 4, Close: 100, Status: StatusOpen})
+		_, err := engine.Store.SaveSignal(&Signal{StrategyID: strategy.ID, SeriesID: seriesID, OpenTime: target - 4*hour, TargetTime: target, Horizon: 4, Close: 100, Direction: DirectionUp, Regime: RegimeTrending, Status: StatusOpen})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -240,12 +240,12 @@ func TestAlertsFireOnceUntilTheScoreComesBack(t *testing.T) {
 	ctx := context.Background()
 	engine.alert(ctx, "Default", record(DirectionUp, 0.75))
 	engine.alert(ctx, "Default", record(DirectionUp, 0.80))
-	if len(*sent) != 1 || !strings.Contains((*sent)[0], "BTCUSDT 1h: Up, Score 75, over about") {
+	if len(*sent) != 1 || len((*sent)[0].Signals) != 1 || (*sent)[0].Signals[0].DisplayProb != 0.75 {
 		t.Fatalf("sent = %v", *sent)
 	}
 	engine.alert(ctx, "Default", record(DirectionUp, 0.55))
 	engine.alert(ctx, "Default", record(DirectionDown, 0.22))
-	if len(*sent) != 2 || !strings.Contains((*sent)[1], "Down, Score 22") {
+	if len(*sent) != 2 || (*sent)[1].Signals[0].Direction != DirectionDown || (*sent)[1].Signals[0].DisplayProb != 0.22 {
 		t.Fatalf("should re-arm inside the threshold: %v", *sent)
 	}
 	engine.alert(ctx, "Default", []Signal{{SeriesID: 8, Symbol: "OTHERUSDT", Interval: "1h", OpenTime: justClosed, Direction: DirectionUp, DisplayProb: 0.9, Horizon: 4}})
@@ -272,7 +272,7 @@ func TestAlertsFollowTheCallAndOnlyTheNewestCandle(t *testing.T) {
 
 	// Catching up: old candles say nothing, and the newest speaks once.
 	engine.alert(ctx, "Default", []Signal{signal(justClosed-2*hour, DirectionUp, 0.9), signal(justClosed-hour, DirectionUp, 0.85), signal(justClosed, DirectionUp, 0.8)})
-	if len(*sent) != 1 || strings.Count((*sent)[0], "\n") != 1 || !strings.Contains((*sent)[0], "Score 80") {
+	if len(*sent) != 1 || len((*sent)[0].Signals) != 1 || (*sent)[0].Signals[0].DisplayProb != 0.8 {
 		t.Fatalf("sent = %v, want one line about the newest candle", *sent)
 	}
 
@@ -289,7 +289,7 @@ func TestAlertsFollowTheCallAndOnlyTheNewestCandle(t *testing.T) {
 func TestAlertsGoByIntervalAndCarryTheirStrategyAndLanguage(t *testing.T) {
 	engine, watched, sent, clock := engineFixture(t)
 	settings, err := engine.Store.LoadSettings(engine.now())
-	if err != nil || !slices.Equal(settings.AlertIntervals, []string{"1h", "4h", "1d"}) {
+	if err != nil || settings.AlertThreshold != 56 || !slices.Equal(settings.AlertIntervals, []string{"1h", "4h"}) {
 		t.Fatalf("settings = %+v, err = %v", settings, err)
 	}
 	short, err := feed.NewStore(engine.Store.db).EnsureSeries("BTCUSDT", "15m", feed.TierWatch, clock.UnixMilli())
@@ -313,10 +313,10 @@ func TestAlertsGoByIntervalAndCarryTheirStrategyAndLanguage(t *testing.T) {
 	}
 	// One round is one message, however many calls it holds.
 	engine.alert(ctx, "Momentum", []Signal{signal(short.ID, "15m", quarter), signal(watched.ID, "1h", justClosed)})
-	if len(*sent) != 1 || !strings.HasPrefix((*sent)[0], "📈 Forecast signals (strategy: Momentum)\n") ||
-		!strings.Contains((*sent)[0], "BTCUSDT 15m: Up, Score 80, over about 1 hour\n") ||
-		!strings.HasSuffix((*sent)[0], "BTCUSDT 1h: Up, Score 80, over about 4 hours") {
-		t.Fatalf("sent = %q", *sent)
+	if len(*sent) != 1 || (*sent)[0].Strategy != "Momentum" || len((*sent)[0].Signals) != 2 ||
+		(*sent)[0].Signals[0].Interval != "15m" || (*sent)[0].Signals[0].Span() != time.Hour ||
+		(*sent)[0].Signals[1].Interval != "1h" || (*sent)[0].Signals[1].Span() != 4*time.Hour {
+		t.Fatalf("sent = %+v", *sent)
 	}
 
 	if err := engine.Store.SetAlerts(70, []string{}); err != nil {
@@ -333,19 +333,18 @@ func TestAlertsGoByIntervalAndCarryTheirStrategyAndLanguage(t *testing.T) {
 	if err := engine.Store.SetAlerts(70, []string{"1h"}); err != nil {
 		t.Fatal(err)
 	}
-	engine.Language = func() string { return "zh" }
 	down := signal(watched.ID, "1h", justClosed)
 	down.Direction, down.DisplayProb, down.Calibrated, down.Horizon = DirectionDown, 0.2, true, 72
 	engine.alert(ctx, "默认", []Signal{down})
-	if len(*sent) != 2 || (*sent)[1] != "📈 预测信号（策略：默认）\nBTCUSDT 1h：下跌，20%，约 3 天内" {
-		t.Fatalf("sent = %q", (*sent)[1:])
+	if len(*sent) != 2 || (*sent)[1].Strategy != "默认" || (*sent)[1].Signals[0].Span() != 72*time.Hour {
+		t.Fatalf("sent = %+v", (*sent)[1:])
 	}
 }
 
 func TestACurveThatStopsEarningItsPlaceIsRemoved(t *testing.T) {
 	engine, _, _, clock := engineFixture(t)
 	strategy, _ := engine.Store.ActiveStrategy(*clock)
-	if err := engine.Store.saveCalibration(Calibration{StrategyID: strategy.ID, Interval: "1h", Samples: 300, Knots: encodeKnots([]Knot{{X: 0.5, Y: 0.5}}), BuiltAt: clock.UnixMilli()}); err != nil {
+	if err := engine.Store.saveCalibration(Calibration{StrategyID: strategy.ID, Interval: "1h", Knots: encodeKnots([]Knot{{X: 0.5, Y: 0.5}}), BuiltAt: clock.UnixMilli()}); err != nil {
 		t.Fatal(err)
 	}
 	if err := engine.Calibrate(strategy, "1h"); err != nil {
@@ -416,6 +415,9 @@ func judgeAndSave(t *testing.T, engine *Engine, record *Signal, targetClose floa
 	record.Status = StatusOpen
 	record.TargetTime = record.OpenTime + int64(record.Horizon)*hour
 	record.TargetClose, record.Outcome = 0, ""
+	if record.Regime == "" {
+		record.Regime = RegimeRanging
+	}
 	if _, err := engine.Store.SaveSignal(record); err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +434,7 @@ func TestStatsAgreeWithTheSignalsTheyAddUp(t *testing.T) {
 	for i := range 240 {
 		direction := []string{DirectionUp, DirectionDown, DirectionNeutral}[i%3]
 		target := []float64{110, 90, 100, 101, 99}[i%5]
-		record := Signal{StrategyID: strategy.ID, SeriesID: series.ID, Interval: "1h", OpenTime: int64(i+1) * hour, Horizon: 4, Close: 100, Direction: direction, Regime: []string{"trend", "range"}[i%2], Confidence: i % 101}
+		record := Signal{StrategyID: strategy.ID, SeriesID: series.ID, Interval: "1h", OpenTime: int64(i+1) * hour, Horizon: 4, Close: 100, Direction: direction, Regime: []string{RegimeTrending, RegimeRanging}[i%2], Confidence: i % 101}
 		judgeAndSave(t, engine, &record, target)
 		signals = append(signals, record)
 	}
@@ -537,8 +539,8 @@ func TestDetailOnlyShowsAFormingCandleTheStreamVouchesFor(t *testing.T) {
 	if detail.Forming != nil {
 		t.Fatalf("forming = %+v with no stream running", detail.Forming)
 	}
-	if len(detail.Projection) != detail.Result.Horizon {
-		t.Fatalf("projection = %d candles, horizon = %d", len(detail.Projection), detail.Result.Horizon)
+	if detail.Latest == nil || detail.Latest.Horizon != detail.Result.Horizon || detail.Latest.ExpectedMovePct <= 0 {
+		t.Fatalf("latest = %+v, want what the band is drawn from", detail.Latest)
 	}
 	if detail.Indicators == nil || len(detail.Indicators.RSI) == 0 {
 		t.Fatalf("indicators = %+v, they were asked for", detail.Indicators)
@@ -555,7 +557,7 @@ func TestSignalStatsCountOnlyWhatDoesNotOverlap(t *testing.T) {
 		direction string
 		target    float64
 	}{{DirectionUp, 110}, {DirectionUp, 90}, {DirectionDown, 90}, {DirectionNeutral, 110}, {DirectionUp, 100}} {
-		record := Signal{StrategyID: strategy.ID, SeriesID: series.ID, OpenTime: int64(i+1) * hour, Interval: "1h", Horizon: 4, Close: 100, Direction: row.direction, Status: StatusOpen}
+		record := Signal{StrategyID: strategy.ID, SeriesID: series.ID, OpenTime: int64(i+1) * hour, Interval: "1h", Horizon: 4, Close: 100, Direction: row.direction, Regime: RegimeRanging, Status: StatusOpen}
 		judgeAndSave(t, engine, &record, row.target)
 	}
 	stats, err := engine.Store.SignalStats(strategy.ID, series.ID)
@@ -623,7 +625,7 @@ func TestLatestLookupsFindEachSeriesNewestSignal(t *testing.T) {
 	other, _ := engine.Store.CreateStrategy(DefaultConfig(), "Other", *clock)
 	save := func(strategyID string, openTime int64) {
 		t.Helper()
-		if _, err := engine.Store.SaveSignal(&Signal{StrategyID: strategyID, SeriesID: series.ID, OpenTime: openTime, TargetTime: openTime + hour, Close: 100, Status: StatusOpen}); err != nil {
+		if _, err := engine.Store.SaveSignal(&Signal{StrategyID: strategyID, SeriesID: series.ID, OpenTime: openTime, TargetTime: openTime + hour, Close: 100, Direction: DirectionUp, Regime: RegimeTrending, Status: StatusOpen}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1076,7 +1078,7 @@ func TestOverlayDrawsTheCallOnlyWhenTheCandlesAreCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if overlay.Pending != PendingFetching || len(overlay.Projection) != 0 {
+	if overlay.Pending != PendingFetching || overlay.Horizon != 0 {
 		t.Fatalf("overlay = %+v", overlay)
 	}
 
@@ -1091,11 +1093,8 @@ func TestOverlayDrawsTheCallOnlyWhenTheCandlesAreCurrent(t *testing.T) {
 	if overlay.Pending != "" || overlay.Direction == "" {
 		t.Fatalf("overlay = %+v", overlay)
 	}
-	if want := DefaultConfig().Horizons["1h"]; len(overlay.Projection) != want {
-		t.Fatalf("projection = %d, want %d", len(overlay.Projection), want)
-	}
-	if first := overlay.Projection[0].Time; first != (last+hour)/1000 {
-		t.Fatalf("first projected candle at %d, want the one after the last closed", first)
+	if want := DefaultConfig().Horizons["1h"]; overlay.Horizon != want || overlay.OpenTime != last || overlay.TargetTime != last+int64(want)*hour || overlay.Close <= 0 || overlay.ExpectedMovePct <= 0 {
+		t.Fatalf("overlay = %+v, want the band drawn from the last closed candle to its target", overlay)
 	}
 
 	// Hours later with no new candles, drawing it would start in the past.
@@ -1104,7 +1103,7 @@ func TestOverlayDrawsTheCallOnlyWhenTheCandlesAreCurrent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if overlay.Pending != PendingFetching || len(overlay.Projection) != 0 {
+	if overlay.Pending != PendingFetching || overlay.Horizon != 0 {
 		t.Fatalf("overlay = %+v", overlay)
 	}
 }

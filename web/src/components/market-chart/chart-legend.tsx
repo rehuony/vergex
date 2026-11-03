@@ -1,3 +1,4 @@
+import { forwardRef } from 'react'
 import { cn } from '@/utils/cn'
 
 // Enough decimals to tell prices apart, as the rest of Forecast shows them.
@@ -23,20 +24,21 @@ export interface LegendText {
 }
 
 // The candle under the pointer, or the newest one, in a line over the chart. It takes no
-// pointer events, so it never gets in the way of the chart.
-export function ChartLegend({
-  candle,
-  text,
-}: {
-  candle: {
-    open: number
-    high: number
-    low: number
-    close: number
-    volume: number
+// pointer events, so it never gets in the way of the chart. The ref is for whoever
+// keeps the chart's top clear under it.
+export const ChartLegend = forwardRef<
+  HTMLParagraphElement,
+  {
+    candle: {
+      open: number
+      high: number
+      low: number
+      close: number
+      volume: number
+    }
+    text: LegendText
   }
-  text: LegendText
-}) {
+>(function ChartLegend({ candle, text }, ref) {
   const digits = priceDigits(candle.close)
   const price = (value: number) =>
     value.toLocaleString('en-US', {
@@ -53,7 +55,7 @@ export function ChartLegend({
     </span>
   )
   return (
-    <p className={cn(chartLineClass, 'pointer-events-none')}>
+    <p ref={ref} className={cn(chartLineClass, 'pointer-events-none')}>
       {field(text.open, price(candle.open))}
       {field(text.high, price(candle.high))}
       {field(text.low, price(candle.low))}
@@ -65,4 +67,4 @@ export function ChartLegend({
       {field(text.volume, compactVolume.format(candle.volume))}
     </p>
   )
-}
+})

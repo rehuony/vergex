@@ -94,7 +94,7 @@ export const agentApi = {
 
   // What a provider offers with the form's values; a blank key uses the saved one.
   async listAvailableModels(
-    request: Omit<TestModelConfigRequest, 'custom_model_name'>
+    request: Omit<TestModelConfigRequest, 'model_name'>
   ): Promise<string[]> {
     const result = await httpClient.request<{ models: string[] }>(
       `${API_BASE}/agent/models/available`,

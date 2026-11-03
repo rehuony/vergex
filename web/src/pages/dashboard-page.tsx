@@ -18,12 +18,13 @@ import type { FlowSelection } from '@/components/dashboard/flow-text'
 import { OverviewFigures } from '@/components/dashboard/overview-figures'
 import { PositionsOverview } from '@/components/dashboard/positions-overview'
 import { useActivity } from '@/components/dashboard/use-activity'
+import { useAssistantPage } from '@/hooks/use-assistant-page'
 import { useAuth } from '@/contexts/auth-context'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
 import { pollEvery } from '@/utils/poll'
 
-// While it loads the page already holds the room the scene will take.
+// A first read that failed holds the room the page would take.
 const FIRST_SCREEN =
   'h-[clamp(480px,calc(56.25vw-28px),calc(100dvh-190px))] xl:h-[max(620px,calc(100dvh-121px))]'
 
@@ -72,6 +73,7 @@ export function DashboardPage() {
   // Set when this browser cannot draw the stage. The list says the same things.
   const [flat, setFlat] = useState(false)
   const stageUnavailable = useCallback(() => setFlat(true), [])
+  useAssistantPage('dashboard', () => ({ events: kind, selected: selection }))
   const wide = useSyncExternalStore(watchWidth, wideEnough)
 
   const staleAt = activity.stale
@@ -84,19 +86,18 @@ export function DashboardPage() {
   return (
     <AppChrome currentPage="dashboard" animateContent>
       <Page className="vergex-screen" title={t('dashboardNav', language)}>
-        {!overview ? (
+        {!overview && error ? (
           <Panel className={FIRST_SCREEN}>
-            {error ? (
-              <PanelState role="alert" className="h-full">
-                {label('loadFailed')}
-              </PanelState>
-            ) : (
-              <PanelLoading className="h-full" />
-            )}
+            <PanelState role="alert" className="h-full">
+              {label('loadFailed')}
+            </PanelState>
           </Panel>
-        ) : overview.models.length === 0 || overview.accounts.length === 0 ? (
+        ) : overview &&
+          (overview.models.length === 0 || overview.accounts.length === 0) ? (
           <FirstRun overview={overview} label={label} />
         ) : (
+          // While the first overview is read the page is already laid out as it will be,
+          // with skeletons for its figures, and the stage starts loading beside them.
           <div className="grid min-w-0 gap-3 xl:h-[max(620px,calc(100dvh-121px))] xl:grid-cols-[minmax(0,1fr)_380px]">
             <Panel className="flex min-h-0 flex-col overflow-hidden">
               <OverviewFigures
@@ -145,7 +146,14 @@ export function DashboardPage() {
                 selection={selection}
                 onPoint={setPointed}
                 positions={
-                  <PositionsOverview overview={overview} language={language} />
+                  overview ? (
+                    <PositionsOverview
+                      overview={overview}
+                      language={language}
+                    />
+                  ) : (
+                    <PanelLoading className="h-full" />
+                  )
                 }
                 label={label}
               />

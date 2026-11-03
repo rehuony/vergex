@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Copy, Pencil, Plus, Power, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -37,6 +37,7 @@ import {
 } from '@/constants/model-providers'
 import { buildTraderPath } from '@/constants/route-paths'
 import { useAuth } from '@/contexts/auth-context'
+import { useAssistantPage } from '@/hooks/use-assistant-page'
 import { useLanguage } from '@/contexts/language-context'
 import {
   configuredAccounts as savedAccounts,
@@ -51,6 +52,9 @@ import { fmtPct } from '@/utils/trader-format'
 
 // Past this many traders the list gets a search box.
 const SEARCH_FROM = 8
+// What the panel is while there is no trader to show: the room a trader's takes.
+const emptyPanel =
+  'flex min-h-0 flex-1 flex-col overflow-hidden max-lg:min-h-80'
 const LAST_TRADER_KEY = 'vergex.traders.last'
 
 const lastTrader = () => {
@@ -144,6 +148,16 @@ export function TradersPage() {
     traders?.find((trader) => trader.trader_id === remembered) ??
     rows[0]
   const tab = readTraderTab(params.get('tab'))
+  useAssistantPage('traders', () => ({
+    trader: selected && {
+      id: selected.trader_id,
+      name: selected.trader_name,
+      kind: selected.kind,
+      running: selected.running,
+    },
+    tab,
+    unsaved_settings: dirty.current,
+  }))
 
   useEffect(() => {
     if (selected) rememberTrader(selected.trader_id)
@@ -181,6 +195,20 @@ export function TradersPage() {
     else setCreating(true)
   }
 
+  // Overview's way to create the first trader comes here to do it.
+  const location = useLocation()
+  const askedToCreate = Boolean(
+    (location.state as { create?: boolean } | null)?.create
+  )
+  useEffect(() => {
+    if (!askedToCreate || models.isLoading || accounts.isLoading) return
+    navigate(location.pathname + location.search, {
+      replace: true,
+      state: null,
+    })
+    add()
+  }, [askedToCreate, models.isLoading, accounts.isLoading])
+
   const create = async (data: CreateTraderRequest) => {
     try {
       const model = allModels.find((m) => m.id === data.agent_model_id)
@@ -204,7 +232,7 @@ export function TradersPage() {
   }
 
   const startStop = async (trader: TraderInfo) => {
-    if (!trader.is_running) {
+    if (!trader.running) {
       setStarting(trader)
       return
     }
@@ -279,7 +307,7 @@ export function TradersPage() {
   // trader is stopped first.
   const actionsFor = (trader: TraderInfo, inRail: boolean): RailAction[] => [
     {
-      label: trader.is_running ? t('stop', language) : t('start', language),
+      label: trader.running ? t('stop', language) : t('start', language),
       icon: Power,
       onSelect: () => void startStop(trader),
     },
@@ -287,7 +315,7 @@ export function TradersPage() {
       label: label('rename'),
       icon: Pencil,
       movesFocus: true,
-      disabled: Boolean(trader.is_running),
+      disabled: Boolean(trader.running),
       onSelect: () => setRenaming({ id: trader.trader_id, inRail }),
     },
     {
@@ -303,45 +331,21 @@ export function TradersPage() {
     },
   ]
 
+  // The list stands while it loads, so those who have traders see it stay put. With none,
+  // or none read, there is nothing to list and the panel takes the width.
+  const listed = traders ? traders.length > 0 : !tradersError
+
   return (
     <TradersFrame language={language}>
-      {!traders ? (
-        <Panel>
-          {tradersError ? (
-            <PanelState role="alert">{label('loadFailed')}</PanelState>
-          ) : (
-            <PanelLoading />
-          )}
-        </Panel>
-      ) : traders.length === 0 ? (
-        <Panel>
-          <NoTraders
-            modelCount={configuredModels.length}
-            accountCount={configuredAccounts.length}
-            language={language}
-            create={
-              <Button
-                type="button"
-                variant="primary"
-                className="max-sm:h-10"
-                disabled={configError}
-                onClick={add}
-              >
-                <Plus className="size-4" aria-hidden="true" />
-                {t('createTrader', language)}
-              </Button>
-            }
-          />
-        </Panel>
-      ) : (
-        <SplitView
-          rail={
+      <SplitView
+        rail={
+          listed && (
             <SplitRail
               label={label('tabs')}
               addLabel={t('createTrader', language)}
               onAdd={add}
               top={
-                traders.length >= SEARCH_FROM && (
+                (traders?.length ?? 0) >= SEARCH_FROM && (
                   <SearchField
                     label={label('search')}
                     value={search}
@@ -351,14 +355,21 @@ export function TradersPage() {
                 )
               }
             >
-              {rows.length === 0 && (
+              {!traders &&
+                [0, 1, 2].map((row) => (
+                  <li key={row} className="space-y-2 px-3 py-2.5">
+                    <Skeleton className="h-3 w-32" />
+                    <Skeleton className="h-3 w-48" />
+                  </li>
+                ))}
+              {traders && rows.length === 0 && (
                 <li className="px-3 py-2 text-xs text-vergex-muted">
                   {label('noMatch')}
                 </li>
               )}
               {rows.map((trader) => {
                 const change = metrics?.[trader.trader_id]?.return_pct
-                const running = Boolean(trader.is_running)
+                const running = Boolean(trader.running)
                 return (
                   <RailItem
                     key={trader.trader_id}
@@ -423,9 +434,42 @@ export function TradersPage() {
                 )
               })}
             </SplitRail>
-          }
-        >
-          <div className="flex min-h-0 min-w-0 flex-col gap-4">
+          )
+        }
+      >
+        <div className="flex min-h-0 min-w-0 flex-col gap-4">
+          {!traders ? (
+            <Panel className={emptyPanel}>
+              {tradersError ? (
+                <PanelState role="alert" className="flex-1">
+                  {label('loadFailed')}
+                </PanelState>
+              ) : (
+                <PanelLoading className="flex-1" />
+              )}
+            </Panel>
+          ) : traders.length === 0 ? (
+            <Panel className={emptyPanel}>
+              <NoTraders
+                className="flex-1"
+                modelCount={configuredModels.length}
+                accountCount={configuredAccounts.length}
+                language={language}
+                create={
+                  <Button
+                    type="button"
+                    variant="primary"
+                    className="max-sm:h-10"
+                    disabled={configError}
+                    onClick={add}
+                  >
+                    <Plus className="size-4" aria-hidden="true" />
+                    {t('createTrader', language)}
+                  </Button>
+                }
+              />
+            </Panel>
+          ) : (
             <div className="flex items-center gap-2 lg:hidden">
               <AppSelect
                 aria-label={label('tabs')}
@@ -448,35 +492,33 @@ export function TradersPage() {
                 <Plus className="size-4" aria-hidden="true" />
               </Button>
             </div>
-            {selected && (
-              <TraderPanel
-                key={selected.trader_id}
-                trader={selected}
-                tab={tab}
-                models={allModels}
-                accounts={allAccounts}
-                actions={actionsFor(selected, false)}
-                renaming={
-                  renaming?.id === selected.trader_id && !renaming.inRail
-                }
-                stopping={stopping}
-                language={language}
-                onTab={(next) => void select(selected.trader_id, next)}
-                onStartStop={() => void startStop(selected)}
-                onRenaming={(next) =>
-                  setRenaming(
-                    next ? { id: selected.trader_id, inRail: false } : null
-                  )
-                }
-                onRename={(name) => void rename(selected, name)}
-                onDirty={(next) => {
-                  dirty.current = next
-                }}
-              />
-            )}
-          </div>
-        </SplitView>
-      )}
+          )}
+          {selected && (
+            <TraderPanel
+              key={selected.trader_id}
+              trader={selected}
+              tab={tab}
+              models={allModels}
+              accounts={allAccounts}
+              actions={actionsFor(selected, false)}
+              renaming={renaming?.id === selected.trader_id && !renaming.inRail}
+              stopping={stopping}
+              language={language}
+              onTab={(next) => void select(selected.trader_id, next)}
+              onStartStop={() => void startStop(selected)}
+              onRenaming={(next) =>
+                setRenaming(
+                  next ? { id: selected.trader_id, inRail: false } : null
+                )
+              }
+              onRename={(name) => void rename(selected, name)}
+              onDirty={(next) => {
+                dirty.current = next
+              }}
+            />
+          )}
+        </div>
+      </SplitView>
       {creating && (
         <NewTraderDialog
           models={allModels.filter((m) => m.enabled)}

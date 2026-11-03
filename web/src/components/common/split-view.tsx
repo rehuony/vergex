@@ -7,16 +7,24 @@ import { cn } from '@/utils/cn'
 
 // A list beside what it opens, filling the screen down to the page's edge. Each side scrolls by itself, so the page does not, and the
 // list's action and whatever the detail pins stay where they are. Where the two do not
-// fit side by side, they follow each other in the page.
+// fit side by side, they follow each other in the page. With nothing to list there is no
+// list, and what it would open takes the whole width.
 export function SplitView({
   rail,
   children,
 }: {
-  rail: ReactNode
+  rail?: ReactNode
   children: ReactNode
 }) {
   return (
-    <div className="flex min-w-0 flex-col gap-4 lg:grid lg:h-[max(440px,calc(100dvh-181px))] lg:grid-cols-[320px_minmax(0,1fr)]">
+    <div
+      className={cn(
+        'flex min-w-0 flex-col gap-4 lg:grid lg:h-[max(440px,calc(100dvh-181px))]',
+        rail
+          ? 'lg:grid-cols-[320px_minmax(0,1fr)]'
+          : 'lg:grid-cols-[minmax(0,1fr)]'
+      )}
+    >
       {rail}
       {children}
     </div>

@@ -12,6 +12,11 @@ import (
 // pass the same window, so a candle always gets the same answer.
 const WindowBars = 200
 
+// typicalMoveShare sizes the expected move. ATR14 over the horizon covers the actual move
+// about nine times in ten; the move that is exceeded one time in three is 0.55 of it, at
+// every interval and horizon measured on 20 large coins over 2024 to 2026.
+const typicalMoveShare = 0.55
+
 // MinBars is the least Evaluate can read. Forecasts always pass WindowBars, so a coin
 // needs that much history to get one.
 const MinBars = 120
@@ -60,7 +65,8 @@ type Result struct {
 	ProbFull    float64 `json:"prob_full"`
 	Direction   string  `json:"direction"`
 	Confidence  int     `json:"confidence"`
-	// ExpectedMovePct is the size of a typical move over the horizon.
+	// ExpectedMovePct is the size of a typical move over the horizon: the actual move
+	// stays within it about two times in three.
 	ExpectedMovePct float64 `json:"expected_move_pct"`
 	Support         float64 `json:"support"`
 	Resistance      float64 `json:"resistance"`
@@ -150,7 +156,7 @@ func Evaluate(config Config, interval string, klines []market.Kline, derivatives
 		coverage = availableWeight / enabledWeight
 	}
 	result.Confidence = int(math.Round(math.Abs(2*result.ProbFull-1) * coverage * 100))
-	result.ExpectedMovePct = atr / last.Close * math.Sqrt(float64(result.Horizon)) * 100
+	result.ExpectedMovePct = typicalMoveShare * atr / last.Close * math.Sqrt(float64(result.Horizon)) * 100
 	result.Support, result.Resistance = supportResistance(klines)
 	return result, nil
 }

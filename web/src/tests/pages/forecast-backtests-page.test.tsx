@@ -112,9 +112,10 @@ beforeEach(() => {
 })
 afterEach(cleanup)
 
-it('opens the form when there is no run yet, and starts one', async () => {
+it('opens the form alone when there is no run yet, and starts one', async () => {
   show()
   const start = await screen.findByRole('button', { name: 'Run backtest' })
+  expect(screen.queryByRole('navigation', { name: 'Runs' })).toBeNull()
   await waitFor(() => expect(start).toBeEnabled())
   fireEvent.click(start)
   await waitFor(() => expect(mocks.start).toHaveBeenCalled())

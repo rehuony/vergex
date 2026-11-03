@@ -8,8 +8,6 @@ export interface Account {
   has_api_key?: boolean
   has_secret_key?: boolean
   has_passphrase?: boolean
-  apiKey?: string
-  secretKey?: string
   passphrase?: string // OKX specific
 }
 

@@ -44,6 +44,7 @@ type Server struct {
 	activity          *dashboard.Feed
 	authLimiter       *ipRateLimiter // per-IP throttle for login/register
 	overview          overviewCache
+	assistants        sync.Map // user ID → *assistantService
 }
 
 // NewServer Creates API server
@@ -189,6 +190,8 @@ func (s *Server) setupRoutes() {
 		// Routes requiring authentication
 		protected := api.Group("/", s.authMiddleware())
 		s.registerFutures(api, protected)
+		s.registerAssistant(protected)
+		s.registerConversations(protected)
 		{
 			// Logout (add to blacklist)
 			protected.POST("/logout", s.handleLogout)

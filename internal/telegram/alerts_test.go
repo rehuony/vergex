@@ -18,7 +18,15 @@ import (
 // trendTrader is the trader every alert test starts with.
 const trendTrader = "00000000-0000-4000-8000-0000000000a1"
 
-func alertFixture(t *testing.T) (*alertWatcher, *Stores, *[]string, *time.Time) {
+// sentAlert is one part the watcher sent, as its plain text reads.
+type sentAlert struct {
+	text   string
+	silent bool
+}
+
+func (a sentAlert) String() string { return a.text }
+
+func alertFixture(t *testing.T) (*alertWatcher, *Stores, *[]sentAlert, *time.Time) {
 	t.Helper()
 	st := NewStores(testdb.Open(t))
 	if err := st.Users.Create(&user.User{ID: testdb.UserID, Email: "alice@example.com", PasswordHash: "x"}); err != nil {
@@ -31,13 +39,16 @@ func alertFixture(t *testing.T) (*alertWatcher, *Stores, *[]string, *time.Time) 
 	if err := st.Telegram.BindUser(42, "alice"); err != nil {
 		t.Fatal(err)
 	}
-	sent := &[]string{}
+	sent := &[]sentAlert{}
 	now := time.Now()
 	clock := &now
 	w := &alertWatcher{
 		stores: st,
-		send:   func(_ context.Context, text string) error { *sent = append(*sent, text); return nil },
-		now:    func() time.Time { return *clock },
+		send: func(_ context.Context, part messagePart, silent bool) error {
+			*sent = append(*sent, sentAlert{part.Plain, silent})
+			return nil
+		},
+		now: func() time.Time { return *clock },
 	}
 	return w, st, sent, clock
 }
@@ -61,7 +72,7 @@ func TestAlertsSkipHistoryAndReportOnce(t *testing.T) {
 	*clock = clock.Add(time.Minute)
 	closePosition(t, st, clock.Add(-time.Second))
 	w.check(context.Background())
-	if len(*sent) != 1 || !strings.Contains((*sent)[0], "Position closed: BTCUSDT long, Trend, P/L +12.50 USDT") {
+	if len(*sent) != 1 || !strings.Contains((*sent)[0].text, "Position closed · BTCUSDT long\nTrend · Real money\n• P/L: +12.50") {
 		t.Fatalf("sent = %v", *sent)
 	}
 
@@ -79,7 +90,7 @@ func TestAlertsRetryAfterAFailedSend(t *testing.T) {
 	*clock = clock.Add(time.Minute)
 	closePosition(t, st, clock.Add(-time.Second))
 	working := w.send
-	w.send = func(context.Context, string) error { return errors.New("down") }
+	w.send = func(context.Context, messagePart, bool) error { return errors.New("down") }
 	w.check(context.Background())
 
 	w.send = working
@@ -98,7 +109,7 @@ func TestStandingProblemsAlertOnceAndReArm(t *testing.T) {
 	}
 	w.check(context.Background())
 	w.check(context.Background())
-	if len(*sent) != 1 || !strings.Contains((*sent)[0], "Safe mode: Trend: 3 model failures") {
+	if len(*sent) != 1 || !strings.Contains((*sent)[0].text, "🚨 Needs attention\n• Safe mode · Trend: 3 model failures") {
 		t.Fatalf("sent = %v", *sent)
 	}
 
@@ -138,11 +149,11 @@ func TestMutedKindsStaySilentWithoutBuildingABacklog(t *testing.T) {
 
 func TestPlansNeedingAttentionAlertOncePerRun(t *testing.T) {
 	w, _, sent, _ := alertFixture(t)
-	runs := []PlanRun{{ID: "r1", Symbol: "ETHUSDT", State: "needs_attention", Error: "Service restarted"}, {ID: "r2", Symbol: "BTCUSDT", State: "running"}}
+	runs := []PlanRun{{ID: "r1", Symbol: "ETHUSDT", Status: "needs_attention", Error: "Service restarted"}, {ID: "r2", Symbol: "BTCUSDT", Status: "running"}}
 	w.sources.PlanRuns = func(context.Context, string) ([]PlanRun, error) { return runs, nil }
 	w.check(context.Background())
 	w.check(context.Background())
-	if len(*sent) != 1 || !strings.Contains((*sent)[0], "Futures plan needs attention: ETHUSDT") {
+	if len(*sent) != 1 || !strings.Contains((*sent)[0].text, "• Futures plan needs attention · ETHUSDT: Service restarted") {
 		t.Fatalf("sent = %v", *sent)
 	}
 }
@@ -153,7 +164,7 @@ func TestProblemsAlertOnceWhileTheyLast(t *testing.T) {
 	w.sources.Problems = func(string) []Problem { return problems }
 	w.check(context.Background())
 	w.check(context.Background())
-	if len(*sent) != 1 || !strings.Contains((*sent)[0], "Service failed: forecast: no strategy") {
+	if len(*sent) != 1 || !strings.Contains((*sent)[0].text, "• Service failed · forecast: no strategy") {
 		t.Fatalf("sent = %v", *sent)
 	}
 
@@ -182,7 +193,7 @@ func TestAccountsAlertOnlyOnceTheyHaveKeptFailing(t *testing.T) {
 	w.check(context.Background())
 	*clock = clock.Add(time.Minute)
 	w.check(context.Background())
-	if len(*sent) != 1 || !strings.Contains((*sent)[0], "Account unreadable: Main: timeout") {
+	if len(*sent) != 1 || !strings.Contains((*sent)[0].text, "• Account unreadable · Main: timeout") {
 		t.Fatalf("sent = %v", *sent)
 	}
 
@@ -243,10 +254,13 @@ func TestDailyReportGoesOutOnceADayForRealAccounts(t *testing.T) {
 	if len(*sent) != 1 {
 		t.Fatalf("sent = %v", *sent)
 	}
-	for _, want := range []string{"Daily report, 2026-11-02 UTC", "Equity: 1234.50 USDT", "Realized: +10.00 USDT", "Open positions: 1 (ETHUSDT short)", "Model cost, all calls: $0.42"} {
-		if !strings.Contains((*sent)[0], want) {
-			t.Errorf("no %q in %q", want, (*sent)[0])
+	for _, want := range []string{"🗓 Daily report · 11-02 · +10.00 USDT", "Real money only · UTC", "• Equity: 1.2K", "• Realized: +10.00", "• Open positions: 1 (ETHUSDT short)", "• Model cost, all calls: $0.42"} {
+		if !strings.Contains((*sent)[0].text, want) {
+			t.Errorf("no %q in %q", want, (*sent)[0].text)
 		}
+	}
+	if !(*sent)[0].silent {
+		t.Error("the daily report should arrive silently")
 	}
 
 	// The same day does not go out again, even after a restart, which reads the same mark.
@@ -261,16 +275,16 @@ func TestDailyReportGoesOutOnceADayForRealAccounts(t *testing.T) {
 	*clock = clock.Add(72 * time.Hour)
 	fail := true
 	send := w.send
-	w.send = func(ctx context.Context, text string) error {
+	w.send = func(ctx context.Context, part messagePart, silent bool) error {
 		if fail {
 			return errors.New("offline")
 		}
-		return send(ctx, text)
+		return send(ctx, part, silent)
 	}
 	w.check(context.Background())
 	fail = false
 	w.check(context.Background())
-	if len(*sent) != 2 || !strings.Contains((*sent)[1], "2026-11-05 UTC") {
+	if len(*sent) != 2 || !strings.Contains((*sent)[1].text, "Daily report · 11-05") {
 		t.Fatalf("sent = %v", *sent)
 	}
 
@@ -317,14 +331,14 @@ func TestFuturesPositionsAlertWhenTheyFillAndClose(t *testing.T) {
 	ledger.Open("run", "BTCUSDT", account.SideLong, 0.5, 100, clock.Add(-time.Second))
 	asFutures()
 	w.check(context.Background())
-	if len(*sent) != 1 || !strings.Contains((*sent)[0], "Entry filled: BTCUSDT long, 0.5 at 100, Futures") {
+	if len(*sent) != 1 || !strings.Contains((*sent)[0].text, "📥 Entry filled · BTCUSDT long\nFutures · Real money\n• Filled: 0.5 @ 100") {
 		t.Fatalf("sent = %v", *sent)
 	}
 
 	*clock = clock.Add(time.Minute)
 	ledger.Close("run", "BTCUSDT", account.SideLong, 0.5, 112.5, -3.25, clock.Add(-time.Second))
 	w.check(context.Background())
-	if len(*sent) != 2 || !strings.Contains((*sent)[1], "Position closed: BTCUSDT long, Futures, P/L -3.25 USDT") {
+	if len(*sent) != 2 || !strings.Contains((*sent)[1].text, "📤 Position closed · BTCUSDT long\nFutures · Real money\n• P/L: -3.25") {
 		t.Fatalf("sent = %v", *sent)
 	}
 
@@ -335,56 +349,60 @@ func TestFuturesPositionsAlertWhenTheyFillAndClose(t *testing.T) {
 	}
 }
 
-func TestSplitMessageKeepsLinesWithinTheLimit(t *testing.T) {
-	line := strings.Repeat("x", 2000)
-	parts := splitMessage(line + "\n" + line + "\n" + line)
-	if len(parts) != 3 {
+func TestADigestPutsEachKindInASectionOfItsOwn(t *testing.T) {
+	p := &pending{lang: "en"}
+	p.attention = []text{attentionLine("en", "Safe mode", "Trend", "")}
+	p.orders = []orderEvent{{symbol: "BTCUSDT", what: "buy", reason: "margin too low", origin: origin{name: "Trend"}}}
+	p.closes = []positionEvent{
+		{symbol: "BTCUSDT", side: "long", pnl: 12.3, origin: origin{name: "Trend"}},
+		{symbol: "SOLUSDT", side: "short", pnl: -3.1, origin: origin{name: "Futures", testnet: true}, late: "11-02 09:00 UTC"},
+	}
+	parts := p.digest().parts()
+	if len(parts) != 1 {
 		t.Fatalf("parts = %d", len(parts))
 	}
-}
-
-// One long line used to go out whole, be refused, and hold up every alert behind it.
-func TestALineTooLongForAMessageIsCut(t *testing.T) {
-	for _, line := range []string{strings.Repeat("x", 9000), strings.Repeat("🙂", 5000), strings.Repeat("字", 9000)} {
-		parts := splitMessage("first\n" + line + "\nlast")
-		if len(parts) < 2 {
-			t.Fatalf("%d parts", len(parts))
+	got := parts[0].Plain
+	for _, want := range []string{
+		"🚨 Needs attention\n• Safe mode · Trend\n\n❌ Order failed · BTCUSDT buy\nTrend · Real money\nmargin too low",
+		"📤 2 positions closed\nSince 11-02 09:00 UTC\nClosed\nSymbol",
+		"BTCUSDT  long  +12.30  Trend\n",
+		// Test money is a table of its own, so no total mixes the two.
+		"Closed · Testnet\nSymbol", "SOLUSDT  short  -3.10  Futures",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in\n%s", want, got)
 		}
-		for _, part := range parts {
-			if size := utf16Len(part); size > 4096 {
-				t.Fatalf("a part of %d units", size)
-			}
-		}
-		if !strings.HasPrefix(parts[0], "first") || !strings.HasSuffix(parts[len(parts)-1], "last") {
-			t.Fatal("the lines around it were lost")
-		}
+	}
+	wellFormed(t, parts[0].HTML)
+	if !strings.Contains(parts[0].HTML, `<blockquote expandable>margin too low</blockquote>`) || !strings.Contains(parts[0].HTML, `<code class="language-Closed">`) || !strings.Contains(parts[0].HTML, `<code class="language-Closed·Testnet">`) {
+		t.Fatalf("html = %s", parts[0].HTML)
 	}
 }
 
 func TestAMessageFailingPartWayResendsOnlyTheRest(t *testing.T) {
 	line := strings.Repeat("x", 3000)
-	text := line + "\n" + line + "1\n" + line + "2"
+	m := newMessage("en").add(words(line)).add(words(line + "1")).add(words(line + "2"))
 	var sent []string
 	failing := true
-	w := &alertWatcher{send: func(_ context.Context, part string) error {
+	w := &alertWatcher{send: func(_ context.Context, part messagePart, _ bool) error {
 		if failing && len(sent) == 1 {
 			return errors.New("down")
 		}
-		sent = append(sent, part)
+		sent = append(sent, part.Plain)
 		return nil
 	}}
-	if err := w.deliver(context.Background(), text); err == nil {
+	if err := w.deliver(context.Background(), m); err == nil {
 		t.Fatal("expected the failure to be reported")
 	}
 	failing = false
-	if err := w.deliver(context.Background(), text); err != nil {
+	if err := w.deliver(context.Background(), m); err != nil {
 		t.Fatal(err)
 	}
 	if len(sent) != 3 {
 		t.Fatalf("%d parts went out, want each of 3 once", len(sent))
 	}
 	// A later message that happens to repeat a part goes out in full.
-	if err := w.deliver(context.Background(), line); err != nil {
+	if err := w.deliver(context.Background(), newMessage("en").add(words(line))); err != nil {
 		t.Fatal(err)
 	}
 	if len(sent) != 4 {
@@ -395,27 +413,23 @@ func TestAMessageFailingPartWayResendsOnlyTheRest(t *testing.T) {
 func TestAnEventReportedLateSaysWhenItHappened(t *testing.T) {
 	now := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
 	w := &alertWatcher{now: func() time.Time { return now }}
-	if got := w.dated("line", now.Add(-time.Minute).UnixMilli(), now.UnixMilli()); got != "line" {
+	if got := w.late(now.Add(-time.Minute).UnixMilli(), now.UnixMilli()); got != "" {
 		t.Fatalf("a recent event: %q", got)
 	}
-	if got := w.dated("line", now.Add(-3*time.Hour).UnixMilli(), now.UnixMilli()); got != "line (11-02 09:00)" {
+	if got := w.late(now.Add(-3*time.Hour).UnixMilli(), now.UnixMilli()); got != "11-02 09:00 UTC" {
 		t.Fatalf("a late event: %q", got)
 	}
 }
 
 func TestTraderAlertsMarkTestMoneyAndLongDetailsAreCut(t *testing.T) {
-	if got := traderLabel("en", "Trend", true); got != "Trend (testnet)" {
+	if got := (origin{name: "Trend", testnet: true}).label("en"); got != "Trend · Testnet" {
 		t.Fatalf("label = %q", got)
 	}
-	if got := traderLabel("zh", "Trend", false); got != "Trend" {
+	if got := (origin{name: "Trend"}).label("zh"); got != "Trend" {
 		t.Fatalf("label = %q", got)
 	}
-	if got := withDetail("line", strings.Repeat("x", 1000)); len([]rune(got)) > maxAlertDetail+10 {
+	if got := detailOf(strings.Repeat("x", 1000)); len([]rune(got)) > maxAlertDetail+1 {
 		t.Fatalf("detail not cut: %d", len(got))
-	}
-	order := &account.TraderOrder{Symbol: "BTCUSDT", Side: "BUY", Error: "margin too low"}
-	if got := orderRejectedLine("en", order, "Trend"); !strings.Contains(got, "margin too low") {
-		t.Fatalf("line = %q", got)
 	}
 }
 
@@ -424,7 +438,7 @@ func TestDailyReportSaysWhenAnAccountCannotBeRead(t *testing.T) {
 	w.sources.AccountEquity = func(_, _ string) (float64, bool) { return 0, false }
 	day := clock.UTC().Truncate(24 * time.Hour)
 	report, ok := w.dailyReport(testdb.UserID, day, day.Add(24*time.Hour), "en")
-	if !ok || !strings.Contains(report, "Equity: —") {
-		t.Fatalf("report = %q, %v", report, ok)
+	if !ok || !strings.Contains(report.parts()[0].Plain, "• Equity: —") {
+		t.Fatalf("report = %v, %v", report, ok)
 	}
 }

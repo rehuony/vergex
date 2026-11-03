@@ -29,6 +29,7 @@ import { useStrategies } from '@/components/forecast/strategy-select'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AppSelect } from '@/components/ui/select'
+import { useAssistantPage } from '@/hooks/use-assistant-page'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
 import { cn } from '@/utils/cn'
@@ -87,6 +88,17 @@ export function ForecastBacktestsPage() {
       ? undefined
       : (list.find((run) => String(run.id) === askedRun) ?? list[0])
   const showForm = wantsNew || (runs && list.length === 0 && !missingRun)
+  // Until there is a run, the form is all there is: no list beside it, and no picker.
+  const listed = !runs || list.length > 0
+  useAssistantPage('forecast_backtests', () => ({
+    run: current && {
+      id: current.id,
+      name: current.name,
+      strategy_id: current.strategy_id,
+      status: current.status,
+    },
+    starting_a_new_one: Boolean(showForm),
+  }))
 
   const { data: whole } = useQuery({
     queryKey: ['forecast-backtest', current?.id],
@@ -206,97 +218,101 @@ export function ForecastBacktestsPage() {
     <ForecastFrame language={language}>
       <SplitView
         rail={
-          <SplitRail
-            label={label('runs')}
-            addLabel={label('newBacktest')}
-            onAdd={() => openForm()}
-          >
-            {list.length === 0 && (
-              <li className="px-3 py-2 text-[13px] text-vergex-muted">
-                {runs ? label('noRuns') : <Skeleton className="h-3 w-40" />}
-              </li>
-            )}
-            {list.map((run) => {
-              const summary = run.summary
-              return (
-                <RailItem
-                  key={run.id}
-                  current={!showForm && current?.id === run.id}
-                  title={coinsText(run)}
-                  name={runName(run)}
-                  details={
-                    <>
-                      <span className="flex min-w-0 items-center gap-2 text-xs text-vergex-muted">
-                        <span className="min-w-0 truncate">
-                          {fmtTime(run.created_at)} ·{' '}
-                          {run.options.intervals.join(', ')} ·{' '}
-                          {label('coinCount', {
-                            count: run.options.symbols.length,
-                          })}
+          listed && (
+            <SplitRail
+              label={label('runs')}
+              addLabel={label('newBacktest')}
+              onAdd={() => openForm()}
+            >
+              {!runs && (
+                <li className="px-3 py-2">
+                  <Skeleton className="h-3 w-40" />
+                </li>
+              )}
+              {list.map((run) => {
+                const summary = run.summary
+                return (
+                  <RailItem
+                    key={run.id}
+                    current={!showForm && current?.id === run.id}
+                    title={coinsText(run)}
+                    name={runName(run)}
+                    details={
+                      <>
+                        <span className="flex min-w-0 items-center gap-2 text-xs text-vergex-muted">
+                          <span className="min-w-0 truncate">
+                            {fmtTime(run.created_at)} ·{' '}
+                            {run.options.intervals.join(', ')} ·{' '}
+                            {label('coinCount', {
+                              count: run.options.symbols.length,
+                            })}
+                          </span>
+                          {stateBadge(run)}
                         </span>
-                        {stateBadge(run)}
-                      </span>
-                      {summary && summary.samples > 0 && (
-                        <span className="truncate font-mono text-[11px] tabular-nums text-vergex-muted">
-                          {fmtRate(summary.hit_rate)} /{' '}
-                          {fmtRate(summary.chance_rate)} · {label('lift')}{' '}
-                          {(summary.lift * 100).toFixed(1)}%
-                        </span>
-                      )}
-                    </>
-                  }
-                  onOpen={() => open(run.id)}
-                  onStartRename={() => setRenaming(run.id)}
-                  rename={
-                    renaming === run.id && (
-                      <NameInput
-                        row
-                        value={run.name}
-                        label={label('strategyName')}
-                        placeholder={strategyName(run)}
-                        allowEmpty
-                        language={language}
-                        onSave={(name) => void rename(run, name)}
-                        onCancel={() => setRenaming(null)}
-                      />
-                    )
-                  }
-                  actions={actionsFor(run)}
-                  actionsLabel={label('moreActions')}
-                />
-              )
-            })}
-          </SplitRail>
+                        {summary && summary.samples > 0 && (
+                          <span className="truncate font-mono text-[11px] tabular-nums text-vergex-muted">
+                            {fmtRate(summary.hit_rate)} /{' '}
+                            {fmtRate(summary.chance_rate)} · {label('lift')}{' '}
+                            {(summary.lift * 100).toFixed(1)}%
+                          </span>
+                        )}
+                      </>
+                    }
+                    onOpen={() => open(run.id)}
+                    onStartRename={() => setRenaming(run.id)}
+                    rename={
+                      renaming === run.id && (
+                        <NameInput
+                          row
+                          value={run.name}
+                          label={label('strategyName')}
+                          placeholder={strategyName(run)}
+                          allowEmpty
+                          language={language}
+                          onSave={(name) => void rename(run, name)}
+                          onCancel={() => setRenaming(null)}
+                        />
+                      )
+                    }
+                    actions={actionsFor(run)}
+                    actionsLabel={label('moreActions')}
+                  />
+                )
+              })}
+            </SplitRail>
+          )
         }
       >
         <div className="flex min-h-0 min-w-0 flex-col gap-4">
-          <div className="flex items-center gap-2 lg:hidden">
-            <AppSelect
-              aria-label={label('runs')}
-              className="min-w-0 flex-1 max-sm:h-10"
-              value={showForm ? 'new' : String(current?.id ?? 'new')}
-              options={[
-                { value: 'new', label: label('newBacktest') },
-                ...list.map((run) => ({
-                  value: String(run.id),
-                  label: `${runName(run)} · ${fmtTime(run.created_at)}`,
-                })),
-              ]}
-              onChange={(value) =>
-                value === 'new' ? openForm() : open(Number(value))
-              }
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              size="icon"
-              aria-label={label('newBacktest')}
-              className="shrink-0 max-sm:size-10"
-              onClick={() => openForm()}
-            >
-              <Plus className="size-4" aria-hidden="true" />
-            </Button>
-          </div>
+          {listed && (
+            <div className="flex items-center gap-2 lg:hidden">
+              <AppSelect
+                aria-label={label('runs')}
+                className="min-w-0 flex-1 max-sm:h-10"
+                value={showForm ? 'new' : String(current?.id ?? 'new')}
+                options={[
+                  { value: 'new', label: label('newBacktest') },
+                  ...list.map((run) => ({
+                    value: String(run.id),
+                    label: `${runName(run)} · ${fmtTime(run.created_at)}`,
+                  })),
+                ]}
+                onChange={(value) =>
+                  value === 'new' ? openForm() : open(Number(value))
+                }
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                size="icon"
+                aria-label={label('newBacktest')}
+                className="shrink-0 max-sm:size-10"
+                onClick={() => openForm()}
+              >
+                <Plus className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          )}
 
           {showForm ? (
             <BacktestForm

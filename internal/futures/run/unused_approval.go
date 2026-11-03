@@ -11,18 +11,18 @@ import (
 
 // releaseLease frees the account a run reserved.
 func releaseLease(tx *gorm.DB, runID string) error {
-	return tx.Where("holder = ? AND holder_id = ?", account.LeaseHolderFutures, runID).Delete(&account.Lease{}).Error
+	return tx.Where("source = ? AND source_id = ?", account.SourceFutures, runID).Delete(&account.Lease{}).Error
 }
 
 // Callers hold the run lock. Only an approval with no persisted submission
 // intent can be retired locally; exchange orders are never touched here.
 func retireUnusedApproval(tx *gorm.DB, v View, state, reason string) error {
-	if v.State != "approved" || v.StartedAt != nil || len(v.Orders) != 0 {
+	if v.Status != "approved" || v.StartedAt != nil || len(v.Orders) != 0 {
 		return errors.New("This trade has started. Verify its exchange orders before choosing another entry.")
 	}
-	res := tx.Model(&Run{}).Where(`id = ? AND user_id = ? AND state = ? AND started_at IS NULL
+	res := tx.Model(&Run{}).Where(`id = ? AND user_id = ? AND status = ? AND started_at IS NULL
 		AND NOT EXISTS (SELECT 1 FROM futures.run_orders o WHERE o.run_id = futures.runs.id)`, v.ID, v.UserID, "approved").
-		Updates(map[string]any{"state": state, "error": reason, "updated_at": time.Now().UTC()})
+		Updates(map[string]any{"status": state, "error": reason, "updated_at": time.Now().UTC()})
 	if res.Error != nil {
 		return res.Error
 	}
@@ -41,6 +41,6 @@ func (c *Controller) retireUnusedApproval(v *View, state, reason string) error {
 	}); err != nil {
 		return err
 	}
-	v.State, v.Error, v.UpdatedAt = state, reason, time.Now().UTC()
+	v.Status, v.Error, v.UpdatedAt = state, reason, time.Now().UTC()
 	return nil
 }

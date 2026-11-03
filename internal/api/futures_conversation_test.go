@@ -121,6 +121,7 @@ func TestFuturesHistoryCanBeRenamedAndDeleted(t *testing.T) {
 	router.PUT("/conversations/:id", s.handleFuturesConversationRename)
 	router.DELETE("/conversations/:id", s.handleFuturesConversationDelete)
 	router.DELETE("/plans/:id", s.handleFuturesPlanDelete)
+	router.DELETE("/plans", s.handleFuturesPlansDelete)
 	call := func(method, path, as, body string) int {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(method, path, strings.NewReader(body))
@@ -171,24 +172,37 @@ func TestFuturesHistoryCanBeRenamedAndDeleted(t *testing.T) {
 		t.Errorf("another user deleting got %d", code)
 	}
 
-	// Plans: one drafted in the conversation, one revising it and one that ran.
+	// Plans: two drafted in the conversation that never ran, one drafted in it that ran, and
+	// one drafted by hand.
 	account := testdb.AddAccount(t, st.DB, user, "binance", "main")
 	plans := []futures.Plan{
-		{UserID: user, ID: "draft", AccountID: account, Venue: "binance", Symbol: "BTCUSDT", Status: "cancelled", ConversationID: id, Body: "{}"},
-		{UserID: user, ID: "revised", AccountID: account, Venue: "binance", Symbol: "BTCUSDT", Status: "draft", ConversationID: id, RevisesPlanID: "draft", Body: "{}"},
-		{UserID: user, ID: "ran", AccountID: account, Venue: "binance", Symbol: "BTCUSDT", Status: "completed", Body: "{}"},
+		{UserID: user, ID: "draft", AccountID: account, Symbol: "BTCUSDT", Status: "cancelled", ConversationID: id, Body: "{}"},
+		{UserID: user, ID: "revised", AccountID: account, Symbol: "BTCUSDT", Status: "draft", ConversationID: id, Body: "{}"},
+		{UserID: user, ID: "ran", AccountID: account, Symbol: "BTCUSDT", Status: "completed", ConversationID: id, Body: "{}"},
+		{UserID: user, ID: "manual", AccountID: account, Symbol: "BTCUSDT", Status: "draft", Body: "{}"},
+		{UserID: user, ID: "working", AccountID: account, Symbol: "BTCUSDT", Status: "approved", Body: "{}"},
 	}
 	for i := range plans {
 		if err := st.DB.Create(&plans[i]).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := st.DB.Exec(`INSERT INTO futures.runs (id, user_id, plan_id, account_id, account_identity, plan_hash, approval_hash, state, approved_at, updated_at)
-		VALUES (?, ?, 'ran', ?, 'identity', 'plan', 'approval', 'completed', now(), now())`, uuid.NewString(), user, account).Error; err != nil {
+	ranRun := uuid.NewString()
+	for planID, state := range map[string]string{"ran": "completed", "working": "running"} {
+		runID := uuid.NewString()
+		if planID == "ran" {
+			runID = ranRun
+		}
+		if err := st.DB.Exec(`INSERT INTO futures.runs (id, user_id, plan_id, account_id, account_identity, plan_hash, approval_hash, status, approved_at, updated_at)
+			VALUES (?, ?, ?, ?, 'identity', 'plan', 'approval', ?, now(), now())`, runID, user, planID, account, state).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.DB.Exec(`INSERT INTO futures.run_orders (run_id, seq, role, symbol, side, client_id, status) VALUES (?, 1, 'entry', 'BTCUSDT', 'long', 'vergex-1', 'FILLED')`, ranRun).Error; err != nil {
 		t.Fatal(err)
 	}
 
-	// Deleting the conversation takes its messages and leaves its plans.
+	// Deleting the conversation takes its messages and the plans it drafted that never ran.
 	if code := call(http.MethodDelete, "/conversations/"+id, user, ""); code != http.StatusOK {
 		t.Fatalf("delete = %d", code)
 	}
@@ -199,30 +213,52 @@ func TestFuturesHistoryCanBeRenamedAndDeleted(t *testing.T) {
 		t.Errorf("messages left = %d, err %v", len(messages), err)
 	}
 	store := futures.NewPlanStore(st.DB, user, "", "")
-	kept, err := store.Find("draft")
-	if err != nil || kept.ConversationID != "" {
-		t.Fatalf("plan after its conversation went = %+v, err %v", kept, err)
+	for _, gone := range []string{"draft", "revised"} {
+		if _, err := store.Find(gone); err == nil {
+			t.Errorf("plan %s outlived its conversation", gone)
+		}
+	}
+	ran, err := store.Find("ran")
+	if err != nil || ran.ConversationID != "" {
+		t.Fatalf("the plan that ran = %+v, err %v", ran, err)
+	}
+	if _, err := store.Find("manual"); err != nil {
+		t.Fatalf("a plan drafted by hand went with the conversation: %v", err)
 	}
 
-	// A plan that ran stays, and one that never did can go, even with a revision of it left.
-	if code := call(http.MethodDelete, "/plans/ran", user, ""); code != http.StatusConflict {
-		t.Errorf("deleting a plan that ran got %d", code)
+	// A plan still at work stays. One whose run has settled goes with the run and its orders,
+	// and one that never ran can go too.
+	if code := call(http.MethodDelete, "/plans/working", user, ""); code != http.StatusConflict {
+		t.Errorf("deleting a plan at work got %d", code)
 	}
-	if code := call(http.MethodDelete, "/plans/draft", other, ""); code != http.StatusNotFound {
+	if code := call(http.MethodDelete, "/plans/ran", other, ""); code != http.StatusNotFound {
 		t.Errorf("another user deleting a plan got %d", code)
 	}
-	if code := call(http.MethodDelete, "/plans/draft", user, ""); code != http.StatusOK {
-		t.Fatalf("deleting a draft got %d", code)
+	if code := call(http.MethodDelete, "/plans/ran", user, ""); code != http.StatusOK {
+		t.Fatalf("deleting a finished plan got %d", code)
 	}
-	if _, err := store.Find("draft"); err == nil {
+	var left int64
+	if err := st.DB.Raw(`SELECT (SELECT count(*) FROM futures.runs WHERE id = ?) + (SELECT count(*) FROM futures.run_orders WHERE run_id = ?)`, ranRun, ranRun).Scan(&left).Error; err != nil || left != 0 {
+		t.Fatalf("the finished plan left %d runs and orders, err %v", left, err)
+	}
+
+	// Several at once: what can go goes, and what is at work is named.
+	var out struct {
+		Deleted int      `json:"deleted"`
+		AtWork  []string `json:"at_work"`
+	}
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodDelete, "/plans", strings.NewReader(`{"ids":["manual","working","gone"]}`))
+	r.Header.Set("Test-User", user)
+	router.ServeHTTP(w, r)
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil || w.Code != http.StatusOK || out.Deleted != 1 || fmt.Sprint(out.AtWork) != "[working]" {
+		t.Fatalf("batch = %d %s", w.Code, w.Body)
+	}
+	if _, err := store.Find("manual"); err == nil {
 		t.Error("the draft is still there")
 	}
-	revised, err := store.Find("revised")
-	if err != nil || revised.RevisesPlanID != "" {
-		t.Errorf("revision = %+v, err %v", revised, err)
-	}
-	if _, err := store.Find("ran"); err != nil {
-		t.Errorf("the plan that ran is gone: %v", err)
+	if _, err := store.Find("working"); err != nil {
+		t.Errorf("the plan at work went: %v", err)
 	}
 }
 
@@ -257,9 +293,9 @@ func TestFuturesRefusalsNameTheirWording(t *testing.T) {
 func TestOnlyAnOrderNoLivePlanHoldsCanBeCancelledByHand(t *testing.T) {
 	open := []account.OpenOrder{{OrderID: "free", Conditional: true}, {OrderID: "held"}, {OrderID: "old"}}
 	runs := []run.View{
-		{Run: run.Run{AccountID: "a", State: "position_open"}, Orders: []run.Order{{OrderID: "held"}}},
-		{Run: run.Run{AccountID: "a", State: "completed"}, Orders: []run.Order{{OrderID: "old"}}},
-		{Run: run.Run{AccountID: "b", State: "position_open"}, Orders: []run.Order{{OrderID: "free"}}},
+		{Run: run.Run{AccountID: "a", Status: "position_open"}, Orders: []run.Order{{OrderID: "held"}}},
+		{Run: run.Run{AccountID: "a", Status: "completed"}, Orders: []run.Order{{OrderID: "old"}}},
+		{Run: run.Run{AccountID: "b", Status: "position_open"}, Orders: []run.Order{{OrderID: "free"}}},
 	}
 	order, err := cancellableOrder(open, runs, "a", "free")
 	if err != nil || !order.Conditional {
@@ -303,9 +339,9 @@ func TestDeletingAnAccountTakesItsFuturesHistory(t *testing.T) {
 		}
 	}
 	for _, row := range []futures.Plan{
-		{UserID: user, ID: "gone-draft", AccountID: gone, Venue: "binance", Symbol: "BTCUSDT", Status: "draft", Body: "{}"},
-		{UserID: user, ID: "gone-revision", AccountID: gone, RevisesPlanID: "gone-draft", Venue: "binance", Symbol: "BTCUSDT", Status: "draft", Body: "{}"},
-		{UserID: user, ID: "kept-draft", AccountID: kept, Venue: "binance", Symbol: "BTCUSDT", Status: "draft", Body: "{}"},
+		{UserID: user, ID: "gone-draft", AccountID: gone, Symbol: "BTCUSDT", Status: "draft", Body: "{}"},
+		{UserID: user, ID: "gone-revision", AccountID: gone, Symbol: "BTCUSDT", Status: "draft", Body: "{}"},
+		{UserID: user, ID: "kept-draft", AccountID: kept, Symbol: "BTCUSDT", Status: "draft", Body: "{}"},
 	} {
 		if err := st.DB.Create(&row).Error; err != nil {
 			t.Fatal(err)
@@ -323,7 +359,7 @@ func TestDeletingAnAccountTakesItsFuturesHistory(t *testing.T) {
 	}
 
 	// Refused, it takes nothing with it.
-	if err := st.DB.Create(&account.Lease{AccountID: gone, Holder: account.LeaseHolderFutures, HolderID: uuid.NewString()}).Error; err != nil {
+	if err := st.DB.Create(&account.Lease{AccountID: gone, Source: account.SourceFutures, SourceID: uuid.NewString()}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if code := remove(gone); code != http.StatusBadRequest {

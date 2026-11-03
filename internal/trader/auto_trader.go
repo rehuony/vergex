@@ -93,9 +93,9 @@ type AutoTraderConfig struct {
 	QwenKey     string
 
 	// Custom model API configuration
-	CustomAPIURL    string
-	CustomAPIKey    string
-	CustomModelName string
+	BaseURL      string
+	CustomAPIKey string
+	ModelName    string
 
 	// Scan configuration
 	ScanInterval time.Duration // Scan interval (recommended 15 minutes)
@@ -194,7 +194,7 @@ func NewAutoTrader(config AutoTraderConfig, st *Stores, userID string) (*AutoTra
 
 	// Resolve API key (provider-specific overrides)
 	apiKey := config.CustomAPIKey
-	customURL := config.CustomAPIURL
+	customURL := config.BaseURL
 	switch agentModel {
 	case "qwen":
 		if config.QwenKey != "" {
@@ -219,13 +219,13 @@ func NewAutoTrader(config AutoTraderConfig, st *Stores, userID string) (*AutoTra
 		agentClient = agent.NewClient()
 	}
 
-	agentClient.SetAPIKey(apiKey, customURL, config.CustomModelName)
+	agentClient.SetAPIKey(apiKey, customURL, config.ModelName)
 	// Attribute calls (agent.calls) to this trader
 	agent.TagUsage(agentClient, agent.FeatureTrader, config.ID)
 	logger.Infof("🤖 [%s] Using %s agent", config.Name, agentModel)
 
-	if config.CustomAPIURL != "" || config.CustomModelName != "" {
-		logger.Infof("🔧 [%s] Custom config - URL: %s, Model: %s", config.Name, config.CustomAPIURL, config.CustomModelName)
+	if config.BaseURL != "" || config.ModelName != "" {
+		logger.Infof("🔧 [%s] Custom config - URL: %s, Model: %s", config.Name, config.BaseURL, config.ModelName)
 	}
 
 	// Set default trading platform
@@ -282,7 +282,7 @@ func NewAutoTrader(config AutoTraderConfig, st *Stores, userID string) (*AutoTra
 	// Get last cycle number (for recovery)
 	var cycleNumber int
 	if st != nil {
-		cycleNumber, _ = st.Decisions.GetLastCycleNumber(config.ID)
+		cycleNumber, _ = st.Decisions.LastSeq(config.ID)
 		logger.Infof("📊 [%s] Decision records will be stored to database", config.Name)
 	}
 
@@ -497,17 +497,6 @@ func (at *AutoTrader) GetInitialBalance() float64 {
 // GetName gets trader name
 func (at *AutoTrader) GetName() string {
 	return at.name
-}
-
-// limits are what the code enforces on this trader now, kept with each cycle's record.
-func (at *AutoTrader) limits() any {
-	switch {
-	case at.config.Agent != nil:
-		return at.config.Agent.Limits()
-	case at.config.Grid != nil:
-		return at.config.Grid.Limits()
-	}
-	return nil
 }
 
 // calculatePnLPercentage calculates P&L percentage (based on margin, automatically considers leverage)

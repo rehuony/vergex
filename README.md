@@ -7,25 +7,40 @@
   <a href="README.zh-CN.md">中文</a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/rehuony/vergex/actions/workflows/ci.yml"><img src="https://github.com/rehuony/vergex/actions/workflows/ci.yml/badge.svg" alt="CI"/></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License: AGPL-3.0"/></a>
+</p>
+
 vergex is a self-hosted agent trading system for crypto USDT perpetual futures on **Binance** and **OKX**. You bring your own model API key and exchange API key; nothing is routed through a paid gateway and no usage data leaves your machine.
 
+It is a personal project for a single user, and still in development. Until its database schema settles, an update may rebuild the schema without carrying old data over: see [docs/database.md](docs/database.md).
+
+- **Dashboard** — a read-only overview: equity, open positions, what needs attention, and the last day's events.
+- **Auto trading** — traders that run on their own: each reads the market, asks the model for decisions and places orders within the risk limits in its settings.
+- **Grid trading** — a kind of trader that keeps a grid on one symbol, with market-regime checks.
 - **Futures** — work through a trade with an agent on a live chart, compare entry plans (market, limit, ladder, TWAP) and approve each order yourself.
-- **Auto trading** — runs continuously: a trader reads the market, asks the model for decisions and places orders within the risk limits in its settings.
-- **Grid trading** — grid traders with market-regime checks.
-- **Telegram** — manage traders, read positions, troubleshoot and receive alerts from a Telegram bot.
 - **Forecast** — experimental coin signals from locally stored market data, with named strategies, backtests and every call checked afterwards. Nothing trades on them, and so far they have shown no edge.
+- **Assistant** — one assistant in a window on every page and in a Telegram bot. It reads traders, accounts, positions, Futures plans and forecasts, creates and manages traders, and troubleshoots; in the web app it also fills in forms. Anything risky, such as starting a trader or closing a position, waits for your confirmation. The bot also sends alerts.
+
+The interface is in English and Simplified Chinese.
+
+## Requirements
+
+| To | You need |
+| :- | :------- |
+| Run it | Docker with Compose v2, `make`, `openssl` |
+| Develop | Go 1.26 (pinned in [go.mod](go.mod)), Node.js 24, pnpm 12 through Corepack (pinned in [web/package.json](web/package.json)), and Docker for PostgreSQL 17 |
 
 ## Run
 
-Requirements: Docker with Compose, `make`, `openssl`.
-
 ```bash
-git clone <your vergex repository> vergex
+git clone https://github.com/rehuony/vergex.git
 cd vergex
 make up
 ```
 
-`make up` creates `.env` from `.env.example` on first run, generates `JWT_SECRET`, `DATA_ENCRYPTION_KEY` and `RSA_PRIVATE_KEY` if they are missing, then builds and starts the containers. Open **http://127.0.0.1:8000**.
+`make up` creates `.env` from `.env.example` on first run, generates `JWT_SECRET`, `DATA_ENCRYPTION_KEY`, `RSA_PRIVATE_KEY` and `DB_PASSWORD` if they are missing, then builds and starts the containers, PostgreSQL included. Open **http://127.0.0.1:8000**.
 
 | Command | What it does |
 | :------ | :----------- |
@@ -35,24 +50,34 @@ make up
 | `make restart` | Restart the containers |
 | `make logs [SERVICE=vergex-backend]` | Follow logs |
 | `make status` | Container status and health check |
+| `make backup` | Back up the database to `backups/` |
+| `make restore FILE=… DB=…` | Restore a backup into a new database |
 | `make regen-keys` | Regenerate all keys — stored account and model keys become unreadable |
 
-The UI and its `/api/` proxy listen on `VERGEX_BIND_ADDRESS:VERGEX_FRONTEND_PORT` (default `127.0.0.1:8000`). For remote access keep that binding and put a TLS reverse proxy with an extra authentication layer in front: see [docs/deployment.md](docs/deployment.md).
+`make help` lists the rest. To update, pull and run `make up` again. Keep `.env` and the `vergex-postgres` volume: they hold the keys and the database. Stopping the service does not close positions; check the exchange after restarts.
 
-To update, pull your changes and run `make up` again. Keep `.env` and the `vergex-postgres` volume: they hold the keys and the database. Stopping the service does not close positions; check the exchange after restarts.
+### Configuration
 
-### Development without Docker
+Settings come from `.env`, and `.env.example` explains each one. Models, accounts and traders are stored in the database and edited in the web UI.
 
-Use the Go version in [go.mod](go.mod), Docker for PostgreSQL, Node.js 24 and pnpm (run `corepack enable` once; the version is pinned in `web/package.json`).
+| Variable | Default | What it sets |
+| :------- | :------ | :----------- |
+| `VERGEX_BIND_ADDRESS` | `127.0.0.1` | Where the web UI and its `/api/` proxy listen |
+| `VERGEX_FRONTEND_PORT` | `8000` | The port they listen on |
+| `VERGEX_BACKEND_PORT` | `3000` | The backend's port on the host, used only when its mapping in `docker-compose.yml` is uncommented |
+| `VERGEX_AGENT_MAX_TOKENS` | `8000` | The most a model may write in one reply |
+
+The database, encryption and CORS settings are in [docs/getting-started.md](docs/getting-started.md#configuration). For remote access keep the UI bound to `127.0.0.1` and put a TLS reverse proxy with an extra authentication layer in front: see [docs/deployment.md](docs/deployment.md).
+
+### Development
 
 ```bash
 make init          # once, for the keys in .env
-make run-backend   # starts PostgreSQL from .env, backend on :3000
-make run-frontend  # frontend dev server on :8000, proxies /api to :3000
-make dev           # run both at once
+make deps          # Go modules and frontend packages
+make dev           # PostgreSQL from .env, backend on :3000, frontend on :8000 with /api proxied to :3000
 ```
 
-`make test` runs the Go tests, which need PostgreSQL (`make run-postgresql`), and the frontend tests; `make lint` runs golangci-lint and ESLint.
+`make test` runs the Go tests, which need PostgreSQL (`make run-postgresql`), and the frontend tests; `make lint` runs golangci-lint and ESLint. Conventions for working on the code are in [AGENTS.md](AGENTS.md), and how the interface looks in [DESIGN.md](DESIGN.md).
 
 ## First session
 
@@ -83,7 +108,7 @@ Market data comes from free public endpoints: live exchange streams for candles 
 Browser (React)                Telegram bot
   Dashboard · Forecast ·         skill-first agent
   Futures · Traders ·                 │
-  Settings                            │
+  Settings · Assistant                │
           │                           │
           └──────── Gin API (/api) ───┘
                         │
@@ -99,23 +124,29 @@ Browser (React)                Telegram bot
 Models: agent/ provider clients   Storage: PostgreSQL (GORM)
 ```
 
-The Go packages live under `internal/`. See [docs/architecture.md](docs/architecture.md) for the layout and [AGENTS.md](AGENTS.md) for development conventions.
+The Go packages live under `internal/`. See [docs/architecture.md](docs/architecture.md) for the layout.
 
 ## Documentation
 
+The full index is [docs/README.md](docs/README.md).
+
 | Guide | Contents |
 | :---- | :------- |
-| [Getting started](docs/getting-started.md) | Install, first session, backups, user recovery |
+| [Getting started](docs/getting-started.md) | Install, configuration, first session, backups, user recovery |
 | [Models](docs/models.md) | Providers, custom endpoints and costs |
-| [Accounts](docs/accounts.md) | Binance and OKX API keys |
+| [Accounts](docs/accounts.md) | Binance and OKX API keys, testnet |
+| [Dashboard](docs/dashboard.md) | The read-only overview |
 | [Futures](docs/futures.md) | Planning, live execution and recovery |
 | [Auto trading](docs/traders.md) | Settings, prompts, risk limits and grid |
-| [Telegram](docs/telegram.md) | Assistant setup, skills, alerts and diagnostics |
+| [Assistant](docs/assistant.md) | The assistant in the web app |
+| [Telegram](docs/telegram.md) | Bot setup, skills, alerts and diagnostics |
 | [Market data](docs/market-data.md) | Local candles, rate limits and history |
 | [Forecast](docs/forecast.md) | Experimental signals, strategies and backtests |
 | [Remote access](docs/deployment.md) | Reverse proxy with TLS and authentication |
 | [Troubleshooting](docs/troubleshooting.md) | Common problems and fixes |
 | [Architecture](docs/architecture.md) | Code layout and main flows |
+| [Database](docs/database.md) | Schemas, conventions, adding a migration |
+| [Fork record](docs/fork.md) | Why this fork exists and what it removed |
 
 ## License
 

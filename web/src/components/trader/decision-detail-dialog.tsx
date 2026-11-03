@@ -98,7 +98,7 @@ export function DecisionDetailDialog({
       size="xl"
       title={
         record
-          ? label('cycleNumber', { cycle: record.cycle_number })
+          ? label('cycleNumber', { cycle: record.seq })
           : label('decisionDetail')
       }
       description={record ? fmtDateTime(record.timestamp) : undefined}

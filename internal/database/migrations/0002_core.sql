@@ -11,7 +11,7 @@ COMMENT ON TABLE core.users IS 'The account. The first one registered is the onl
 COMMENT ON COLUMN core.users.avatar IS 'A small image as a data URL; empty shows the initial.';
 
 CREATE TABLE core.settings (
-    module     text PRIMARY KEY,
+    module     text PRIMARY KEY CHECK (module IN ('market', 'forecast', 'futures', 'agent_pricing')),
     value      jsonb NOT NULL,
     updated_at timestamptz NOT NULL DEFAULT now()
 );

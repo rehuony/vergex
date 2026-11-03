@@ -19,7 +19,7 @@ var maxVisitors = 500
 // Visitor is someone who tried to use the bot and was refused.
 type Visitor struct {
 	ChatID    int64  `gorm:"column:chat_id;primaryKey" json:"chat_id"`
-	UserID    int64  `gorm:"column:user_id;primaryKey" json:"user_id"`
+	SenderID  int64  `gorm:"column:sender_id;primaryKey" json:"sender_id"`
 	ChatType  string `gorm:"column:chat_type" json:"chat_type"`
 	ChatTitle string `gorm:"column:chat_title" json:"chat_title,omitempty"`
 	Username  string `gorm:"column:username" json:"username,omitempty"`
@@ -36,7 +36,7 @@ func (Visitor) TableName() string { return "telegram.visitors" }
 func newVisitor(m *tgbotapi.Message) Visitor {
 	visitor := Visitor{ChatID: m.Chat.ID, ChatType: m.Chat.Type, ChatTitle: m.Chat.Title, LastText: visitorText(m)}
 	if m.From != nil {
-		visitor.UserID, visitor.Username = m.From.ID, m.From.UserName
+		visitor.SenderID, visitor.Username = m.From.ID, m.From.UserName
 		visitor.Name = strings.TrimSpace(m.From.FirstName + " " + m.From.LastName)
 	}
 	return visitor
@@ -75,9 +75,9 @@ func NewVisitorStore(db *gorm.DB) *VisitorStore {
 func (s *VisitorStore) Record(visitor Visitor, now time.Time) error {
 	return s.db.Transaction(func(tx *gorm.DB) error {
 		err := tx.Exec(`
-			INSERT INTO telegram.visitors (chat_id, user_id, chat_type, chat_title, username, name, last_text, first_at, last_at)
+			INSERT INTO telegram.visitors (chat_id, sender_id, chat_type, chat_title, username, name, last_text, first_at, last_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT (chat_id, user_id) DO UPDATE SET
+			ON CONFLICT (chat_id, sender_id) DO UPDATE SET
 				chat_type = EXCLUDED.chat_type,
 				chat_title = EXCLUDED.chat_title,
 				username = EXCLUDED.username,
@@ -85,14 +85,14 @@ func (s *VisitorStore) Record(visitor Visitor, now time.Time) error {
 				attempts = telegram.visitors.attempts + 1,
 				last_text = EXCLUDED.last_text,
 				last_at = EXCLUDED.last_at`,
-			visitor.ChatID, visitor.UserID, visitor.ChatType, visitor.ChatTitle, visitor.Username, visitor.Name, visitor.LastText, now.UTC(), now.UTC(),
+			visitor.ChatID, visitor.SenderID, visitor.ChatType, visitor.ChatTitle, visitor.Username, visitor.Name, visitor.LastText, now.UTC(), now.UTC(),
 		).Error
 		if err != nil {
 			return err
 		}
 		return tx.Exec(`
-			DELETE FROM telegram.visitors WHERE (chat_id, user_id) IN (
-				SELECT chat_id, user_id FROM telegram.visitors ORDER BY last_at DESC OFFSET ?
+			DELETE FROM telegram.visitors WHERE (chat_id, sender_id) IN (
+				SELECT chat_id, sender_id FROM telegram.visitors ORDER BY last_at DESC OFFSET ?
 			)`, maxVisitors).Error
 	})
 }

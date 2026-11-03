@@ -83,8 +83,8 @@ func TestImmediateFillWaitsForPositionBeforeCompletion(t *testing.T) {
 			got, _ := c.Get(testUser, v.ID)
 			var leases int64
 			c.DB.Model(&account.Lease{}).Count(&leases)
-			if got.State == "completed" || leases != 1 || len(b.placed) != 1 {
-				t.Fatal("filled entry lost its reservation or was resubmitted", got.State, leases, len(b.placed))
+			if got.Status == "completed" || leases != 1 || len(b.placed) != 1 {
+				t.Fatal("filled entry lost its reservation or was resubmitted", got.Status, leases, len(b.placed))
 			}
 			b.account.Position = got.Orders[0].Filled
 			for range 2 {
@@ -103,7 +103,7 @@ func TestImmediateFillWaitsForPositionBeforeCompletion(t *testing.T) {
 			}
 			got, _ = c.Get(testUser, v.ID)
 			c.DB.Model(&account.Lease{}).Count(&leases)
-			if got.State != "completed" || leases != 0 {
+			if got.Status != "completed" || leases != 0 {
 				t.Fatal("closed trade retained reservation")
 			}
 		})
@@ -219,7 +219,7 @@ func started(t *testing.T, c *Controller, p plan.Plan) View {
 	deadline := now.Add(time.Hour)
 	v.StartedAt = &now
 	v.Deadline = &deadline
-	v.State = "running"
+	v.Status = "running"
 	specs := p.Orders
 	if len(specs) == 0 {
 		specs = []plan.OrderSpec{{Index: 1, Price: p.Idea.Entry, Quantity: p.Quantity}}
@@ -308,7 +308,7 @@ func TestExecutePreflightFailuresNeverOrder(t *testing.T) {
 			stored, err := c.Get(testUser, v.ID)
 			var leases int64
 			c.DB.Model(&account.Lease{}).Count(&leases)
-			if err != nil || stored.State != "cancelled" || leases != 0 || stored.Error == "" {
+			if err != nil || stored.Status != "cancelled" || leases != 0 || stored.Error == "" {
 				t.Fatalf("failed preflight left an unused account reservation: %+v %v leases=%d", stored.Run, err, leases)
 			}
 			if _, err = c.Execute(context.Background(), testUser, v.ID, v.ApprovalHash); err == nil {
@@ -349,7 +349,7 @@ func TestAmbiguousAcknowledgementNeverResubmits(t *testing.T) {
 	b.errorPlace = errors.New("timeout after accepting order")
 	c.step(context.Background(), testUser, v.ID)
 	got, _ := c.Get(testUser, v.ID)
-	if got.State != "needs_attention" || got.Orders[0].Status != "UNKNOWN" {
+	if got.Status != "needs_attention" || got.Orders[0].Status != "UNKNOWN" {
 		t.Fatal(got)
 	}
 	b.errorPlace = nil
@@ -397,7 +397,7 @@ func TestUnknownProtectorRetainsAccountLock(t *testing.T) {
 	b.account.Position = "0"
 	c.step(context.Background(), testUser, v.ID)
 	got, _ := c.Get(testUser, v.ID)
-	if got.State == "completed" {
+	if got.Status == "completed" {
 		t.Fatal("unknown protector considered completed")
 	}
 	var leases int64
@@ -419,8 +419,8 @@ func TestRestartAndPersistedTamperDoNotReplay(t *testing.T) {
 	}
 	defer next.Shutdown()
 	got, _ := next.Get(testUser, v.ID)
-	if got.State != "needs_attention" {
-		t.Fatal(got.State)
+	if got.Status != "needs_attention" {
+		t.Fatal(got.Status)
 	}
 	next.step(context.Background(), testUser, v.ID)
 	if len(b.placed) != 1 {
@@ -449,7 +449,7 @@ func TestCancelledProtectionStopsNewEntries(t *testing.T) {
 	b.orders[sl.ClientID] = sl
 	c.step(context.Background(), testUser, v.ID)
 	got, _ := c.Get(testUser, v.ID)
-	if got.State != "needs_attention" || got.Orders[1].Status != "CANCELED" {
+	if got.Status != "needs_attention" || got.Orders[1].Status != "CANCELED" {
 		t.Fatal(got)
 	}
 	if len(b.placed) != 3 {
@@ -460,11 +460,11 @@ func TestCancelledProtectionStopsNewEntries(t *testing.T) {
 func TestExpiredApprovalCanBeCancelledWithoutOrders(t *testing.T) {
 	c, b, _, p := setup(t, "limit")
 	v := approved(t, c, p)
-	if e := c.DB.Model(&Run{}).Where("id = ?", v.ID).Update("state", "expired").Error; e != nil {
+	if e := c.DB.Model(&Run{}).Where("id = ?", v.ID).Update("status", "expired").Error; e != nil {
 		t.Fatal(e)
 	}
 	out, e := c.Stop(testUser, v.ID, v.ApprovalHash)
-	if e != nil || out.State != "cancelled" {
+	if e != nil || out.Status != "cancelled" {
 		t.Fatal(out, e)
 	}
 	if len(b.placed) != 0 {

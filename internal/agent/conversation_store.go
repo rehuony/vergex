@@ -20,17 +20,35 @@ const (
 	RoleTool      = "tool"
 )
 
-// AgentConversation is one exchange with a model: a Futures session, a Telegram chat.
+// ChatFeatures are the features whose conversations are the user's own chats with a model,
+// listed and deleted as conversations. A trader's are the record of its cycles, read with its
+// decisions. A new feature people chat in joins this list, and is listed and deleted with
+// the rest from then on.
+var ChatFeatures = []string{FeatureFutures, FeatureAssistant, FeatureTelegram}
+
+// IsChat says whether a feature is one people chat in.
+func IsChat(feature string) bool {
+	for _, chat := range ChatFeatures {
+		if chat == feature {
+			return true
+		}
+	}
+	return false
+}
+
+// Conversation is one exchange with a model: a trader cycle, a Futures session, a Telegram
+// chat, a conversation with the assistant in the web app.
 type Conversation struct {
-	ID           string            `gorm:"primaryKey"`
-	UserID       string            `gorm:"column:user_id"`
-	Feature      string            `gorm:"column:feature"`
-	SourceID     string            `gorm:"column:source_id;serializer:nulltext"`
-	AgentModelID string            `gorm:"column:agent_model_id;serializer:nulltext"`
-	Title        string            `gorm:"column:title;serializer:nulltext"`
-	Context      map[string]string `gorm:"column:context;serializer:json"`
-	CreatedAt    time.Time         `gorm:"autoCreateTime"`
-	UpdatedAt    time.Time         `gorm:"autoUpdateTime"`
+	ID           string `gorm:"primaryKey"`
+	UserID       string `gorm:"column:user_id"`
+	Feature      string `gorm:"column:feature"`
+	AgentModelID string `gorm:"column:agent_model_id;serializer:nulltext"`
+	Title        string `gorm:"column:title"`
+	// Context is what the feature keeps about it, such as a Futures session's account
+	// and symbol, or a Telegram chat's id.
+	Context   map[string]string `gorm:"column:context;serializer:json"`
+	CreatedAt time.Time         `gorm:"autoCreateTime"`
+	UpdatedAt time.Time         `gorm:"autoUpdateTime"`
 }
 
 func (Conversation) TableName() string { return "agent.conversations" }
@@ -120,12 +138,74 @@ func (s *ConversationStore) Append(conversationID string, messages ...Conversati
 	})
 }
 
-// ListByContext returns a user's latest conversations in a feature whose context holds a
-// value, such as those on one account, without their messages.
-func (s *ConversationStore) ListByContext(userID, feature, key, value string, limit int) ([]Conversation, error) {
+// List returns a user's latest conversations in a feature, without their messages.
+func (s *ConversationStore) List(userID, feature string, limit int) ([]Conversation, error) {
 	var conversations []Conversation
-	err := s.db.Where("user_id = ? AND feature = ? AND context ->> ? = ?", userID, feature, key, value).Order("updated_at DESC").Limit(limit).Find(&conversations).Error
+	err := s.db.Where("user_id = ? AND feature = ?", userID, feature).Order("updated_at DESC").Limit(limit).Find(&conversations).Error
 	return conversations, err
+}
+
+// ListChats returns a user's latest conversations in the features people chat in, or in one
+// of them, without their messages.
+func (s *ConversationStore) ListChats(userID, feature string, limit int) ([]Conversation, error) {
+	features := ChatFeatures
+	if feature != "" {
+		features = []string{feature}
+	}
+	query := s.db.Where("user_id = ? AND feature IN ?", userID, features).Order("updated_at DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	var conversations []Conversation
+	err := query.Find(&conversations).Error
+	return conversations, err
+}
+
+// FindChats returns those of some conversations that are a user's chats, without their
+// messages. Any other ID is left out.
+func (s *ConversationStore) FindChats(userID string, ids []string) ([]Conversation, error) {
+	valid := validIDs(ids)
+	if len(valid) == 0 {
+		return nil, nil
+	}
+	var conversations []Conversation
+	err := s.db.Where("user_id = ? AND id IN ? AND feature IN ?", userID, valid, ChatFeatures).Order("updated_at DESC").Find(&conversations).Error
+	return conversations, err
+}
+
+func validIDs(ids []string) []string {
+	valid := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if uuid.Validate(id) == nil {
+			valid = append(valid, id)
+		}
+	}
+	return valid
+}
+
+// ListByContext returns a user's latest conversations in a feature whose context holds a
+// value, such as those on one account, without their messages. A limit of 0 lists them all.
+func (s *ConversationStore) ListByContext(userID, feature, key, value string, limit int) ([]Conversation, error) {
+	query := s.db.Where("user_id = ? AND feature = ? AND context ->> ? = ?", userID, feature, key, value).Order("updated_at DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	var conversations []Conversation
+	err := query.Find(&conversations).Error
+	return conversations, err
+}
+
+// LatestByContext returns the conversation last active in a feature whose context holds a
+// value, such as a Telegram chat's, or gorm.ErrRecordNotFound.
+func (s *ConversationStore) LatestByContext(userID, feature, key, value string) (*Conversation, error) {
+	rows, err := s.ListByContext(userID, feature, key, value, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return &rows[0], nil
 }
 
 // Get returns one of a user's conversations.
@@ -146,27 +226,26 @@ func (s *ConversationStore) Rename(conversation *Conversation, title string) err
 	return s.db.Model(conversation).UpdateColumn("title", title).Error
 }
 
-// Delete removes a conversation and everything said in it. What came of it stays: plans,
-// usage and trader cycles only lose their link to it.
-func (s *ConversationStore) Delete(conversation *Conversation) error {
-	return s.db.Delete(conversation).Error
-}
-
-// DeleteByContext removes a user's conversations in a feature whose context holds a value,
-// for when what they were about is gone. What came of them stays, as with Delete.
-func (s *ConversationStore) DeleteByContext(userID, feature, key, value string) error {
-	return s.db.Where("user_id = ? AND feature = ? AND context ->> ? = ?", userID, feature, key, value).Delete(&Conversation{}).Error
-}
-
-// Latest returns the conversation last active for a source within a feature.
-func (s *ConversationStore) Latest(userID, feature, sourceID string) (*Conversation, error) {
-	var conversation Conversation
-	err := s.db.Where("user_id = ? AND feature = ? AND source_id = ?", userID, feature, sourceID).
-		Order("updated_at DESC").First(&conversation).Error
-	if err != nil {
-		return nil, err
+// Delete removes some of a user's chats, and says how many there were. What belongs to one
+// goes with it in the database: what was said, its model calls and its entry calculators.
+// A record that outlives it, such as a plan that ran, only loses the link, so a feature that
+// keeps more of its own removes that first, in the same transaction. A trader's
+// conversations are not chats and stay with its cycles.
+func (s *ConversationStore) Delete(userID string, ids []string) (int64, error) {
+	valid := validIDs(ids)
+	if len(valid) == 0 {
+		return 0, nil
 	}
-	return &conversation, nil
+	result := s.db.Where("user_id = ? AND id IN ? AND feature IN ?", userID, valid, ChatFeatures).Delete(&Conversation{})
+	return result.RowsAffected, result.Error
+}
+
+// Exists says whether a conversation is still there, for a chat that holds one in memory
+// and must not go on with one deleted from elsewhere.
+func (s *ConversationStore) Exists(id string) (bool, error) {
+	var count int64
+	err := s.db.Model(&Conversation{}).Where("id = ?", id).Count(&count).Error
+	return count > 0, err
 }
 
 // MessagesBefore says how many messages are older than a time, and how much text they hold.

@@ -48,7 +48,7 @@ type Trader struct {
 	Config              json.RawMessage `gorm:"column:config" json:"config"`
 	InitialBalance      float64         `gorm:"column:initial_balance" json:"initial_balance"`
 	ScanIntervalMinutes int             `gorm:"column:scan_interval_minutes;default:15" json:"scan_interval_minutes"`
-	IsRunning           bool            `gorm:"column:is_running" json:"is_running"`
+	Running             bool            `gorm:"column:running" json:"running"`
 	MarginMode          string          `gorm:"column:margin_mode;default:cross" json:"margin_mode"`
 	HaltedAt            *time.Time      `gorm:"column:halted_at" json:"-"`
 	HaltedReason        string          `gorm:"column:halted_reason" json:"-"`
@@ -103,7 +103,7 @@ func (s *Store) UpdateStatus(userID, id string, isRunning bool) error {
 	}
 	return s.inUse().Model(&Trader{}).
 		Where("id = ? AND user_id = ?", id, userID).
-		Update("is_running", isRunning).Error
+		Update("running", isRunning).Error
 }
 
 // SetHalt records a hard stop that has tripped.
@@ -171,7 +171,7 @@ func (s *Store) Archive(userID, id string) error {
 		return gorm.ErrRecordNotFound
 	}
 	result := s.db.Exec(`UPDATE trader.traders
-		SET archived_at = now(), updated_at = now(), is_running = false, agent_model_id = NULL, account_id = NULL
+		SET archived_at = now(), updated_at = now(), running = false, agent_model_id = NULL, account_id = NULL
 		WHERE id = ? AND user_id = ? AND archived_at IS NULL`, id, userID)
 	if result.Error != nil {
 		return result.Error
@@ -237,7 +237,7 @@ func (s *Store) GetByID(traderID string) (*Trader, error) {
 // RunningOn returns the longest-standing trader running on an account, if any.
 func (s *Store) RunningOn(accountID string) (string, error) {
 	var ids []string
-	err := s.db.Raw(`SELECT id::text FROM trader.traders WHERE account_id = ? AND is_running ORDER BY created_at, id LIMIT 1`, accountID).Scan(&ids).Error
+	err := s.db.Raw(`SELECT id::text FROM trader.traders WHERE account_id = ? AND running ORDER BY created_at, id LIMIT 1`, accountID).Scan(&ids).Error
 	if err != nil || len(ids) == 0 {
 		return "", err
 	}
@@ -247,7 +247,7 @@ func (s *Store) RunningOn(accountID string) (string, error) {
 // RunningAccounts lists the accounts a trader is running on.
 func (s *Store) RunningAccounts() ([]string, error) {
 	var ids []string
-	err := s.db.Raw(`SELECT DISTINCT account_id::text FROM trader.traders WHERE is_running AND account_id IS NOT NULL`).Scan(&ids).Error
+	err := s.db.Raw(`SELECT DISTINCT account_id::text FROM trader.traders WHERE running AND account_id IS NOT NULL`).Scan(&ids).Error
 	return ids, err
 }
 

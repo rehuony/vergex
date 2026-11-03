@@ -49,14 +49,14 @@ export function getTraderModelLabel(
     id: string
     name: string
     provider: string
-    customModelName?: string
-    defaultModel?: string
+    model_name?: string
+    default_model?: string
   }[]
 ): string {
   if (!modelId) return '—'
   const model = models.find((m) => m.id === modelId)
   if (!model) return '—'
-  return model.customModelName || model.defaultModel || model.name
+  return model.model_name || model.default_model || model.name
 }
 
 // How the interface names an account from its ID (UUID)

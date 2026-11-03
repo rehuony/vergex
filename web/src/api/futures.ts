@@ -1,4 +1,6 @@
+import { readEventStream } from '@/utils/event-stream'
 import { getAuthHeaders, handleJSONResponse } from './helpers'
+import type { ChartForecast } from './forecast'
 export interface Plan {
   id: string
   hash: string
@@ -73,13 +75,13 @@ export interface LiveRun {
   plan_hash: string
   approval_hash: string
   updated_at?: string
-  state: string
+  status: string
   error?: string
   plan: Plan
   orders: LiveOrder[]
 }
 export interface FuturesState {
-  records: Record<string, { plan: Plan; state: string }>
+  records: Record<string, { plan: Plan; status: string }>
   accounts: Record<string, string>
   runs: LiveRun[]
   mode: 'live'
@@ -98,14 +100,6 @@ export interface ChartContext {
   visible_from?: number
   visible_to?: number
 }
-export interface ForecastCandle {
-  time: number
-  open: number
-  high: number
-  low: number
-  close: number
-}
-
 // A line for what the account really holds, as opposed to what a plan proposes.
 export interface HoldingLine {
   tone: 'up' | 'down'
@@ -122,7 +116,7 @@ export interface FuturesChart {
     venue: string,
     symbol: string,
     interval: string,
-    rows: ForecastCandle[]
+    forecast: ChartForecast | null
   ): void
   plot(p: Plan | null, phase?: string, compare?: Plan[]): Promise<void>
   setHoldings(venue: string, symbol: string, lines: HoldingLine[]): void
@@ -219,42 +213,17 @@ export async function streamFutures(
     return
   }
   if (!r.body) throw new Error('Server returned no planning stream')
-  const reader = r.body.getReader(),
-    decoder = new TextDecoder()
-  let buffer = ''
   let finished = false
   let serverError = false
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      buffer += decoder.decode(value, { stream: !done })
-      buffer = buffer.replace(/\r\n/g, '\n')
-      let at: number
-      while ((at = buffer.indexOf('\n\n')) >= 0) {
-        const frame = buffer.slice(0, at)
-        buffer = buffer.slice(at + 2)
-        for (const line of frame.split('\n'))
-          if (line.startsWith('data: ')) {
-            const event = JSON.parse(line.slice(6)) as FuturesEvent
-            if (event.type === 'done' || event.type === 'outcome')
-              finished = true
-            if (event.type === 'error') serverError = true
-            onEvent(event)
-          }
-      }
-      if (buffer.length > 1 << 20)
-        throw new Error('Planning event exceeds the size limit')
-      if (done) {
-        if (!finished && !serverError)
-          throw new Error(
-            'Planning connection ended without a result. No automatic retry was made; check the plan before retrying'
-          )
-        break
-      }
-    }
-  } finally {
-    await reader.cancel().catch(() => {})
-  }
+  await readEventStream<FuturesEvent>(r.body, (event) => {
+    if (event.type === 'done' || event.type === 'outcome') finished = true
+    if (event.type === 'error') serverError = true
+    onEvent(event)
+  })
+  if (!finished && !serverError)
+    throw new Error(
+      'Planning connection ended without a result. No automatic retry was made; check the plan before retrying'
+    )
 }
 export function expired(p: Plan, clock = Date.now()) {
   return Date.parse(p.expires) <= clock

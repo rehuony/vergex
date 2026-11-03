@@ -9,7 +9,6 @@ import (
 	"vergex/internal/logger"
 	"vergex/internal/market/instrument"
 	"vergex/internal/service"
-	"vergex/internal/venue/okx"
 
 	exactdecimal "github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -117,18 +116,13 @@ func recordChange(db *gorm.DB, run Run, venue string, leverage int, change ledge
 		}
 	}
 	if change.ended {
-		return ledger.SettleExchangeOrder(run.AccountID, instrumentID, change.order.OrderID, change.order.Status)
+		return ledger.SettleVenueOrder(run.AccountID, instrumentID, change.order.OrderID, change.order.Status)
 	}
 	return nil
 }
 
 func ledgerInstrument(db *gorm.DB, venue, symbol string) (int64, error) {
-	symbol = instrument.Normalize(symbol)
-	native := symbol
-	if venue == "okx" {
-		native = okx.InstrumentID(symbol)
-	}
-	return instrument.Ensure(db, venue, instrument.KindPerpetual, symbol, native)
+	return instrument.Ensure(db, venue, instrument.KindPerpetual, instrument.Normalize(symbol))
 }
 
 // ledgerOrder says in the ledger's terms what an order does. An Order's side is the
@@ -146,7 +140,7 @@ func ledgerOrder(run Run, instrumentID int64, leverage int, change ledgerChange)
 	seq := change.seq
 	order := &account.LedgerOrder{
 		AccountID: run.AccountID, InstrumentID: instrumentID, Source: account.SourceFutures, SourceID: run.ID, Seq: &seq, Role: o.Role,
-		ClientOrderID: o.ClientID, VenueClientID: o.VenueClientID, ExchangeOrderID: o.OrderID, ParentClientOrderID: o.ParentID,
+		ClientID: o.ClientID, VenueClientID: o.VenueClientID, VenueOrderID: o.OrderID,
 		PositionSide: o.Side, Status: account.OrderNew, Quantity: quantity, ReduceOnly: o.ReduceOnly, PostOnly: o.PostOnly,
 	}
 	if o.Role == "entry" {
@@ -199,7 +193,7 @@ func RecordManualClose(db *gorm.DB, venue, accountID, requestID, positionSide st
 		}
 		return account.NewLedger(db).RecordOrder(&account.LedgerOrder{
 			AccountID: accountID, InstrumentID: instrumentID, Source: account.SourceManual, SourceID: requestID, Role: account.RoleClose,
-			ClientOrderID: o.ClientID, VenueClientID: o.VenueClientID, ExchangeOrderID: o.OrderID, Side: side, PositionSide: positionSide,
+			ClientID: o.ClientID, VenueClientID: o.VenueClientID, VenueOrderID: o.OrderID, Side: side, PositionSide: positionSide,
 			Type: "MARKET", Status: account.OrderNew, Quantity: quantity, ReduceOnly: true,
 		})
 	}()

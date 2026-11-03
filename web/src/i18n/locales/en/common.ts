@@ -1,5 +1,14 @@
 // Words shared across the app, and the main navigation.
 export const common = {
+  turnSteps: {
+    name: 'Steps of this turn',
+    thinking: 'Thinking',
+    thinkingFor: 'Thinking · {seconds}s',
+    thought: 'Thought for {seconds}s · {count} steps',
+    usage: 'Model use',
+    usageDetail: '{prompt} in, {completion} out · {money}',
+    unpriced: 'unpriced',
+  },
   details: 'Details',
   running: 'RUNNING',
   stopped: 'STOPPED',

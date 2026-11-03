@@ -86,7 +86,7 @@ function Cycle({
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
             <span className="text-[13px] font-medium text-vergex-ink">
-              {label('cycleNumber', { cycle: record.cycle_number })}
+              {label('cycleNumber', { cycle: record.seq })}
             </span>
             <span
               className="whitespace-nowrap text-xs tabular-nums text-vergex-muted"

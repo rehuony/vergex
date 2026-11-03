@@ -32,9 +32,7 @@ export function accountLabel(account: Account, accounts: Account[] = []) {
 }
 
 export function modelLabel(model: AgentModel) {
-  return model.customModelName
-    ? `${model.name} · ${model.customModelName}`
-    : model.name
+  return model.model_name ? `${model.name} · ${model.model_name}` : model.name
 }
 
 interface TraderDialogProps {

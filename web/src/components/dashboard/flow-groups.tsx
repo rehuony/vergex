@@ -1,4 +1,5 @@
 import type { ActivityStream, ActivityTotals, Overview } from '@/api/dashboard'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/utils/cn'
 import type { SceneBlock } from './flow-layout'
 import { blockViews, type Member } from './flow-members'
@@ -25,7 +26,8 @@ const TONE: Record<Member['tone'], string> = {
 }
 
 // The scene on a phone, where routes will not fit: the same blocks and members,
-// grouped from what feeds the system down to where it sends things.
+// grouped from what feeds the system down to where it sends things. Until the overview is
+// read each block stands with a skeleton where its figure will be.
 export function FlowGroups({
   overview,
   totals,
@@ -35,7 +37,7 @@ export function FlowGroups({
   staleText,
   label,
 }: {
-  overview: Overview
+  overview: Overview | undefined
   totals: ActivityTotals
   stream: ActivityStream | null
   selection: FlowSelection | null
@@ -43,7 +45,7 @@ export function FlowGroups({
   staleText: string
   label: Label
 }) {
-  const views = blockViews(overview, label, totals, stream)
+  const views = overview && blockViews(overview, label, totals, stream)
   const summary = overallSummary(totals, label)
   return (
     <div>
@@ -53,8 +55,10 @@ export function FlowGroups({
           className="border-t border-vergex-line-strong first:border-t-0"
         >
           {group.map((id) => {
-            const view = views[id]
-            const members = [...view.members, ...(view.shortMembers ?? [])]
+            const view = views?.[id]
+            const members = view
+              ? [...view.members, ...(view.shortMembers ?? [])]
+              : []
             const active = selection?.type === 'block' && selection.id === id
             return (
               <li
@@ -96,10 +100,10 @@ export function FlowGroups({
                   <span
                     className={cn(
                       'whitespace-nowrap text-xs tabular-nums',
-                      view.warn ? 'text-vergex-warning' : 'text-vergex-muted'
+                      view?.warn ? 'text-vergex-warning' : 'text-vergex-muted'
                     )}
                   >
-                    {view.sub}
+                    {view ? view.sub : <Skeleton className="w-12" />}
                   </span>
                 </button>
               </li>

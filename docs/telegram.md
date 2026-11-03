@@ -73,42 +73,46 @@ The first three answer at once from the local API, without the model, so they co
 
 What the bot writes itself, such as commands, requests to confirm and notices, is in the language set with `/lang`. Until one is chosen, it starts from the language Settings was in when you bound the chat, and otherwise moves to Chinese the first time you write in it. The model is told the setting, and follows you if you write in another language. Error details from an exchange or provider stay as they came.
 
-A chat is stored in `agent.conversations` and `agent.messages`: what you and the assistant said, the account state it was given, its thinking where the model returns one, and each skill call with its result. After a restart the assistant picks up from the latest 40 things said. `/start` begins a new conversation; the old one stays stored, and nothing cleans it up automatically (see [Data and backups](getting-started.md#data-and-backups)).
+A chat is stored in `agent.conversations` and `agent.messages`: what you and the assistant said, the account state it was given, its thinking where the model returns one, and each skill call with its result. After a restart the assistant picks up from the latest 40 things said. `/start` begins a new conversation; the old one stays stored, and nothing cleans it up automatically (see [Data and backups](getting-started.md#data-and-backups)). Once the chat's conversation is deleted, from the web app say, the next message begins a new one, and the assistant has forgotten the old.
 
 ## Skills
 
-Defined in `internal/telegram/agent/skills.go`:
+Defined in `internal/assistant/skills.go`:
 
 | Skill | Actions |
 | :---- | :------ |
-| `trader_management` | create, with a kind and preset; update, with a `config_patch` the server merges; delete, start, stop, query |
+| `trader_management` | create, with a kind and preset, after you confirm; update, with a `config_patch` the server merges; delete, start, stop, query |
 | `model_management` | query |
 | `account_management` | query, with account connection state; positions, what an account holds whoever opened it |
-| `account_query` | overview, balance, positions, position history, trades, orders, open orders, decisions (the latest five cycles, without their prompts), one cycle's detail with its reasoning, statistics, agent costs |
-| `futures_query` | read only: runs, drafts, and what finished plans realized on an account |
-| `forecast_query` | read only: signals for the watched coins, or one coin in detail |
+| `account_query` | overview, the whole system at once, balance, positions, position history, trades, orders, open orders, decisions (the latest five cycles, without their prompts), one cycle's detail with its reasoning, statistics, agent costs |
+| `futures_query` | read only: runs, drafts, what finished plans realized on an account, and plans compared side by side |
+| `forecast_query` | read only: signals for the tracked coins, one coin with its recent calls, the strategies, how one has done live with its rules, and backtests |
 | `close_position` | closes a position after checking that it exists |
+| `plan_management` | delete and clear Futures plans that are done with: drafts and finished plans, never one still at work. What a finished plan sent stays in the account's records |
+| `conversation_management` | query, delete and clear your conversations with a model: the Futures assistant's, the web assistant's and this chat's earlier ones. Each goes with all it held, as [database.md](database.md#deleting-a-conversation) lists, and the conversation in use stays |
 | `diagnose` | `trader_start`, `model`, `account`, `order_execution` |
 
 Skills call the local REST API with fixed paths, so server-side validation and risk limits always apply. Keys and endpoints for models and accounts can only be changed in the web UI.
 
 ## Confirmation
 
-These actions wait for your confirmation: starting, stopping or deleting a trader, updating a running trader, closing a position, and a `config_patch` that touches the risk fields of the trader's kind.
+These actions wait for your confirmation: creating, starting, stopping or deleting a trader, updating a running trader, closing a position, a `config_patch` that touches the risk fields of the trader's kind, and deleting conversations or plans.
 
-The bot itself lists what is waiting, with the account each action is on and whether that is real money, under confirm and cancel buttons. The model writes none of it, so what you confirm is what you read. A request that holds several actions, such as stopping every trader, waits as one: confirming runs them all and says how each went, and one failing does not stop the rest.
+The bot itself lists what is waiting, each action numbered with the account it is on and whether that is real money, and says "real money" in the title as well, so the notification shows it. The buttons name what they do: one action's is its own, such as **🛑 Stop trader**, and several share **✅ Run all**, beside **↩️ Cancel**. The model writes none of it, so what you confirm is what you read. A request that holds several actions, such as stopping every trader, waits as one: confirming runs them all and says how each went, and one failing does not stop the rest, whose reason comes collapsed under it.
 
 The check runs in Go, not in the model. Press a button, or reply with an explicit confirmation (`confirm`, `yes`, `确认`); anything else cancels, and it expires after 5 minutes. A button only answers the request it came with, so an old one cannot approve anything newer.
 
 ## While it works
 
-Messages are answered one at a time, in the order they came. While the assistant works, a placeholder says what it is doing now, such as reading positions, in the bot's own words, never the model's or a tool's raw data. Once the model is writing its answer, the placeholder shows that as it comes, unformatted, and the finished reply takes its place. It updates at most once a second, and follows Telegram's rate limits.
+Messages are answered one at a time, in the order they came. While the assistant works, a placeholder says what it is doing now, such as reading positions, in the bot's own words, never the model's or a tool's raw data. Once the model is writing its answer, the placeholder shows that as it comes, already formatted, and the finished reply takes its place. It updates at most once a second, and follows Telegram's rate limits.
 
 The placeholder has a stop button, and `/stop` does the same at any time: it stops the turn and drops whatever waits behind it. What was already done stays done, and what the turn was holding for confirmation goes with it. A turn has 3 minutes at most. One that runs out of time, or out of steps, says it did not finish and never that it did.
 
 ## Replies
 
-Replies are written for a phone. What the model writes in Markdown becomes Telegram's own formatting: bold, lists, code and links. A table becomes one entry per row, since columns do not fit, and a reply too long for one message arrives in several. If Telegram refuses the formatting, the same words go out as plain text.
+Replies are written for a phone. What the model writes in Markdown becomes Telegram's own formatting: bold, lists, code and links. A table of a few short columns becomes a monospace table whose columns line up; a wider one becomes one entry per row. A reply too long for one message arrives in several, and if Telegram refuses the formatting, the same words go out as plain text.
+
+What the bot writes itself has one shape, set out in [DESIGN.md](../DESIGN.md#telegram): an emoji and a bold title with the figure that matters, a line under it saying where or for how long, then facts, tables and a hint. `/status` gives each account's equity and the total on real money, `/positions` a table per account with its total, and `/traders` a table of who runs. Amounts from a thousand up read as `12.3K`, and times as UTC. Its messages are built in `internal/telegram/message.go` and its tables in `table.go`.
 
 ## Finding the target
 
@@ -130,9 +134,11 @@ Once the bot is bound, the assistant also tells you about events without being a
 
 `internal/telegram/alerts.go` checks every 30 seconds. It only reads the database and in-memory state, so it adds no exchange requests and does not touch the trading loop. The one exception is the daily report, which asks each real account its equity once a day. What was already sent is stored in `telegram.alert_marks`, so a restart repeats nothing. Connecting the bot does not replay history, and after downtime events are reported from at most 24 hours back, each saying when it happened. If a message cannot be delivered, what did not get through goes out on the next check. A trader on a testnet account is marked as such.
 
+What one check finds goes out as one message, a section per kind, the most pressing first: what needs attention, orders that failed, entries filled, positions closed. Several closes are a table with their total, and closes on test money are a table of their own, so no total mixes the two. The daily report and Forecast's signals arrive silently, as their own messages; everything else makes a sound.
+
 ## Diagnostics
 
-`diagnose` follows a fixed path for each topic (`internal/telegram/agent/diagnose.go`). It reports the facts it collected with a hint for each known failure:
+`diagnose` follows a fixed path for each topic (`internal/assistant/diagnose.go`). It reports the facts it collected with a hint for each known failure:
 
 - **`trader_start`:** preflight checks for the trader's model, settings and account.
 - **`model`:** whether an enabled model exists and is complete.

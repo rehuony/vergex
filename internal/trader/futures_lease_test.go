@@ -14,7 +14,7 @@ func TestFuturesLeaseBlocksConstructorAndRestoration(t *testing.T) {
 	if e := db.Create(&ex).Error; e != nil {
 		t.Fatal(e)
 	}
-	if e := db.Create(&account.Lease{AccountID: ex.ID, Holder: account.LeaseHolderFutures, HolderID: "locked"}).Error; e != nil {
+	if e := db.Create(&account.Lease{AccountID: ex.ID, Source: account.SourceFutures, SourceID: "locked"}).Error; e != nil {
 		t.Fatal(e)
 	}
 	if _, e := NewAutoTrader(AutoTraderConfig{AccountID: ex.ID}, st, user); e == nil {

@@ -20,8 +20,6 @@ type Config interface {
 	// RiskFields are the fields of this config that change position size or leverage,
 	// named as they are in its JSON.
 	RiskFields() []string
-	// Limits are the code-enforced limits a cycle runs under, kept with its record.
-	Limits() any
 }
 
 // Preset is a starting config, named by ID. What it is called is up to the interface.

@@ -98,7 +98,7 @@ export function useFuturesTrades({
         onShowAccount()
         return
       }
-      if (blockingRun?.state === 'approved') {
+      if (blockingRun?.status === 'approved') {
         replacement = blockingRun
       } else if (blockingRun) {
         checkingPreviousTrade = true
@@ -106,9 +106,9 @@ export function useFuturesTrades({
           id: blockingRun.id,
         })
         await reload()
-        if (checked.state === 'approved') {
+        if (checked.status === 'approved') {
           replacement = checked
-        } else if (!runSettled(checked.state)) {
+        } else if (!runSettled(checked.status)) {
           throw new Error(
             'The previous trade is still active. Review Positions and orders before placing another'
           )
@@ -186,7 +186,7 @@ export function useFuturesTrades({
       const checked = await futuresAPI<LiveRun>('check-status', { id: r.id })
       await reload()
       setOrderNotice(
-        checked.state === 'completed'
+        checked.status === 'completed'
           ? 'Previous trade is closed. Your account is ready for a new order. Review a plan when you are ready'
           : ''
       )
@@ -219,7 +219,9 @@ export function useFuturesTrades({
   async function saveBuilder() {
     setBusy(true)
     setError('')
-    setReviewReplacement(blockingRun?.state === 'approved' ? blockingRun : null)
+    setReviewReplacement(
+      blockingRun?.status === 'approved' ? blockingRun : null
+    )
     try {
       const idea = { ...builderIdea, execution: { ...builderIdea.execution } }
       if (idea.execution.kind === 'ladder') {

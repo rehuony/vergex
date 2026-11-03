@@ -484,7 +484,7 @@ export function TelegramSettings({ language }: { language: Language }) {
             { value: '', label: t('telegram.autoSelect', language) },
             ...models.map((m) => ({
               value: m.id,
-              label: `${m.name}${m.customModelName ? ` · ${m.customModelName}` : ''}`,
+              label: `${m.name}${m.model_name ? ` · ${m.model_name}` : ''}`,
             })),
           ]}
           className="h-9"

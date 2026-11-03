@@ -77,11 +77,11 @@ describe('planning request deadlines', () => {
       'fetch',
       vi
         .fn()
-        .mockResolvedValueOnce(new Response('{"state":"completed"}'))
+        .mockResolvedValueOnce(new Response('{"status":"completed"}'))
         .mockResolvedValueOnce(new Response('', { status: 409 }))
     )
     await expect(futuresAPI('check-status', { id: 'old' })).resolves.toEqual({
-      state: 'completed',
+      status: 'completed',
     })
     expect(vi.getTimerCount()).toBe(0)
     await expect(futuresAPI('execute', { id: 'old' })).rejects.toThrow(

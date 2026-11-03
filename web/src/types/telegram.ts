@@ -15,7 +15,7 @@ export interface TelegramConfig {
 // Someone who tried to use the bot and was refused.
 export interface TelegramVisitor {
   chat_id: number
-  user_id: number // 0 when Telegram names no sender, as in a channel
+  sender_id: number // 0 when Telegram names no sender, as in a channel
   chat_type: string // private, group, supergroup or channel
   chat_title?: string
   username?: string

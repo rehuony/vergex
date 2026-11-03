@@ -20,10 +20,10 @@ func SanitizeModelConfigForLog(models map[string]ModelConfigUpdate) map[string]i
 	safe := make(map[string]interface{})
 	for modelID, cfg := range models {
 		safe[modelID] = map[string]interface{}{
-			"enabled":           cfg.Enabled,
-			"api_key":           MaskSensitiveString(cfg.APIKey),
-			"custom_api_url":    cfg.CustomAPIURL,
-			"custom_model_name": cfg.CustomModelName,
+			"enabled":    cfg.Enabled,
+			"api_key":    MaskSensitiveString(cfg.APIKey),
+			"base_url":   cfg.BaseURL,
+			"model_name": cfg.ModelName,
 		}
 	}
 	return safe

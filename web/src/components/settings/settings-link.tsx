@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { useOpenSettings } from './use-open-settings'
 import { SETTINGS_PARAM } from '@/constants/route-paths'
-import type { SettingsSection } from './settings-dialog'
+import type { SettingsSection } from './settings-sections'
 
 /** A link that opens settings at a tab over the current page. */
 export function SettingsLink({

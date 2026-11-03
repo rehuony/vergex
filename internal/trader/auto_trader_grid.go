@@ -666,14 +666,8 @@ func (at *AutoTrader) saveGridEquity() {
 		logger.Warnf("[Grid] Failed to read balance for equity snapshot: %v", err)
 		return
 	}
-	positions, err := at.trader.GetPositions()
-	if err != nil {
-		logger.Warnf("[Grid] Failed to read positions for equity snapshot: %v", err)
-		return
-	}
 	wallet, _ := balance["totalWalletBalance"].(float64)
 	unrealized, _ := balance["totalUnrealizedProfit"].(float64)
-	available, _ := balance["availableBalance"].(float64)
 	equity, ok := balance["totalEquity"].(float64)
 	if !ok || equity <= 0 {
 		equity = wallet + unrealized
@@ -681,10 +675,7 @@ func (at *AutoTrader) saveGridEquity() {
 	if equity <= 0 {
 		return
 	}
-	snapshot := &EquitySnapshot{
-		TraderID: at.id, TotalEquity: equity, Balance: equity - unrealized, AvailableBalance: available, UnrealizedPnL: unrealized,
-		PositionCount: len(positions), MarginUsedPct: marginInUse(positions) / equity * 100,
-	}
+	snapshot := &EquitySnapshot{TraderID: at.id, TotalEquity: equity, UnrealizedPnL: unrealized}
 	if err := at.stores.Equity.Save(snapshot); err != nil {
 		logger.Warnf("[Grid] Failed to save equity snapshot: %v", err)
 	}

@@ -18,10 +18,14 @@ const view = vi.hoisted(() => ({
 }))
 
 vi.mock('@/components/market-chart/market-chart-surface', () => ({
-  addProjectionSeries: () => series(),
+  ForecastBand: class {
+    set() {}
+    repaint() {}
+  },
+  addHorizonSeries: () => series(),
+  horizonPoints: () => [],
   candleColors: () => ({}),
   colors: () => ({}),
-  projectionColors: () => ({}),
   themeOptions: () => ({}),
   volumeColor: () => '',
   createMarketChart: () => ({

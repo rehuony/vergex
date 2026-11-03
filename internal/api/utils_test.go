@@ -52,10 +52,10 @@ func TestMaskSensitiveString(t *testing.T) {
 func TestSanitizeModelConfigForLog(t *testing.T) {
 	models := map[string]ModelConfigUpdate{
 		"deepseek": {
-			Enabled:         true,
-			APIKey:          "sk-1234567890abcdefghijklmnopqrstuvwxyz",
-			CustomAPIURL:    "https://api.deepseek.com",
-			CustomModelName: "deepseek-chat",
+			Enabled:   true,
+			APIKey:    "sk-1234567890abcdefghijklmnopqrstuvwxyz",
+			BaseURL:   "https://api.deepseek.com",
+			ModelName: "deepseek-chat",
 		},
 	}
 
@@ -79,8 +79,8 @@ func TestSanitizeModelConfigForLog(t *testing.T) {
 		t.Errorf("expected masked api_key='sk-1****wxyz', got %q", maskedKey)
 	}
 
-	if deepseekConfig["custom_api_url"] != "https://api.deepseek.com" {
-		t.Errorf("custom_api_url should not be masked")
+	if deepseekConfig["base_url"] != "https://api.deepseek.com" {
+		t.Errorf("base_url should not be masked")
 	}
 }
 

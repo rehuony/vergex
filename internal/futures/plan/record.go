@@ -4,6 +4,6 @@ import "time"
 
 type Record struct {
 	Plan    Plan      `json:"plan"`
-	State   string    `json:"state"`
+	Status  string    `json:"status"`
 	Updated time.Time `json:"updated"`
 }

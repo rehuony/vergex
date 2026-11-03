@@ -9,6 +9,7 @@
 | Futures: agent-assisted trade planning and execution | [futures.md](futures.md) |
 | Auto trading: settings, prompts, risk limits, grid | [traders.md](traders.md) |
 | Telegram assistant | [telegram.md](telegram.md) |
+| Assistant in the web app | [assistant.md](assistant.md) |
 | Market data: local candles, rate limits and history | [market-data.md](market-data.md) |
 | Forecast: experimental signals, strategies, backtests | [forecast.md](forecast.md) |
 | Remote access with TLS | [deployment.md](deployment.md) |

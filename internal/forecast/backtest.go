@@ -22,7 +22,8 @@ type BacktestOptions struct {
 }
 
 // Metrics measures forecasts against what happened. Samples do not overlap: each
-// series is tested every horizon bars, so one move is not counted several times.
+// series is tested every horizon bars, at candles a whole number of horizons from the
+// epoch, so one move is not counted several times and coins line up.
 type Metrics struct {
 	Samples int `json:"samples"`
 	Signals int `json:"signals"`
@@ -389,10 +390,14 @@ func testSeries(source BacktestSource, config Config, symbol, interval string, r
 	if len(candles) < WindowBars+horizon {
 		return nil, ErrNotEnoughHistory
 	}
+	// Samples sit at candles a whole number of horizons from the epoch, so every coin
+	// and every run tests the same candles, windows do not overlap, and a moment is the
+	// same stretch of time for all of them.
+	span := int64(horizon) * step
 	var samples []backtestSample
-	for i := WindowBars - 1; i+horizon < len(candles); i += horizon {
+	for i := WindowBars - 1; i+horizon < len(candles); i++ {
 		at := candles[i].OpenTime
-		if at < options.From || at > options.To {
+		if at%span != 0 || at < options.From || at > options.To {
 			continue
 		}
 		// A window with a hole, or a target that is not where it should be, is
@@ -409,7 +414,7 @@ func testSeries(source BacktestSource, config Config, symbol, interval string, r
 		samples = append(samples, backtestSample{
 			symbol: symbol, interval: interval, regime: result.Regime, direction: result.Direction,
 			prob: result.ProbFull, probCandles: result.ProbCandles, movePct: (target/result.Close - 1) * 100, expectedPct: result.ExpectedMovePct,
-			up: target > result.Close, hasDerivatives: result.HasDerivatives, time: at, moment: at / (int64(horizon) * step), factors: result.Factors,
+			up: target > result.Close, hasDerivatives: result.HasDerivatives, time: at, moment: at / span, factors: result.Factors,
 		})
 	}
 	return samples, nil

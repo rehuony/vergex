@@ -36,7 +36,7 @@ func TestEquityPreviewPlansRepeatedlyOnEveryVenue(t *testing.T) {
 					previous := store.plans[0]
 					previous.Constraints.PlanningOnly = false
 					previous.Constraints.AvailableMargin = "100"
-					store.previous[previous.ID] = plan.Record{Plan: previous, State: "draft"}
+					store.previous[previous.ID] = plan.Record{Plan: previous, Status: "draft"}
 					input.PlanID = previous.ID
 				}
 				notice, outcome := false, false

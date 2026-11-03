@@ -26,8 +26,9 @@ type AccountClose struct {
 	Side       string        `gorm:"column:side"`
 	Quantity   string        `gorm:"column:quantity"`
 	Entry      string        `gorm:"column:entry"`
-	State      string        `gorm:"column:state"`
+	Status     string        `gorm:"column:status"`
 	Order      account.Order `gorm:"column:order_state;serializer:json"`
+	CreatedAt  time.Time     `gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt  time.Time     `gorm:"column:updated_at"`
 }
 
@@ -55,7 +56,7 @@ func (s *AccountCloseStore) Get(id string) (*AccountClose, error) {
 // Unconfirmed returns the closes of a position still waiting on the exchange.
 func (s *AccountCloseStore) Unconfirmed(accountKey, symbol, side string) ([]AccountClose, error) {
 	var rows []AccountClose
-	err := s.db.Where("account_identity = ? AND symbol = ? AND side = ? AND state = ?", accountKey, symbol, side, AccountCloseUnconfirmed).Find(&rows).Error
+	err := s.db.Where("account_identity = ? AND symbol = ? AND side = ? AND status = ?", accountKey, symbol, side, AccountCloseUnconfirmed).Find(&rows).Error
 	return rows, err
 }
 

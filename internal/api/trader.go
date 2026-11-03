@@ -370,7 +370,7 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		InitialBalance:      actualBalance, // Use actual queried balance
 		MarginMode:          trader.MarginModeOf(isCrossMargin),
 		ScanIntervalMinutes: scanIntervalMinutes,
-		IsRunning:           false,
+		Running:             false,
 	}
 
 	// Save to database
@@ -419,7 +419,7 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		"trader_name":     req.Name,
 		"kind":            req.Kind,
 		"agent_model":     req.AgentModelID,
-		"is_running":      false,
+		"running":         false,
 		"startup_warning": startupWarning,
 	}
 	if len(warnings) > 0 {
@@ -548,14 +548,14 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 		InitialBalance:      initialBalance,
 		MarginMode:          trader.MarginModeOf(isCrossMargin),
 		ScanIntervalMinutes: scanIntervalMinutes,
-		IsRunning:           existingTrader.IsRunning, // Keep original value
+		Running:             existingTrader.Running, // Keep original value
 	}
 
 	// Check if trader was running before update (we'll restart it after)
 	wasRunning := false
 	if existingMemTrader, memErr := s.traderManager.GetTrader(traderID); memErr == nil {
 		status := existingMemTrader.GetStatus()
-		if running, ok := status["is_running"].(bool); ok && running {
+		if running, ok := status["running"].(bool); ok && running {
 			wasRunning = true
 			logger.Infof("🔄 Trader %s was running, will restart with new config after update", traderID)
 		}
@@ -592,7 +592,7 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 			"trader_id":   traderID,
 			"trader_name": name,
 			"agent_model": agentModelID,
-			"is_running":  wasRunning,
+			"running":     wasRunning,
 			"message":     "Trader updated successfully",
 		}
 		if len(warnings) > 0 {
@@ -632,8 +632,8 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 		"agent_model": agentModelID,
 		// A running trader is restarted with the new config (async above), so
 		// report it as running — callers must not fire a redundant start.
-		"is_running": wasRunning,
-		"message":    "Trader updated successfully",
+		"running": wasRunning,
+		"message": "Trader updated successfully",
 	}
 	if len(warnings) > 0 {
 		response["warnings"] = warnings
@@ -658,7 +658,7 @@ func (s *Server) handleDeleteTrader(c *gin.Context) {
 	// If trader is running, stop it first
 	if trader, err := s.traderManager.GetTrader(traderID); err == nil {
 		status := trader.GetStatus()
-		if isRunning, ok := status["is_running"].(bool); ok && isRunning {
+		if isRunning, ok := status["running"].(bool); ok && isRunning {
 			trader.Stop()
 			logger.Infof("⏹  Stopped running trader: %s", traderID)
 		}
@@ -714,7 +714,7 @@ func (s *Server) handleStartTrader(c *gin.Context) {
 	existingTrader, _ := s.traderManager.GetTrader(traderID)
 	if existingTrader != nil {
 		status := existingTrader.GetStatus()
-		if isRunning, ok := status["is_running"].(bool); ok && isRunning {
+		if isRunning, ok := status["running"].(bool); ok && isRunning {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":     "Trader is already running",
 				"error_key": "trader.start.already_running",
@@ -840,7 +840,7 @@ func (s *Server) handleStopTrader(c *gin.Context) {
 
 	// Check if trader is running
 	status := trader.GetStatus()
-	if isRunning, ok := status["is_running"].(bool); ok && !isRunning {
+	if isRunning, ok := status["running"].(bool); ok && !isRunning {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Trader is already stopped"})
 		return
 	}

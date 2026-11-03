@@ -241,39 +241,6 @@ func agentPresets() []Preset {
 // RiskFields implements Config.
 func (c *AgentConfig) RiskFields() []string { return []string{"risk_control"} }
 
-// agentLimits is what the code enforces on an agent trader's orders.
-type agentLimits struct {
-	MaxPositions                 int     `json:"max_positions"`
-	BTCETHMaxPositionValueRatio  float64 `json:"btc_eth_max_position_value_ratio"`
-	AltcoinMaxPositionValueRatio float64 `json:"altcoin_max_position_value_ratio"`
-	MaxMarginUsage               float64 `json:"max_margin_usage"`
-	MinPositionSize              float64 `json:"min_position_size"`
-	BTCETHMaxLeverage            int     `json:"btc_eth_max_leverage"`
-	AltcoinMaxLeverage           int     `json:"altcoin_max_leverage"`
-	MinRiskRewardRatio           float64 `json:"min_risk_reward_ratio"`
-	MinConfidence                int     `json:"min_confidence"`
-	MaxDailyLossPct              float64 `json:"max_daily_loss_pct"`
-	MaxDrawdownPct               float64 `json:"max_drawdown_pct"`
-}
-
-// Limits implements Config.
-func (c *AgentConfig) Limits() any {
-	risk := c.RiskControl
-	return agentLimits{
-		MaxPositions:                 risk.MaxPositions,
-		BTCETHMaxPositionValueRatio:  risk.BTCETHMaxPositionValueRatio,
-		AltcoinMaxPositionValueRatio: risk.AltcoinMaxPositionValueRatio,
-		MaxMarginUsage:               risk.MaxMarginUsage,
-		MinPositionSize:              risk.MinPositionSize,
-		BTCETHMaxLeverage:            risk.BTCETHMaxLeverage,
-		AltcoinMaxLeverage:           risk.AltcoinMaxLeverage,
-		MinRiskRewardRatio:           risk.MinRiskRewardRatio,
-		MinConfidence:                risk.MinConfidence,
-		MaxDailyLossPct:              risk.MaxDailyLossPct,
-		MaxDrawdownPct:               risk.MaxDrawdownPct,
-	}
-}
-
 // Validate implements Config. A wrong choice is an error for whoever sent it to correct.
 func (c *AgentConfig) Validate() error {
 	if err := c.CoinSource.validate(); err != nil {

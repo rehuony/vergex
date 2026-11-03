@@ -22,7 +22,7 @@ func TestCheckStatusOnlyReleasesVerifiedClosedTrade(t *testing.T) {
 			b.account.Position = entry.Quantity
 			c.step(context.Background(), testUser, v.ID)
 			v, _ = c.Get(testUser, v.ID)
-			v.State = "needs_attention"
+			v.Status = "needs_attention"
 			if err := c.save(&v); err != nil {
 				t.Fatal(err)
 			}
@@ -55,8 +55,8 @@ func TestCheckStatusOnlyReleasesVerifiedClosedTrade(t *testing.T) {
 			var leases int64
 			c.DB.Model(&account.Lease{}).Count(&leases)
 			if scenario == "closed" {
-				if err != nil || out.State != "completed" || leases != 0 {
-					t.Fatalf("not released: %s %v leases=%d", out.State, err, leases)
+				if err != nil || out.Status != "completed" || leases != 0 {
+					t.Fatalf("not released: %s %v leases=%d", out.Status, err, leases)
 				}
 			} else if err == nil || leases != 1 {
 				t.Fatalf("unsafe release: %v leases=%d", err, leases)
@@ -74,7 +74,7 @@ func TestCheckStatusKeepsUnusedApproval(t *testing.T) {
 	out, err := c.CheckStatus(context.Background(), testUser, v.ID)
 	var leases int64
 	c.DB.Model(&account.Lease{}).Count(&leases)
-	if err != nil || out.State != "approved" || leases != 1 || len(b.placed) != 0 {
+	if err != nil || out.Status != "approved" || leases != 1 || len(b.placed) != 0 {
 		t.Fatal("unused approval was altered")
 	}
 }
@@ -105,7 +105,7 @@ func TestApproveChecksPreviousTradeBeforeReservingAccount(t *testing.T) {
 				}
 				b.account.Position = "0"
 				old, _ = c.Get(testUser, old.ID)
-				old.State = "needs_attention"
+				old.Status = "needs_attention"
 				if err := c.save(&old); err != nil {
 					t.Fatal(err)
 				}
@@ -136,10 +136,10 @@ func TestApproveChecksPreviousTradeBeforeReservingAccount(t *testing.T) {
 			}
 			previous, _ := c.Get(testUser, old.ID)
 			if scenario == "closed" {
-				if err != nil || previous.State != "completed" || approved.State != "approved" || lease.HolderID != approved.ID {
-					t.Fatalf("closed trade not released: %v %s %s", err, previous.State, approved.State)
+				if err != nil || previous.Status != "completed" || approved.Status != "approved" || lease.SourceID != approved.ID {
+					t.Fatalf("closed trade not released: %v %s %s", err, previous.Status, approved.Status)
 				}
-			} else if err == nil || lease.HolderID != old.ID || previous.State == "completed" {
+			} else if err == nil || lease.SourceID != old.ID || previous.Status == "completed" {
 				t.Fatalf("unresolved trade released: %v %+v", err, lease)
 			}
 			if len(b.placed) != placed || len(b.cancelled) != cancelled || len(c.workers) != 0 {
@@ -162,7 +162,7 @@ func TestManualCloseCleansOnlyConfirmedPlanExits(t *testing.T) {
 			b.account.Position = entry.Quantity
 			c.step(context.Background(), testUser, v.ID)
 			v, _ = c.Get(testUser, v.ID)
-			v.State = "stopping"
+			v.Status = "stopping"
 			c.save(&v)
 			b.account.Position = "0"
 			user := testUser
@@ -174,14 +174,14 @@ func TestManualCloseCleansOnlyConfirmedPlanExits(t *testing.T) {
 			case "other_user":
 				user = testOtherUser
 			case "running":
-				v.State = "running"
+				v.Status = "running"
 				c.save(&v)
 			}
 			placed := len(b.placed)
 			out, err := c.FinishManualClose(context.Background(), user, v.ID)
 			if scenario == "closed" {
-				if err != nil || out.State != "completed" || len(b.cancelled) != 2 {
-					t.Fatal(out.State, err, b.cancelled)
+				if err != nil || out.Status != "completed" || len(b.cancelled) != 2 {
+					t.Fatal(out.Status, err, b.cancelled)
 				}
 			} else if err == nil || len(b.cancelled) != 0 {
 				t.Fatal("unsafe cleanup", err, b.cancelled)

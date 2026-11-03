@@ -131,7 +131,7 @@ func (tm *Manager) RemoveTrader(traderID string) {
 	// its monitor, which can be in an exchange call, so it happens outside the lock. The
 	// trader stays in the map meanwhile, so no load can start a second copy beside it.
 	status := t.GetStatus()
-	if isRunning, ok := status["is_running"].(bool); ok && isRunning {
+	if isRunning, ok := status["running"].(bool); ok && isRunning {
 		logger.Infof("⏹ Stopping trader %s before removing from memory...", traderID)
 		t.Stop()
 	}
@@ -267,6 +267,14 @@ func (tm *Manager) LoadTradersFromStore() error {
 	st := tm.stores
 	started := tm.removalCount()
 
+	// No cycle is under way yet, so a conversation no cycle points at was left by one that
+	// never got saved, before a restart say.
+	if lost, err := st.Decisions.ForgetConversations(); err != nil {
+		logger.Warnf("⚠️ Failed to delete the conversations of lost cycles: %v", err)
+	} else if lost > 0 {
+		logger.Infof("🧹 Deleted %d conversations of cycles that were never saved", lost)
+	}
+
 	// Get all users
 	userIDs, err := st.Users.GetAllIDs()
 	if err != nil {
@@ -382,7 +390,7 @@ func (tm *Manager) loadTrader(traderCfg *Trader, agentModelCfg *agent.Model, acc
 	logger.Infof("✓ Trader '%s' (%s + %s/%s) loaded to memory", traderCfg.Name, agentModelCfg.Provider, accountCfg.Venue, accountCfg.Name)
 
 	// Auto-start if trader was running before shutdown
-	if traderCfg.IsRunning {
+	if traderCfg.Running {
 		logger.Infof("%s 🔄 Auto-starting trader (was running before shutdown)...", traderLogTag(traderCfg.ID, traderCfg.Name))
 		go func(at *AutoTrader, traderName, traderID, userID string) {
 			if err := at.Run(); err != nil {
@@ -423,8 +431,8 @@ func (tm *Manager) buildTrader(traderCfg *Trader, agentModelCfg *agent.Model, ac
 		UseQwen:          agentModelCfg.Provider == "qwen",
 		DeepSeekKey:      "",
 		QwenKey:          "",
-		CustomAPIURL:     agentModelCfg.CustomAPIURL,
-		CustomModelName:  agentModelCfg.CustomModelName,
+		BaseURL:          agentModelCfg.BaseURL,
+		ModelName:        agentModelCfg.ModelName,
 		ScanInterval:     time.Duration(traderCfg.ScanIntervalMinutes) * time.Minute,
 		InitialBalance:   traderCfg.InitialBalance,
 		IsCrossMargin:    traderCfg.IsCrossMargin(),

@@ -2,7 +2,6 @@ package kind
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -103,27 +102,6 @@ func TestTouchesRisk(t *testing.T) {
 	for _, c := range cases {
 		if got := TouchesRisk(c.kind, c.patch); got != c.want {
 			t.Errorf("%s %v: got %v", c.kind, c.patch, got)
-		}
-	}
-}
-
-func TestLimitsAreSmallAndNamed(t *testing.T) {
-	raw, err := json.Marshal(DefaultAgent().Limits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"max_positions", "btc_eth_max_position_value_ratio", "max_margin_usage", "min_position_size", "altcoin_max_leverage"} {
-		if !strings.Contains(string(raw), name) {
-			t.Errorf("%s missing from %s", name, raw)
-		}
-	}
-	raw, err = json.Marshal(DefaultGrid().Limits())
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"total_investment", "leverage", "upper_price", "stop_loss_pct"} {
-		if !strings.Contains(string(raw), name) {
-			t.Errorf("%s missing from %s", name, raw)
 		}
 	}
 }

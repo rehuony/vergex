@@ -14,7 +14,7 @@ afterEach(cleanup)
 
 const show = async (record: Partial<DecisionRecord>) => {
   mocks.summaries.mockResolvedValue([
-    { id: 1, cycle_number: 7, timestamp: '2026-10-29T06:00:00Z', ...record },
+    { id: 1, seq: 7, timestamp: '2026-10-29T06:00:00Z', ...record },
   ])
   render(
     <MemoryRouter>

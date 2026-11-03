@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => ({
     provider: string
     enabled: boolean
     has_api_key: boolean
-    defaultModel?: string
+    default_model?: string
   }[],
   accounts: [] as {
     id: string
@@ -155,7 +155,7 @@ beforeEach(() => {
       id: 'model',
       name: 'Configured DeepSeek',
       provider: 'deepseek',
-      defaultModel: 'deepseek-v4-pro',
+      default_model: 'deepseek-v4-pro',
       enabled: true,
       has_api_key: true,
     },
@@ -177,8 +177,8 @@ beforeEach(() => {
     if (path === 'state')
       return {
         records: {
-          one: { plan: plan('one'), state: 'draft' },
-          two: { plan: plan('two'), state: 'draft' },
+          one: { plan: plan('one'), status: 'draft' },
+          two: { plan: plan('two'), status: 'draft' },
         },
         accounts: { one: 'ex', two: 'ex' },
         runs: [],
@@ -698,7 +698,7 @@ it('starts a separate draft from a locked trade without revising or executing th
   mocks.api.mockImplementation((path: string, body?: unknown) =>
     path === 'state'
       ? {
-          records: { one: { plan: plan('one'), state: 'approved' } },
+          records: { one: { plan: plan('one'), status: 'approved' } },
           accounts: { one: 'ex' },
           runs: [],
           mode: 'live',
@@ -741,7 +741,7 @@ describe('previous trade recovery', () => {
       account_id: 'ex',
       plan_id: 'old',
       approval_hash: 'previous-hash',
-      state: 'approved',
+      status: 'approved',
       plan: plan('old'),
       orders: [],
     }
@@ -801,7 +801,7 @@ describe('previous trade recovery', () => {
       id: 'old-run',
       account_id: 'ex',
       plan_id: 'old',
-      state: 'needs_attention',
+      status: 'needs_attention',
       plan: plan('old'),
       orders: [],
     }
@@ -809,11 +809,13 @@ describe('previous trade recovery', () => {
       if (path === 'state')
         return {
           ...(await base(path, body)),
-          runs: [{ ...previous, state: closed ? 'completed' : previous.state }],
+          runs: [
+            { ...previous, status: closed ? 'completed' : previous.status },
+          ],
         }
       if (path === 'check-status') {
         closed = true
-        return { ...previous, state: 'completed' }
+        return { ...previous, status: 'completed' }
       }
       if (path === 'compile')
         throw new Error('Account balance is temporarily unavailable.')
@@ -840,7 +842,7 @@ describe('previous trade recovery', () => {
       account_id: 'ex',
       plan_id: 'old',
       approval_hash: 'hash',
-      state: 'needs_attention',
+      status: 'needs_attention',
       plan: plan('old'),
       orders: [],
     }
@@ -849,12 +851,12 @@ describe('previous trade recovery', () => {
         const data = await base(path, body)
         return {
           ...data,
-          runs: [{ ...old, state: closed ? 'completed' : old.state }],
+          runs: [{ ...old, status: closed ? 'completed' : old.status }],
         }
       }
       if (path === 'check-status') {
         closed = true
-        return { ...old, state: 'completed' }
+        return { ...old, status: 'completed' }
       }
       return base(path, body)
     })
@@ -893,7 +895,7 @@ describe('previous trade recovery', () => {
               id: 'previous-run',
               account_id: 'ex',
               plan_id: 'old',
-              state: 'needs_attention',
+              status: 'needs_attention',
               plan: plan('old'),
               orders: [],
             },
@@ -924,7 +926,7 @@ describe('previous trade recovery', () => {
       id: 'previous-run',
       account_id: 'ex',
       plan_id: 'old',
-      state: 'needs_attention',
+      status: 'needs_attention',
       plan: plan('old'),
       orders: [],
     }
@@ -932,13 +934,13 @@ describe('previous trade recovery', () => {
       if (path === 'state')
         return {
           ...(await base(path, body)),
-          runs: [{ ...old, state: closed ? 'completed' : old.state }],
+          runs: [{ ...old, status: closed ? 'completed' : old.status }],
         }
       if (path === 'check-status') {
         if (++attempts === 1)
           throw new Error('Could not confirm stop order. Check the exchange.')
         closed = true
-        return { ...old, state: 'completed' }
+        return { ...old, status: 'completed' }
       }
       return base(path, body)
     })
@@ -986,7 +988,7 @@ it('keeps expired drafts visible and refreshes them before review, without execu
     path === 'state'
       ? {
           ...(await base(path, body)),
-          records: { one: { plan: stale, state: 'draft' } },
+          records: { one: { plan: stale, status: 'draft' } },
         }
       : base(path, body)
   )

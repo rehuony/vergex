@@ -14,14 +14,17 @@ import { THEME_EVENT } from '@/contexts/theme-context'
 import { wheelIntent } from './chart-input'
 import { priceDigits } from './chart-legend'
 import {
-  addProjectionSeries,
+  ForecastBand,
+  addHorizonSeries,
   candleColors,
   colors,
   createMarketChart,
-  projectionColors,
+  horizonPoints,
+  priceMargins,
   themeOptions,
   volumeColor,
 } from './market-chart-surface'
+import type { ChartForecast } from '@/api/forecast'
 
 export interface ChartCandle {
   time: number // Unix seconds.
@@ -38,10 +41,11 @@ export interface ChartLevel {
   tone: 'up' | 'down'
 }
 
+// A judged call: an arrow pointing the call's way, coloured by how it turned out.
 export interface ChartMarker {
   time: number // Unix seconds.
+  direction: 'up' | 'down'
   tone: 'up' | 'down'
-  position: 'above' | 'below'
 }
 
 export interface ChartPoint {
@@ -84,8 +88,15 @@ const INITIAL_FUTURE_BARS = 12
 const ZOOM_STEP = 0.75
 const MIN_ZOOM_BARS = 12
 
+// The RSI pane takes a share of the chart's height beside the main pane's, so it
+// fits whatever height the chart has.
 const RSI_PANE = 1
-const RSI_PANE_HEIGHT = 120
+const MAIN_PANE_SHARE = 4
+const RSI_PANE_SHARE = 1
+const MARKER_SIZE = 0.6
+
+// How far from the pane's top what floats over it sits, and the room kept under it.
+const FLOAT_INSET = 8
 
 function priceFormat(price: number) {
   const precision = priceDigits(price)
@@ -113,7 +124,8 @@ export class LocalMarketChart {
   private candles: ISeriesApi<'Candlestick'>
   private volume: ISeriesApi<'Histogram'>
   private markers: ISeriesMarkersPluginApi<Time>
-  private projection: ISeriesApi<'Candlestick'>
+  private horizon: ISeriesApi<'Line'>
+  private band = new ForecastBand()
   private lines = new Map<keyof ChartLines, ISeriesApi<'Line'>>()
   private levels: IPriceLine[] = []
   private rsiLevels: IPriceLine[] = []
@@ -123,6 +135,9 @@ export class LocalMarketChart {
   private lastTime = 0
   private live: ChartCandle | null = null
   private wheelZooms = false
+  // Pixels at the top of the pane kept clear of candles, for what floats there.
+  private reserved = 0
+  private resize: ResizeObserver | null = null
 
   constructor(private readonly host: HTMLElement) {
     const { chart, candles, volume } = createMarketChart(host, (base) => base)
@@ -130,7 +145,8 @@ export class LocalMarketChart {
     this.candles = candles
     this.volume = volume
     this.markers = createSeriesMarkers(candles, [])
-    this.projection = addProjectionSeries(chart)
+    this.horizon = addHorizonSeries(chart)
+    candles.attachPrimitive(this.band)
     // An upright swipe on a phone scrolls the page, and the wheel is decided in onWheel.
     chart.applyOptions({
       handleScale: { mouseWheel: false },
@@ -141,6 +157,32 @@ export class LocalMarketChart {
       passive: true,
     })
     window.addEventListener(THEME_EVENT, this.repaint)
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resize = new ResizeObserver(() => this.layoutMargins())
+      this.resize.observe(host)
+    }
+  }
+
+  // reserveTop keeps this much of the pane's top clear of candles and levels, so the
+  // legend floating there never covers a level's label.
+  reserveTop(px: number) {
+    this.reserved = px
+    this.layoutMargins()
+  }
+
+  // The top margin is the reserved height as a share of the main pane, which shrinks
+  // when the RSI pane is on, and never less than the chart's own.
+  private layoutMargins() {
+    const pane = this.chart?.panes()[0]
+    const height = pane?.getHeight() || this.host.clientHeight
+    const wanted = (this.reserved + 2 * FLOAT_INSET) / height
+    const top =
+      this.reserved > 0 && height > 0
+        ? Math.max(priceMargins.top, Math.min(wanted, 0.4))
+        : priceMargins.top
+    this.chart
+      ?.priceScale('right')
+      .applyOptions({ scaleMargins: { top, bottom: priceMargins.bottom } })
   }
 
   // Runs before the library sees the wheel. A scroll meant for the page never reaches it,
@@ -208,9 +250,7 @@ export class LocalMarketChart {
     const last = rows.length > 0 ? rows[rows.length - 1] : null
     this.lastTime = last?.time ?? 0
     if (last) {
-      const format = priceFormat(last.close)
-      this.candles.applyOptions({ priceFormat: format })
-      this.projection.applyOptions({ priceFormat: format })
+      this.candles.applyOptions({ priceFormat: priceFormat(last.close) })
     }
     if (this.live && this.live.time >= this.lastTime) this.update(this.live)
 
@@ -229,10 +269,10 @@ export class LocalMarketChart {
       markers.map(
         (marker): SeriesMarker<Time> => ({
           time: marker.time as UTCTimestamp,
-          position: marker.position === 'above' ? 'aboveBar' : 'belowBar',
-          shape: 'circle',
+          position: marker.direction === 'up' ? 'belowBar' : 'aboveBar',
+          shape: marker.direction === 'up' ? 'arrowUp' : 'arrowDown',
           color: marker.tone === 'up' ? colors.up : colors.down,
-          size: 0.6,
+          size: MARKER_SIZE,
         })
       )
     )
@@ -256,8 +296,10 @@ export class LocalMarketChart {
     this.live = null
   }
 
-  setProjection(rows: ChartCandle[]) {
-    this.projection.setData(rows.map(toBar))
+  // setForecast draws the forecast band, or with null, none.
+  setForecast(forecast: ChartForecast | null) {
+    this.horizon.setData(horizonPoints(forecast))
+    this.band.set(forecast)
   }
 
   setLines(lines: ChartLines) {
@@ -312,14 +354,17 @@ export class LocalMarketChart {
 
   private layoutRSI() {
     const panes = this.chart?.panes() ?? []
-    if (panes.length > RSI_PANE && this.lines.has('rsi'))
-      panes[RSI_PANE].setHeight(RSI_PANE_HEIGHT)
+    if (panes.length > RSI_PANE && this.lines.has('rsi')) {
+      panes[0].setStretchFactor(MAIN_PANE_SHARE)
+      panes[RSI_PANE].setStretchFactor(RSI_PANE_SHARE)
+    }
+    this.layoutMargins()
   }
 
   private readonly repaint = () => {
     this.chart?.applyOptions(themeOptions())
     this.candles.applyOptions(candleColors())
-    this.projection.applyOptions(projectionColors())
+    this.band.repaint()
     for (const [name, series] of this.lines)
       series.applyOptions({ color: lineStyles[name].color() })
     for (const line of this.rsiLevels)
@@ -328,6 +373,7 @@ export class LocalMarketChart {
   }
 
   dispose() {
+    this.resize?.disconnect()
     this.host.removeEventListener('wheel', this.onWheel, { capture: true })
     window.removeEventListener(THEME_EVENT, this.repaint)
     this.chart?.remove()

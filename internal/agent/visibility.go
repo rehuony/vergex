@@ -8,6 +8,6 @@ func IsVisibleModel(model *Model) bool {
 	}
 	return model.Enabled ||
 		strings.TrimSpace(string(model.APIKey)) != "" ||
-		strings.TrimSpace(model.CustomAPIURL) != "" ||
-		strings.TrimSpace(model.CustomModelName) != ""
+		strings.TrimSpace(model.BaseURL) != "" ||
+		strings.TrimSpace(model.ModelName) != ""
 }

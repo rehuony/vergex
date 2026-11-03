@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { Plus } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { StatStrip } from '@/components/common/figures'
 import { Panel, PanelLoading, PanelState } from '@/components/common/panel'
 import { SearchField } from '@/components/common/search-field'
@@ -10,7 +12,10 @@ import {
 import { TradersFrame } from '@/components/trader/traders-frame'
 import { TradersList } from '@/components/trader/traders-list'
 import { useAuth } from '@/contexts/auth-context'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ROUTES } from '@/constants/route-paths'
+import { useAssistantPage } from '@/hooks/use-assistant-page'
 import { useLanguage } from '@/contexts/language-context'
 import {
   configuredAccounts,
@@ -53,6 +58,8 @@ export function TradersOverviewPage() {
   const { user, token } = useAuth()
   const label = (key: string) => t(`traderList.${key}`, language)
   const [search, setSearch] = useState('')
+  const navigate = useNavigate()
+  useAssistantPage('traders_overview')
   const models = useModelConfigs()
   const accounts = useAccounts()
   const { data: traders, error } = useQuery({
@@ -69,7 +76,7 @@ export function TradersOverviewPage() {
     (sum, trader) => sum + (metrics?.[trader.trader_id]?.total_trades ?? 0),
     0
   )
-  const running = all.filter((trader) => trader.is_running).length
+  const running = all.filter((trader) => trader.running).length
 
   return (
     <TradersFrame language={language}>
@@ -120,6 +127,19 @@ export function TradersOverviewPage() {
               accountCount={configuredAccounts(accounts.data ?? []).length}
               search={search}
               language={language}
+              create={
+                <Button
+                  type="button"
+                  variant="primary"
+                  className="max-sm:h-10"
+                  onClick={() =>
+                    navigate(ROUTES.traders, { state: { create: true } })
+                  }
+                >
+                  <Plus className="size-4" aria-hidden="true" />
+                  {t('createTrader', language)}
+                </Button>
+              }
             />
           </>
         )}

@@ -658,7 +658,7 @@ func (e *Engine) invoke(ctx context.Context, input Input, limits plan.Constraint
 				return nil, errors.New("an entry type cannot be both proposed and deferred in the same assessment")
 			}
 		}
-		if selected != nil && selected.State != "draft" && selected.State != "approved" {
+		if selected != nil && selected.Status != "draft" && selected.Status != "approved" {
 			return nil, errors.New("active/terminal order cannot be revised; select a new planning context")
 		}
 		snapshot, err := e.Market.Snapshot(ctx, input.Venue, input.Symbol)

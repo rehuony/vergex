@@ -49,7 +49,7 @@ export function sortTraders(
 ) {
   if (!sort) {
     return [...traders].sort(
-      (a, b) => Number(Boolean(b.is_running)) - Number(Boolean(a.is_running))
+      (a, b) => Number(Boolean(b.running)) - Number(Boolean(a.running))
     )
   }
   const value = sortValue[sort.key]
@@ -70,17 +70,19 @@ export function NoTraders({
   accountCount,
   language,
   create,
+  className,
 }: {
   modelCount: number
   accountCount: number
   language: Language
   // The way to create one, once nothing else is missing.
   create?: ReactNode
+  className?: string
 }) {
   const label = (key: string) => t(`traderList.${key}`, language)
   const addClass = buttonVariants({ variant: 'secondary', size: 'sm' })
   return (
-    <PanelState role="status">
+    <PanelState role="status" className={className}>
       <p className="font-medium text-vergex-ink">{t('noTraders', language)}</p>
       {modelCount === 0 ? (
         <>
@@ -113,6 +115,8 @@ interface TradersListProps {
   accountCount: number
   search: string
   language: Language
+  // The way to create one, where nothing has been yet.
+  create?: ReactNode
 }
 
 // The traders side by side. A row opens that trader, where it is started, stopped,
@@ -128,6 +132,7 @@ export function TradersList({
   accountCount,
   search,
   language,
+  create,
 }: TradersListProps) {
   const navigate = useNavigate()
   const label = (key: string) => t(`traderList.${key}`, language)
@@ -158,73 +163,85 @@ export function TradersList({
         : { key, ascending: key === 'name' }
     )
 
-  if (!traders) {
-    return failed ? (
-      <PanelState role="alert">{label('loadFailed')}</PanelState>
-    ) : (
-      <PanelLoading />
-    )
-  }
-
-  if (traders.length === 0) {
-    return (
-      <NoTraders
-        modelCount={modelCount}
-        accountCount={accountCount}
-        language={language}
-      />
-    )
-  }
-
-  if (rows.length === 0) {
-    return <PanelState role="status">{label('noMatch')}</PanelState>
-  }
-
   const header = { sort, onSort: chooseColumn }
   const number = cn(headClass, 'w-28 text-right')
+  const head = (
+    <thead className="sticky top-0 z-10">
+      <tr>
+        <SortHeader
+          column="name"
+          title={label('name')}
+          className={headClass}
+          {...header}
+        />
+        <SortHeader
+          column="equity"
+          title={label('equity')}
+          className={number}
+          {...header}
+        />
+        <SortHeader
+          column="return"
+          title={label('return')}
+          className={number}
+          {...header}
+        />
+        <SortHeader
+          column="winRate"
+          title={label('winRate')}
+          className={cn(number, narrowHidden)}
+          {...header}
+        />
+        <SortHeader
+          column="drawdown"
+          title={label('drawdown')}
+          className={cn(number, narrowHidden)}
+          {...header}
+        />
+        <SortHeader
+          column="trades"
+          title={label('trades')}
+          className={cn(number, narrowHidden)}
+          {...header}
+        />
+      </tr>
+    </thead>
+  )
+
+  // With no rows, the columns stay and what stands for them fills the room the rows take.
+  const empty = !traders ? (
+    failed ? (
+      <PanelState role="alert" className="flex-1">
+        {label('loadFailed')}
+      </PanelState>
+    ) : (
+      <PanelLoading className="flex-1" />
+    )
+  ) : traders.length === 0 ? (
+    <NoTraders
+      className="flex-1"
+      modelCount={modelCount}
+      accountCount={accountCount}
+      language={language}
+      create={create}
+    />
+  ) : rows.length === 0 ? (
+    <PanelState role="status" className="flex-1">
+      {label('noMatch')}
+    </PanelState>
+  ) : null
+  if (empty)
+    return (
+      <>
+        <table className={cn(tableClass, 'shrink-0')}>{head}</table>
+        {empty}
+      </>
+    )
+
   return (
     <ScrollArea className="min-h-0 flex-1 rounded-b-2xl">
       <table className={tableClass}>
-        <thead className="sticky top-0 z-10">
-          <tr>
-            <SortHeader
-              column="name"
-              title={label('name')}
-              className={headClass}
-              {...header}
-            />
-            <SortHeader
-              column="equity"
-              title={label('equity')}
-              className={number}
-              {...header}
-            />
-            <SortHeader
-              column="return"
-              title={label('return')}
-              className={number}
-              {...header}
-            />
-            <SortHeader
-              column="winRate"
-              title={label('winRate')}
-              className={cn(number, narrowHidden)}
-              {...header}
-            />
-            <SortHeader
-              column="drawdown"
-              title={label('drawdown')}
-              className={cn(number, narrowHidden)}
-              {...header}
-            />
-            <SortHeader
-              column="trades"
-              title={label('trades')}
-              className={cn(number, narrowHidden)}
-              {...header}
-            />
-          </tr>
-        </thead>
+        {head}
         <tbody>
           {rows.map((trader) => {
             const row = metrics?.[trader.trader_id]
@@ -241,13 +258,13 @@ export function TradersList({
                     <span
                       className={cn(
                         'size-2 shrink-0 rounded-full',
-                        trader.is_running
+                        trader.running
                           ? 'bg-vergex-success'
                           : 'bg-vergex-line-strong'
                       )}
                       role="img"
                       aria-label={
-                        trader.is_running ? label('running') : label('stopped')
+                        trader.running ? label('running') : label('stopped')
                       }
                     />
                     <Link

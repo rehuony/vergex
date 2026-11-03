@@ -41,9 +41,8 @@ import { useLanguage } from '@/contexts/language-context'
 import type { FuturesConversation } from '@/hooks/futures/use-futures-data'
 import { activeLanguage, t } from '@/i18n'
 import { cn } from '@/utils/cn'
-import { Message } from './assistant-thread'
 import { format, orderStateLabel, planStateLabel } from './futures-labels'
-import type { ChatMessage } from './use-futures-assistant'
+import { Message, type ChatMessage } from '@/components/common/chat-thread'
 
 interface PlanResult {
   realized_pnl: number
@@ -356,8 +355,9 @@ function RailFolder({
 // FuturesHistory is what has already happened on this account: its past conversations, and
 // on this market the finished plans with what they realized and drafts from earlier sessions,
 // as a directory beside the one opened. Conversations can be continued, renamed and
-// deleted. A draft can be deleted, and a plan that ran stays as the record of its orders.
-// Neither can be renamed, since a plan's name is part of what its approval signs. Results
+// deleted. A draft can be deleted, and so can a finished plan, whose orders stay in the
+// account's records. Neither can be renamed, since a plan's name is part of what its
+// approval signs. Results
 // are only asked for while the tab is shown.
 export function FuturesHistory({
   active,
@@ -371,7 +371,7 @@ export function FuturesHistory({
   onOpenConversation,
   onRenameConversation,
   onDeleteConversation,
-  onDeleteDraft,
+  onDeletePlan,
 }: {
   active: boolean
   accountID: string
@@ -384,7 +384,7 @@ export function FuturesHistory({
   onOpenConversation: (conversation: FuturesConversation) => void
   onRenameConversation: (id: string, title: string) => Promise<void>
   onDeleteConversation: (conversation: FuturesConversation) => Promise<void>
-  onDeleteDraft: (plan: Plan) => Promise<void>
+  onDeletePlan: (plan: Plan) => Promise<void>
 }) {
   const { language } = useLanguage()
   const label = (key: string) => t(`futures.${key}`, language)
@@ -423,9 +423,9 @@ export function FuturesHistory({
   const draft = archived.find((row) => `draft:${row.plan.id}` === open)
   const conversation = conversations.find((row) => `chat:${row.id}` === open)
   const draftState = (record: DraftRecord) =>
-    expired(record.plan, clock) && record.state === 'draft'
+    expired(record.plan, clock) && record.status === 'draft'
       ? label('card.expired')
-      : planStateLabel(record.state, language)
+      : planStateLabel(record.status, language)
 
   const needle = query.trim().toLowerCase()
   const matches = (...names: string[]) =>
@@ -491,7 +491,23 @@ export function FuturesHistory({
             name: record.plan.idea.name,
           }),
           label('deleteDraft'),
-          () => onDeleteDraft(record.plan)
+          () => onDeletePlan(record.plan)
+        ),
+    },
+  ]
+  // What a finished plan sent stays in the account's records, so only Futures' own copy goes.
+  const finishedActions = (row: LiveRun): RailAction[] => [
+    {
+      label: label('deletePlan'),
+      icon: Trash2,
+      danger: true,
+      onSelect: () =>
+        void remove(
+          t('futures.deletePlanMessage', language, {
+            name: row.plan.idea.name,
+          }),
+          label('deletePlan'),
+          () => onDeletePlan(row.plan)
         ),
     },
   ]
@@ -505,141 +521,144 @@ export function FuturesHistory({
   return (
     <SplitView
       rail={
-        <SplitRail
-          label={label('historyTab')}
-          top={
-            <SearchField
-              label={label('historySearch')}
-              value={query}
-              onChange={setQuery}
-            />
-          }
-        >
-          {needle &&
-            shownChats.length + shownRuns.length + shownDrafts.length === 0 && (
-              <li className="px-2 py-2 text-xs text-vergex-muted">
-                {label('historyNoMatch')}
-              </li>
-            )}
-          <RailFolder
-            name={label('conversations')}
-            count={shownChats.length}
-            {...folderProps('chats')}
-          >
-            {shownChats.map((row) => (
-              <RailItem
-                key={row.id}
-                current={open === `chat:${row.id}`}
-                title={row.title || row.symbol}
-                name={row.title || row.symbol}
-                details={
-                  <span className="truncate text-xs font-normal text-vergex-muted">
-                    {[row.symbol, when(row.updated_at)]
-                      .filter(Boolean)
-                      .join(' · ')}
-                  </span>
-                }
-                onOpen={() => setPicked(`chat:${row.id}`)}
-                onStartRename={() => setRenaming(row.id)}
-                rename={
-                  renaming === row.id && (
-                    <NameInput
-                      row
-                      value={row.title || row.symbol}
-                      label={label('conversationName')}
-                      language={language}
-                      onSave={(title) => void rename(row.id, title)}
-                      onCancel={() => setRenaming('')}
-                    />
-                  )
-                }
-                actionsLabel={label('historyActions')}
-                actions={[
-                  {
-                    label: label('continueConversation'),
-                    icon: MessageSquare,
-                    disabled: busy,
-                    onSelect: () => onOpenConversation(row),
-                  },
-                  {
-                    label: label('renameConversation'),
-                    icon: Pencil,
-                    movesFocus: true,
-                    onSelect: () => setRenaming(row.id),
-                  },
-                  {
-                    label: label('deleteConversation'),
-                    icon: Trash2,
-                    danger: true,
-                    onSelect: () => removeConversation(row),
-                  },
-                ]}
+        entries.length > 0 && (
+          <SplitRail
+            label={label('historyTab')}
+            top={
+              <SearchField
+                label={label('historySearch')}
+                value={query}
+                onChange={setQuery}
               />
-            ))}
-          </RailFolder>
-          <RailFolder
-            name={label('finishedPlans')}
-            count={shownRuns.length}
-            {...folderProps('runs')}
+            }
           >
-            {shownRuns.map((row) => (
-              <RailItem
-                key={row.id}
-                current={open === `run:${row.id}`}
-                title={row.plan.idea.name}
-                name={row.plan.idea.name}
-                details={
-                  <span className="flex justify-between gap-2 text-xs font-normal text-vergex-muted">
-                    <span className="truncate">
-                      {planStateLabel(row.state, language)}
+            {needle &&
+              shownChats.length + shownRuns.length + shownDrafts.length ===
+                0 && (
+                <li className="px-2 py-2 text-xs text-vergex-muted">
+                  {label('historyNoMatch')}
+                </li>
+              )}
+            <RailFolder
+              name={label('conversations')}
+              count={shownChats.length}
+              {...folderProps('chats')}
+            >
+              {shownChats.map((row) => (
+                <RailItem
+                  key={row.id}
+                  current={open === `chat:${row.id}`}
+                  title={row.title || row.symbol}
+                  name={row.title || row.symbol}
+                  details={
+                    <span className="truncate text-xs font-normal text-vergex-muted">
+                      {[row.symbol, when(row.updated_at)]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </span>
-                    <span
-                      className={cn(
-                        'mono shrink-0',
-                        resultTone(results?.[row.id]?.realized_pnl)
-                      )}
-                    >
-                      {results ? (
-                        fmtUsd(results[row.id]?.realized_pnl, true)
-                      ) : (
-                        <Skeleton className="w-12" />
-                      )}
+                  }
+                  onOpen={() => setPicked(`chat:${row.id}`)}
+                  onStartRename={() => setRenaming(row.id)}
+                  rename={
+                    renaming === row.id && (
+                      <NameInput
+                        row
+                        value={row.title || row.symbol}
+                        label={label('conversationName')}
+                        language={language}
+                        onSave={(title) => void rename(row.id, title)}
+                        onCancel={() => setRenaming('')}
+                      />
+                    )
+                  }
+                  actionsLabel={label('historyActions')}
+                  actions={[
+                    {
+                      label: label('continueConversation'),
+                      icon: MessageSquare,
+                      disabled: busy,
+                      onSelect: () => onOpenConversation(row),
+                    },
+                    {
+                      label: label('renameConversation'),
+                      icon: Pencil,
+                      movesFocus: true,
+                      onSelect: () => setRenaming(row.id),
+                    },
+                    {
+                      label: label('deleteConversation'),
+                      icon: Trash2,
+                      danger: true,
+                      onSelect: () => removeConversation(row),
+                    },
+                  ]}
+                />
+              ))}
+            </RailFolder>
+            <RailFolder
+              name={label('finishedPlans')}
+              count={shownRuns.length}
+              {...folderProps('runs')}
+            >
+              {shownRuns.map((row) => (
+                <RailItem
+                  key={row.id}
+                  current={open === `run:${row.id}`}
+                  title={row.plan.idea.name}
+                  name={row.plan.idea.name}
+                  details={
+                    <span className="flex justify-between gap-2 text-xs font-normal text-vergex-muted">
+                      <span className="truncate">
+                        {planStateLabel(row.status, language)}
+                      </span>
+                      <span
+                        className={cn(
+                          'mono shrink-0',
+                          resultTone(results?.[row.id]?.realized_pnl)
+                        )}
+                      >
+                        {results ? (
+                          fmtUsd(results[row.id]?.realized_pnl, true)
+                        ) : (
+                          <Skeleton className="w-12" />
+                        )}
+                      </span>
                     </span>
-                  </span>
-                }
-                onOpen={() => setPicked(`run:${row.id}`)}
-                actionsLabel={label('historyActions')}
-                actions={[viewOnChart(row.plan)]}
-              />
-            ))}
-          </RailFolder>
-          <RailFolder
-            name={label('expiredDrafts')}
-            count={shownDrafts.length}
-            {...folderProps('drafts')}
-          >
-            {shownDrafts.map((record) => (
-              <RailItem
-                key={record.plan.id}
-                current={open === `draft:${record.plan.id}`}
-                title={record.plan.idea.name}
-                name={record.plan.idea.name}
-                details={
-                  <span className="truncate text-xs font-normal text-vergex-muted">
-                    {t(
-                      `futures.structure.${record.plan.idea.execution.kind}`,
-                      language
-                    )}{' '}
-                    · {draftState(record)}
-                  </span>
-                }
-                onOpen={() => setPicked(`draft:${record.plan.id}`)}
-                actionsLabel={label('historyActions')}
-                actions={[viewOnChart(record.plan), ...draftActions(record)]}
-              />
-            ))}
-          </RailFolder>
-        </SplitRail>
+                  }
+                  onOpen={() => setPicked(`run:${row.id}`)}
+                  actionsLabel={label('historyActions')}
+                  actions={[viewOnChart(row.plan), ...finishedActions(row)]}
+                />
+              ))}
+            </RailFolder>
+            <RailFolder
+              name={label('expiredDrafts')}
+              count={shownDrafts.length}
+              {...folderProps('drafts')}
+            >
+              {shownDrafts.map((record) => (
+                <RailItem
+                  key={record.plan.id}
+                  current={open === `draft:${record.plan.id}`}
+                  title={record.plan.idea.name}
+                  name={record.plan.idea.name}
+                  details={
+                    <span className="truncate text-xs font-normal text-vergex-muted">
+                      {t(
+                        `futures.structure.${record.plan.idea.execution.kind}`,
+                        language
+                      )}{' '}
+                      · {draftState(record)}
+                    </span>
+                  }
+                  onOpen={() => setPicked(`draft:${record.plan.id}`)}
+                  actionsLabel={label('historyActions')}
+                  actions={[viewOnChart(record.plan), ...draftActions(record)]}
+                />
+              ))}
+            </RailFolder>
+          </SplitRail>
+        )
       }
     >
       <div className="flex min-h-0 min-w-0 flex-col gap-3 max-lg:h-[80dvh] max-lg:min-h-96">
@@ -663,11 +682,12 @@ export function FuturesHistory({
           ) : run ? (
             <PlanDetail
               plan={run.plan}
-              state={planStateLabel(run.state, language)}
+              state={planStateLabel(run.status, language)}
               result={results?.[run.id]}
               orders={run.orders}
               busy={busy}
               onChoose={onChoose}
+              menu={finishedActions(run)}
             />
           ) : draft ? (
             <PlanDetail

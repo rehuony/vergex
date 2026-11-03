@@ -56,8 +56,8 @@ export function blockViews(
   totals: ActivityTotals = {},
   stream: ActivityStream | null = null
 ): Record<SceneBlock, BlockView> {
-  const running = overview.traders.filter((row) => row.is_running)
-  const stopped = overview.traders.filter((row) => !row.is_running)
+  const running = overview.traders.filter((row) => row.running)
+  const stopped = overview.traders.filter((row) => !row.running)
 
   const hosts = new Map<string, string[]>()
   overview.models.forEach((model) => {
@@ -149,8 +149,8 @@ export function blockViews(
         : label('flow.noPlans'),
       members: overview.runs.map((row) => ({
         id: row.id,
-        tone: row.state === 'needs_attention' ? 'alert' : 'on',
-        title: `${row.symbol} · ${row.state}`,
+        tone: row.status === 'needs_attention' ? 'alert' : 'on',
+        title: `${row.symbol} · ${row.status}`,
       })),
     },
     forecast: {

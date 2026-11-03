@@ -60,12 +60,10 @@ describe('locales', () => {
 describe('t', () => {
   it('fills in every use of a parameter', () => {
     const params = { seconds: 2, count: 3 }
-    expect(t('futures.activity.thought', 'en', params)).toBe(
+    expect(t('turnSteps.thought', 'en', params)).toBe(
       'Thought for 2s · 3 steps'
     )
-    expect(t('futures.activity.thought', 'zh-CN', params)).toBe(
-      '思考了 2 秒 · 3 步'
-    )
+    expect(t('turnSteps.thought', 'zh-CN', params)).toBe('思考了 2 秒 · 3 步')
   })
 
   it('shows the key rather than nothing for one that does not exist', () => {

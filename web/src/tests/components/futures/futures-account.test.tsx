@@ -87,7 +87,7 @@ beforeEach(() => {
   mocks.traders
     .mockReset()
     .mockResolvedValue([
-      { trader_id: 'trader', account_id: 'account', is_running: false },
+      { trader_id: 'trader', account_id: 'account', running: false },
     ])
   mocks.positions.mockReset().mockResolvedValue(positions)
   mocks.close.mockReset().mockResolvedValue({ message: 'accepted' })
@@ -248,7 +248,7 @@ it("offers a cancel only on orders no running plan holds, and moves a plan's exi
     id: 'run',
     account_id: 'account',
     plan_id: 'plan',
-    state: 'position_open',
+    status: 'position_open',
     plan: {
       idea: { name: 'Short', side: 'short' },
       snapshot: { symbol: 'BTCUSDT', venue: 'binance' },

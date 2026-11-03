@@ -1,6 +1,6 @@
 # ⚠️ Disclaimer / 免责声明
 
-**Last Updated / 最后更新**: January 2025
+**Last Updated / 最后更新**: November 2026
 
 ---
 

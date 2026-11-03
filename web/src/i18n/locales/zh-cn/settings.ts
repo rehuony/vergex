@@ -15,6 +15,7 @@ export const settings: typeof template = {
       trader: '交易员',
       futures: '合约交易',
       telegram: 'Telegram',
+      assistant: '助手',
       test: '测试',
     },
     failedShort: '失败',

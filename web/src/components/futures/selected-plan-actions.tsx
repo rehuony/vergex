@@ -34,7 +34,7 @@ export function SelectedPlanActions({
   const label = useFuturesLabel('selected')
   if (!record) return null
   const state = [
-    planStateLabel(run?.state || record.state, language),
+    planStateLabel(run?.status || record.status, language),
     // Only real money is called out here: a testnet plan says so when it is reviewed.
     !record.plan.snapshot.testnet && label('liveTrading'),
     accountName,
@@ -55,7 +55,7 @@ export function SelectedPlanActions({
         >
           {state}
         </p>
-        {record.state === 'draft' ? (
+        {record.status === 'draft' ? (
           <Button
             type="button"
             variant="primary"
@@ -70,7 +70,7 @@ export function SelectedPlanActions({
                 ? label('refreshReview')
                 : label('review')}
           </Button>
-        ) : run?.state === 'approved' ? (
+        ) : run?.status === 'approved' ? (
           <>
             <Button
               type="button"
@@ -94,7 +94,7 @@ export function SelectedPlanActions({
           </>
         ) : (
           run &&
-          !runSettled(run.state) && (
+          !runSettled(run.status) && (
             <Button
               type="button"
               size="sm"

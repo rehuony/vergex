@@ -79,7 +79,7 @@ func (s *Server) handleFuturesAccountClose(c *gin.Context) {
 			warning = "Execution records could not be refreshed"
 		}
 		for _, run := range runs {
-			if run.State == "completed" || run.State == "cancelled" || run.State == "expired" || run.AccountID != in.AccountID || run.Plan.Snapshot.Symbol != in.Symbol || run.Plan.Idea.Side != in.Side {
+			if run.Status == "completed" || run.Status == "cancelled" || run.Status == "expired" || run.AccountID != in.AccountID || run.Plan.Snapshot.Symbol != in.Symbol || run.Plan.Idea.Side != in.Side {
 				continue
 			}
 			if _, err := p.controller.FinishManualClose(ctx, user, run.ID); err != nil {
@@ -119,10 +119,10 @@ func (s *Server) closeFuturesAccount(ctx context.Context, user string, in accoun
 		return out, errors.New("Could not verify trader state")
 	}
 	for _, trader := range traders {
-		running := trader.IsRunning
+		running := trader.Running
 		if s.traderManager != nil {
 			if runtime, e := s.traderManager.GetTrader(trader.ID); e == nil {
-				active, _ := runtime.GetStatus()["is_running"].(bool)
+				active, _ := runtime.GetStatus()["running"].(bool)
 				running = running || active
 			}
 		}
@@ -176,7 +176,7 @@ func (s *Server) closeFuturesAccount(ctx context.Context, user string, in accoun
 	if err != nil {
 		return out, err
 	}
-	intent := futures.AccountClose{ID: in.RequestID, UserID: user, AccountID: in.AccountID, AccountKey: key, Symbol: in.Symbol, Side: in.Side, Quantity: in.Quantity, Entry: in.Entry, State: futures.AccountCloseUnconfirmed, Order: out, UpdatedAt: time.Now().UTC()}
+	intent := futures.AccountClose{ID: in.RequestID, UserID: user, AccountID: in.AccountID, AccountKey: key, Symbol: in.Symbol, Side: in.Side, Quantity: in.Quantity, Entry: in.Entry, Status: futures.AccountCloseUnconfirmed, Order: out, UpdatedAt: time.Now().UTC()}
 	if err := closes.Create(&intent); err != nil {
 		return out, errors.New("Could not record close intent; no order was sent")
 	}
@@ -213,7 +213,7 @@ func (s *Server) saveAccountClose(ex *account.Account, intent *futures.AccountCl
 	known := intent.Order.OrderID != ""
 	intent.Order, intent.UpdatedAt = order, time.Now().UTC()
 	if run.OrderEnded(order.Status) {
-		intent.State = futures.AccountCloseConfirmed
+		intent.Status = futures.AccountCloseConfirmed
 	}
 	if err := s.stores.AccountCloses.Save(intent); err != nil {
 		return errors.New("Close receipt could not be saved; check the exchange before another close")
@@ -225,7 +225,7 @@ func (s *Server) saveAccountClose(ex *account.Account, intent *futures.AccountCl
 }
 
 func (s *Server) reconcileAccountClose(ctx context.Context, ex *account.Account, client accountCloser, intent *futures.AccountClose) (account.Order, error) {
-	if intent.State == futures.AccountCloseConfirmed {
+	if intent.Status == futures.AccountCloseConfirmed {
 		return intent.Order, nil
 	}
 	result, err := client.LookupOrder(ctx, intent.Order)

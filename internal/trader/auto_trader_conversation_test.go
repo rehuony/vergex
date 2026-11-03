@@ -102,11 +102,11 @@ func waitForMessages(t *testing.T, st *Stores, conversationID string, want int) 
 
 func lastConversation(t *testing.T, st *Stores, at *AutoTrader) *agent.Conversation {
 	t.Helper()
-	conversation, err := st.Conversations.Latest(at.userID, agent.FeatureTrader, at.id)
-	if err != nil {
+	conversations, err := st.Conversations.List(at.userID, agent.FeatureTrader, 1)
+	if err != nil || len(conversations) == 0 {
 		t.Fatalf("conversation: %v", err)
 	}
-	return conversation
+	return &conversations[0]
 }
 
 func TestACycleKeepsWhatWasSaidWithItsThinking(t *testing.T) {

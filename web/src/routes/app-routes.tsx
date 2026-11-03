@@ -1,25 +1,62 @@
-import { type ReactNode, useEffect } from 'react'
+import { type ComponentType, type ReactNode, lazy, useEffect } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { ROUTES } from '@/constants/route-paths'
 import { useAuth } from '@/contexts/auth-context'
 import { useSystemConfig } from '@/hooks/use-system-config'
-// Page CSS is bundled in import order, so reordering these can change the
-// cascade: AppChrome last keeps the settings styles after the page styles.
 import { LoginPage } from '@/pages/login-page'
 import { ResetPasswordPage } from '@/pages/reset-password-page'
 import { ResetUserPage } from '@/pages/reset-user-page'
 import { SetupPage } from '@/pages/setup-page'
-import { TradersOverviewPage } from '@/pages/traders-overview-page'
-import { TradersPage } from '@/pages/traders-page'
-import { FAQPage } from '@/pages/faq-page'
-import { ForecastBacktestsPage } from '@/pages/forecast-backtests-page'
-import { ForecastPage } from '@/pages/forecast-page'
-import { ForecastSettingsPage } from '@/pages/forecast-settings-page'
-import { ForecastStrategiesPage } from '@/pages/forecast-strategies-page'
-import { FuturesPage } from '@/pages/futures-page'
 import { DashboardPage } from '@/pages/dashboard-page'
 import { AppChrome } from '@/components/common/app-chrome'
+import { AssistantDock } from '@/components/assistant/assistant-dock'
 import { LoadingScreen } from '@/components/common/loading-screen'
+
+// The Dashboard is the first screen, so only it and the sign-in pages come with the
+// first download. Every other page loads on its own, and once the first screen has
+// settled the browser fetches them all, so opening one later does not wait.
+const later: (() => Promise<unknown>)[] = [
+  () => import('@/components/settings/settings-dialog'),
+]
+const FETCH_LATER_MS = 3000
+
+function page<T>(load: () => Promise<T>, pick: (module: T) => ComponentType) {
+  later.push(load)
+  return lazy(() => load().then((module) => ({ default: pick(module) })))
+}
+
+const TradersPage = page(
+  () => import('@/pages/traders-page'),
+  (module) => module.TradersPage
+)
+const TradersOverviewPage = page(
+  () => import('@/pages/traders-overview-page'),
+  (module) => module.TradersOverviewPage
+)
+const FuturesPage = page(
+  () => import('@/pages/futures-page'),
+  (module) => module.FuturesPage
+)
+const ForecastPage = page(
+  () => import('@/pages/forecast-page'),
+  (module) => module.ForecastPage
+)
+const ForecastStrategiesPage = page(
+  () => import('@/pages/forecast-strategies-page'),
+  (module) => module.ForecastStrategiesPage
+)
+const ForecastBacktestsPage = page(
+  () => import('@/pages/forecast-backtests-page'),
+  (module) => module.ForecastBacktestsPage
+)
+const ForecastSettingsPage = page(
+  () => import('@/pages/forecast-settings-page'),
+  (module) => module.ForecastSettingsPage
+)
+const FAQPage = page(
+  () => import('@/pages/faq-page'),
+  (module) => module.FAQPage
+)
 
 function LoginRedirect({ returnUrl }: { returnUrl?: string }) {
   useEffect(() => {
@@ -36,10 +73,20 @@ export function AppRoutes() {
     window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
   }, [pathname])
   const isAuthenticated = !!user && !!token
+  useEffect(() => {
+    if (!isAuthenticated) return
+    const timer = setTimeout(
+      () => later.forEach((load) => void load().catch(() => {})),
+      FETCH_LATER_MS
+    )
+    return () => clearTimeout(timer)
+  }, [isAuthenticated])
   const guard = (path: string, element: ReactNode) =>
     isAuthenticated ? element : <LoginRedirect returnUrl={path} />
 
-  if (isLoading || configLoading) {
+  // The config only chooses between setup and sign-in, so whoever is signed in goes
+  // straight to their page rather than waiting for it.
+  if (isLoading || (configLoading && !isAuthenticated)) {
     return <LoadingScreen />
   }
 
@@ -160,6 +207,10 @@ export function AppRoutes() {
         />
         <Route path="*" element={<Navigate to={ROUTES.home} replace />} />
       </Routes>
+      {/* Beside the routes, so moving between pages keeps the conversation. */}
+      {isAuthenticated &&
+        pathname !== ROUTES.resetPassword &&
+        pathname !== ROUTES.resetUser && <AssistantDock />}
     </>
   )
 }

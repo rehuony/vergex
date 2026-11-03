@@ -69,6 +69,7 @@ export const dashboard = {
         agent_cost: 'Agent cost',
         fees: 'Fees',
         other: 'Test',
+        assistant: 'Assistant',
       },
       coinOne: '{count} coin',
       coinMany: '{count} coins',

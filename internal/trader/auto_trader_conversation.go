@@ -29,7 +29,6 @@ func (at *AutoTrader) openConversation() string {
 		ID:           uuid.NewString(),
 		UserID:       at.userID,
 		Feature:      agent.FeatureTrader,
-		SourceID:     at.id,
 		AgentModelID: at.config.AgentModelID,
 	}
 	if err := at.stores.Conversations.WithContext(ctx).Open(&conversation); err != nil {
@@ -37,6 +36,22 @@ func (at *AutoTrader) openConversation() string {
 		return ""
 	}
 	return conversation.ID
+}
+
+// forgetConversation deletes the conversation of a cycle that could not be saved, in the
+// background, since nothing can open it. A cycle that was saved after all keeps it, and
+// one this cannot reach is left for the sweep when traders next load.
+func (at *AutoTrader) forgetConversation(id string) {
+	if at.stores == nil || id == "" {
+		return
+	}
+	service.Go("trader-conversation", func() {
+		ctx, cancel := context.WithTimeout(context.Background(), conversationWait)
+		defer cancel()
+		if _, err := at.stores.Decisions.WithContext(ctx).ForgetConversations(id); err != nil {
+			logger.Warnf("⚠️ [%s] Failed to delete the conversation of a lost cycle: %v", at.name, err)
+		}
+	})
 }
 
 // keepConversation stores what was sent to the model and what it said, in the

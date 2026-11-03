@@ -89,14 +89,14 @@ func TestALeasedAccountCannotBeDeleted(t *testing.T) {
 	if leased, err := s.Leased(id); err != nil || leased {
 		t.Fatalf("new account leased = %v, err %v", leased, err)
 	}
-	lease := Lease{AccountID: id, Holder: LeaseHolderFutures, HolderID: "run-1"}
+	lease := Lease{AccountID: id, Source: SourceFutures, SourceID: "run-1"}
 	if err := db.Create(&lease).Error; err != nil {
 		t.Fatal(err)
 	}
 	if leased, err := s.Leased(id); err != nil || !leased {
 		t.Fatalf("leased = %v, err %v", leased, err)
 	}
-	if err := db.Create(&Lease{AccountID: id, Holder: LeaseHolderFutures, HolderID: "run-2"}).Error; err == nil {
+	if err := db.Create(&Lease{AccountID: id, Source: SourceFutures, SourceID: "run-2"}).Error; err == nil {
 		t.Fatal("two holders on one account")
 	}
 	if err := s.Delete(testdb.UserID, id); !errors.Is(err, gorm.ErrForeignKeyViolated) {
@@ -148,7 +148,7 @@ func TestListingNamesLeavesTheKeysUnread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(endpoints) != 1 || endpoints[0].Provider != "deepseek" || endpoints[0].CustomAPIURL != "https://example.com/v1" || endpoints[0].ID == "" {
+	if len(endpoints) != 1 || endpoints[0].Provider != "deepseek" || endpoints[0].BaseURL != "https://example.com/v1" || endpoints[0].ID == "" {
 		t.Fatalf("endpoints = %+v", endpoints)
 	}
 	if endpoints[0].APIKey != "" {

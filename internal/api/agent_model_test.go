@@ -74,7 +74,7 @@ func TestModelTestUsesFormValuesAndSavedKey(t *testing.T) {
 	}
 
 	// New provider: the typed key and model name are used, nothing is saved.
-	code, out = post(`{"agent_model_id":"openai","api_key":"sk-typed","custom_model_name":"gpt-test"}`)
+	code, out = post(`{"agent_model_id":"openai","api_key":"sk-typed","model_name":"gpt-test"}`)
 	if code != http.StatusOK || out["ok"] != true || out["model"] != "gpt-test" {
 		t.Fatalf("new-provider test = %d %v", code, out)
 	}
@@ -95,7 +95,7 @@ func TestModelTestUsesFormValuesAndSavedKey(t *testing.T) {
 	for _, body := range []string{
 		`{"agent_model_id":"nope","api_key":"k"}`,
 		`{"agent_model_id":"openai","api_key":""}`,
-		`{"agent_model_id":"openai","api_key":"k","custom_api_url":"http://127.0.0.1:9/v1"}`,
+		`{"agent_model_id":"openai","api_key":"k","base_url":"http://127.0.0.1:9/v1"}`,
 	} {
 		if code, _ := post(body); code != http.StatusBadRequest {
 			t.Errorf("%s status = %d, want 400", body, code)
@@ -163,7 +163,7 @@ func TestModelListAnswersWithTheProvidersNames(t *testing.T) {
 	}
 
 	// The form's endpoint is held to the same rules as saving one.
-	w = call(http.MethodPost, "/models/available", owner, `{"agent_model_id":"deepseek","api_key":"sk-typed","custom_api_url":"http://127.0.0.1:1/v1"}`)
+	w = call(http.MethodPost, "/models/available", owner, `{"agent_model_id":"deepseek","api_key":"sk-typed","base_url":"http://127.0.0.1:1/v1"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("a private endpoint got %d", w.Code)
 	}

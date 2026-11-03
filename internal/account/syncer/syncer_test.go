@@ -142,12 +142,12 @@ func TestAfterAnyDowntimeReadingPicksUpFromTheLastTrade(t *testing.T) {
 	s, st, ex, source := newFixture(t)
 	last := time.Now().UTC().Add(-72 * time.Hour).Truncate(time.Millisecond)
 	ledger := account.NewLedger(st.DB)
-	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ledger.RecordTrade(account.Trade{
-		AccountID: ex.ID, InstrumentID: btc, ExchangeTradeID: "9", ExchangeOrderID: "9", Side: account.SideBuy, PositionSide: account.SideLong,
+		AccountID: ex.ID, InstrumentID: btc, VenueTradeID: "9", VenueOrderID: "9", Side: account.SideBuy, PositionSide: account.SideLong,
 		Price: decimal.NewFromInt(100), Quantity: decimal.NewFromInt(1), QuoteQuantity: decimal.NewFromInt(100), ExecutedAt: last,
 	}, account.Owner{Source: account.SourceTrader, SourceID: "bot"}); err != nil {
 		t.Fatal(err)
@@ -207,14 +207,14 @@ func TestSyncGivesUnknownOrdersToWhoeverHasTheAccount(t *testing.T) {
 	s, st, ex, source := newFixture(t)
 	now := time.Now().UTC()
 
-	running := testdb.AddTrader(t, st.DB, &testdb.Trader{UserID: ex.UserID, Name: "Bot", AccountID: ex.ID, IsRunning: true})
+	running := testdb.AddTrader(t, st.DB, &testdb.Trader{UserID: ex.UserID, Name: "Bot", AccountID: ex.ID, Running: true})
 	source.fills = []account.Fill{fill("1", account.SideBuy, account.SideLong, "1", now)}
 	if err := s.Sync(ex.ID); err != nil {
 		t.Fatal(err)
 	}
 
 	// A reservation outranks a running trader.
-	if err := st.DB.Create(&account.Lease{AccountID: ex.ID, Holder: account.LeaseHolderFutures, HolderID: "run"}).Error; err != nil {
+	if err := st.DB.Create(&account.Lease{AccountID: ex.ID, Source: account.SourceFutures, SourceID: "run"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	source.fills = []account.Fill{fill("2", account.SideSell, account.SideShort, "1", now)}
@@ -286,18 +286,18 @@ func TestAnAccountIsActiveWhileAnythingCanBeTradingOnIt(t *testing.T) {
 		t.Fatalf("idle account is active: %v", ids)
 	}
 
-	trader := testdb.AddTrader(t, st.DB, &testdb.Trader{UserID: ex.UserID, Name: "Bot", AccountID: ex.ID, IsRunning: true})
+	trader := testdb.AddTrader(t, st.DB, &testdb.Trader{UserID: ex.UserID, Name: "Bot", AccountID: ex.ID, Running: true})
 	if ids := active(); len(ids) != 1 || ids[0] != ex.ID {
 		t.Fatalf("running trader: %v", ids)
 	}
-	if err := st.DB.Exec(`UPDATE trader.traders SET is_running = false WHERE id = ?`, trader.ID).Error; err != nil {
+	if err := st.DB.Exec(`UPDATE trader.traders SET running = false WHERE id = ?`, trader.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if ids := active(); len(ids) != 0 {
 		t.Fatalf("stopped trader: %v", ids)
 	}
 
-	lease := account.Lease{AccountID: ex.ID, Holder: account.LeaseHolderFutures, HolderID: "run"}
+	lease := account.Lease{AccountID: ex.ID, Source: account.SourceFutures, SourceID: "run"}
 	if err := st.DB.Create(&lease).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestAnAccountIsActiveWhileAnythingCanBeTradingOnIt(t *testing.T) {
 	// A loop stays a while after its account goes quiet, then ends.
 	now := time.Now()
 	s.now = func() time.Time { return now }
-	if err := st.DB.Table("trader.traders").Where("id = ?", trader.ID).Update("is_running", true).Error; err != nil {
+	if err := st.DB.Table("trader.traders").Where("id = ?", trader.ID).Update("running", true).Error; err != nil {
 		t.Fatal(err)
 	}
 	s.scan()
@@ -330,7 +330,7 @@ func TestAnAccountIsActiveWhileAnythingCanBeTradingOnIt(t *testing.T) {
 	if state == nil || state.stop == nil {
 		t.Fatal("no loop started")
 	}
-	if err := st.DB.Exec(`UPDATE trader.traders SET is_running = false WHERE id = ?`, trader.ID).Error; err != nil {
+	if err := st.DB.Exec(`UPDATE trader.traders SET running = false WHERE id = ?`, trader.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(stayFor / 2)
@@ -354,14 +354,14 @@ func TestSyncAsksTheExchangeOnlyAboutOrdersStillWorking(t *testing.T) {
 		t.Fatalf("nothing is working, but it asked %v", source.asked)
 	}
 
-	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
 	place := func(id string, owner account.Owner) int64 {
 		order := account.LedgerOrder{
 			AccountID: ex.ID, InstrumentID: btc, Source: owner.Source, SourceID: owner.SourceID, Role: account.RoleGrid,
-			ExchangeOrderID: id, Side: account.SideBuy, Type: "LIMIT", Status: account.OrderNew, Quantity: decimal.NewFromInt(1),
+			VenueOrderID: id, Side: account.SideBuy, Type: "LIMIT", Status: account.OrderNew, Quantity: decimal.NewFromInt(1),
 		}
 		if err := st.Ledger.RecordOrder(&order); err != nil {
 			t.Fatal(err)
@@ -465,7 +465,7 @@ func TestATradeThatCannotBeBookedHoldsNothingUpAndIsKept(t *testing.T) {
 	if err != nil || len(skipped) != 1 {
 		t.Fatalf("skipped = %+v, err %v", skipped, err)
 	}
-	if skipped[0].NativeSymbol != "OLD-USDT-SWAP" || skipped[0].ExchangeTradeID != "t1" || skipped[0].Detail != unbookable.Unbookable {
+	if skipped[0].NativeSymbol != "OLD-USDT-SWAP" || skipped[0].VenueTradeID != "t1" || skipped[0].Detail != unbookable.Unbookable {
 		t.Fatalf("skipped = %+v", skipped[0])
 	}
 	if others, err := st.Ledger.SkippedFillsSince(testdb.OtherUserID, now.Add(-time.Hour), 10); err != nil || len(others) != 0 {

@@ -160,13 +160,13 @@ func TestARunsOrdersReachTheLedgerAsTheTradesTheyAre(t *testing.T) {
 	}
 
 	entry, stop, target := orders[0], orders[1], orders[2]
-	if entry.Role != account.RoleEntry || entry.Side != account.SideBuy || entry.PositionSide != account.SideLong || entry.Type != "LIMIT" || !entry.Price.Valid || entry.ExchangeOrderID != got.Orders[0].OrderID || entry.ClientOrderID != got.Orders[0].ClientID {
+	if entry.Role != account.RoleEntry || entry.Side != account.SideBuy || entry.PositionSide != account.SideLong || entry.Type != "LIMIT" || !entry.Price.Valid || entry.VenueOrderID != got.Orders[0].OrderID || entry.ClientID != got.Orders[0].ClientID {
 		t.Fatalf("entry = %+v", entry)
 	}
 	if entry.Leverage == nil || *entry.Leverage != p.Constraints.EffectiveLeverage() || entry.Seq == nil || *entry.Seq != 0 {
 		t.Fatalf("entry leverage or place: %+v", entry)
 	}
-	if stop.Role != account.RoleStop || stop.Side != account.SideSell || stop.Type != "STOP_MARKET" || !stop.StopPrice.Valid || stop.Price.Valid || stop.ParentClientOrderID != entry.ClientOrderID {
+	if stop.Role != account.RoleStop || stop.Side != account.SideSell || stop.Type != "STOP_MARKET" || !stop.StopPrice.Valid || stop.Price.Valid {
 		t.Fatalf("stop = %+v", stop)
 	}
 	if target.Role != account.RoleTake || target.Side != account.SideSell || target.Type != "TAKE_PROFIT_MARKET" {
@@ -218,8 +218,8 @@ func TestAFinishedRunSettlesItsExitsInTheLedger(t *testing.T) {
 		t.Fatal("the run did not finish")
 	}
 	out, err := c.Get(testUser, v.ID)
-	if err != nil || out.State != "completed" || out.Orders[2].Status != "CANCELED" {
-		t.Fatalf("run = %s, orders %+v, err %v", out.State, out.Orders, err)
+	if err != nil || out.Status != "completed" || out.Orders[2].Status != "CANCELED" {
+		t.Fatalf("run = %s, orders %+v, err %v", out.Status, out.Orders, err)
 	}
 	c.ledgerWG.Wait()
 	orders := ledgerOrders(t, c, v.ID, 3)
@@ -252,8 +252,8 @@ func TestARunsLedgerWritesKeepTheirOrder(t *testing.T) {
 	}
 	c.ledgerWG.Wait()
 	for _, order := range ledgerOrders(t, c, v.ID, orders) {
-		if strings.HasPrefix(order.ExchangeOrderID, "order-") && order.Status != account.OrderCanceled {
-			t.Errorf("%s stayed %s", order.ExchangeOrderID, order.Status)
+		if strings.HasPrefix(order.VenueOrderID, "order-") && order.Status != account.OrderCanceled {
+			t.Errorf("%s stayed %s", order.VenueOrderID, order.Status)
 		}
 	}
 }
@@ -268,14 +268,14 @@ func TestALedgerFillLeavesTheRunsOwnStateAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	btc, err := instrument.Ensure(c.DB, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	btc, err := instrument.Ensure(c.DB, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
 	ledger := account.NewLedger(c.DB)
 	half := orders[0].Quantity.Div(exactdecimal.NewFromInt(2))
 	if _, err := ledger.RecordTrade(account.Trade{
-		AccountID: testAccount, InstrumentID: btc, ExchangeTradeID: "t-1", ExchangeOrderID: orders[0].ExchangeOrderID, Side: account.SideBuy, PositionSide: account.SideLong,
+		AccountID: testAccount, InstrumentID: btc, VenueTradeID: "t-1", VenueOrderID: orders[0].VenueOrderID, Side: account.SideBuy, PositionSide: account.SideLong,
 		Price: exactdecimal.NewFromInt(100000), Quantity: half, QuoteQuantity: half.Mul(exactdecimal.NewFromInt(100000)), ExecutedAt: time.Now(),
 	}, account.Owner{}); err != nil {
 		t.Fatal(err)
@@ -308,8 +308,8 @@ func TestALedgerThatCannotBeWrittenDoesNotStopARun(t *testing.T) {
 	if len(b.placed) != 3 {
 		t.Fatalf("the run stopped at %d orders: %+v", len(b.placed), got)
 	}
-	if got.State != "position_open" && got.State != "running" && got.State != "stopping" {
-		t.Fatalf("state = %q, %s", got.State, got.Error)
+	if got.Status != "position_open" && got.Status != "running" && got.Status != "stopping" {
+		t.Fatalf("state = %q, %s", got.Status, got.Error)
 	}
 }
 
@@ -372,8 +372,8 @@ func TestARefusedOrderKeepsItsOwnTimeAcrossARestart(t *testing.T) {
 	if err := c.DB.Where("id = ?", v.ID).First(&run).Error; err != nil {
 		t.Fatal(err)
 	}
-	if run.State != "needs_attention" || !run.UpdatedAt.After(before[0].UpdatedAt) {
-		t.Fatalf("the restart left the run at %s, %v", run.State, run.UpdatedAt)
+	if run.Status != "needs_attention" || !run.UpdatedAt.After(before[0].UpdatedAt) {
+		t.Fatalf("the restart left the run at %s, %v", run.Status, run.UpdatedAt)
 	}
 	after, err := RefusedSince(c.DB, since, 10)
 	if err != nil {

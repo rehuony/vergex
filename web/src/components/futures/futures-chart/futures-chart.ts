@@ -4,16 +4,15 @@ import {
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
-  type UTCTimestamp,
 } from 'lightweight-charts'
 import type {
   ChartContext,
   Drawing,
-  ForecastCandle,
   HoldingLine,
   Plan,
   FuturesChart,
 } from '@/api/futures'
+import type { ChartForecast } from '@/api/forecast'
 import { THEME_EVENT } from '@/contexts/theme-context'
 import { activeLanguage, t } from '@/i18n'
 import {
@@ -31,11 +30,12 @@ import {
   toVolume,
 } from './futures-chart-data'
 import {
-  addProjectionSeries,
+  ForecastBand,
+  addHorizonSeries,
   candleColors,
   colors,
   createMarketChart,
-  projectionColors,
+  horizonPoints,
   themeOptions,
 } from '@/components/market-chart/market-chart-surface'
 import {
@@ -88,7 +88,8 @@ export class WorkspaceChart implements FuturesChart {
   private chart: IChartApi | null = null
   private candles: ISeriesApi<'Candlestick'> | null = null
   private volume: ISeriesApi<'Histogram'> | null = null
-  private projection: ISeriesApi<'Candlestick'> | null = null
+  private horizon: ISeriesApi<'Line'> | null = null
+  private readonly band = new ForecastBand()
   private overlay: OverlayPrimitive
   private loadError = ''
   private disposed = false
@@ -171,7 +172,8 @@ export class WorkspaceChart implements FuturesChart {
     window.addEventListener(THEME_EVENT, this.repaintTheme)
     this.candles = candles
     this.volume = volume
-    this.projection = addProjectionSeries(chart)
+    this.horizon = addHorizonSeries(chart)
+    candles.attachPrimitive(this.band)
   }
 
   private step() {
@@ -254,7 +256,8 @@ export class WorkspaceChart implements FuturesChart {
     this.exhausted = false
     this.lastReceived = 0
     this.setRows([])
-    this.projection?.setData([])
+    this.horizon?.setData([])
+    this.band.set(null)
     this.onAvailability(false, 'Loading ' + this.symbol + ' candles…')
     this.onStatus('Connecting market feed…', false)
     this.loadPrecision(scene)
@@ -468,14 +471,14 @@ export class WorkspaceChart implements FuturesChart {
     await this.loadScene(scene)
   }
 
-  // setForecast draws simulated candles, if they are for what the chart shows now.
-  // They share the bar spacing of the real ones and only extend past them, so plan
-  // levels and zones, placed by bar index, stay where they are.
+  // setForecast draws the forecast band, if it is for what the chart shows now. Its
+  // horizon shares the bar spacing of the real candles and only extends past them, so
+  // plan levels and zones, placed by bar index, stay where they are.
   setForecast(
     venue: string,
     symbol: string,
     interval: string,
-    rows: ForecastCandle[]
+    forecast: ChartForecast | null
   ) {
     if (
       venue !== this.venue ||
@@ -485,15 +488,8 @@ export class WorkspaceChart implements FuturesChart {
       return
     // New bars at the right edge would otherwise scroll the chart under the user.
     const view = this.chart?.timeScale().getVisibleLogicalRange()
-    this.projection?.setData(
-      rows.map((row) => ({
-        time: row.time as UTCTimestamp,
-        open: row.open,
-        high: row.high,
-        low: row.low,
-        close: row.close,
-      }))
-    )
+    this.horizon?.setData(horizonPoints(forecast))
+    this.band.set(forecast)
     if (view) this.chart?.timeScale().setVisibleLogicalRange(view)
   }
 
@@ -718,7 +714,7 @@ export class WorkspaceChart implements FuturesChart {
   private readonly repaintTheme = () => {
     this.chart?.applyOptions(themeOptions())
     this.candles?.applyOptions(candleColors())
-    this.projection?.applyOptions(projectionColors())
+    this.band.repaint()
     this.volume?.setData(this.rows.map(toVolume))
     this.render()
   }
@@ -734,7 +730,7 @@ export class WorkspaceChart implements FuturesChart {
     this.chart = null
     this.candles = null
     this.volume = null
-    this.projection = null
+    this.horizon = null
     this.root?.remove()
     this.root = null
   }

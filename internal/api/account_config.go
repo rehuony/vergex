@@ -384,11 +384,16 @@ func (s *Server) deleteAccountAndHistory(userID, accountID string) error {
 			return err
 		}
 		for _, id := range ids {
-			if err := plans.Delete(id); err != nil && !errors.Is(err, futures.ErrPlanRan) {
+			if err := plans.Delete(id); err != nil && !errors.Is(err, futures.ErrPlanAtWork) {
 				return err
 			}
 		}
-		return agent.NewConversationStore(tx).DeleteByContext(userID, agent.FeatureFutures, futuresConversationAccount, accountID)
+		rows, err := agent.NewConversationStore(tx).ListByContext(userID, agent.FeatureFutures, futuresConversationAccount, accountID, 0)
+		if err != nil {
+			return err
+		}
+		_, err = deleteConversationsIn(tx, userID, rows)
+		return err
 	})
 }
 

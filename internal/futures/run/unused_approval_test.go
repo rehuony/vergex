@@ -56,14 +56,14 @@ func TestReplaceOnlyExactUnusedApproval(t *testing.T) {
 				t.Fatal(e)
 			}
 			if scenario == "replace" {
-				if err != nil || got.State != "approved" || previous.State != "cancelled" || lease.HolderID != got.ID {
-					t.Fatalf("replacement failed: %v %s %s", err, got.State, previous.State)
+				if err != nil || got.Status != "approved" || previous.Status != "cancelled" || lease.SourceID != got.ID {
+					t.Fatalf("replacement failed: %v %s %s", err, got.Status, previous.Status)
 				}
 				if _, e := c.Execute(context.Background(), testUser, old.ID, old.ApprovalHash); e == nil {
 					t.Fatal("superseded approval executed")
 				}
-			} else if err == nil || previous.State != old.State || lease.HolderID != old.ID {
-				t.Fatalf("changed an unrelated or active approval: %v %s", err, previous.State)
+			} else if err == nil || previous.Status != old.Status || lease.SourceID != old.ID {
+				t.Fatalf("changed an unrelated or active approval: %v %s", err, previous.Status)
 			}
 			if len(b.placed) != 0 || len(b.cancelled) != 0 {
 				t.Fatal("replacement touched exchange orders")
@@ -114,10 +114,29 @@ func TestExpiredUnusedApprovalReleasesDuringStateRead(t *testing.T) {
 	rows, err := c.ListContext(context.Background(), testUser)
 	var leases int64
 	c.DB.Model(&account.Lease{}).Count(&leases)
-	if err != nil || len(rows) != 1 || rows[0].State != "expired" || leases != 0 {
+	if err != nil || len(rows) != 1 || rows[0].Status != "expired" || leases != 0 {
 		t.Fatalf("expired approval still reserved: %v %+v", err, rows)
 	}
 	if len(b.placed) != 0 || len(b.cancelled) != 0 {
 		t.Fatal("expiry changed exchange orders")
+	}
+}
+
+func TestARunThatCannotBeReadHidesTheOthersOnlyWhileItMayStillTrade(t *testing.T) {
+	c, _, _, p := setup(t, "limit")
+	v := approved(t, c, p)
+	// Settled, it sends nothing more: the list leaves it out and goes on.
+	if err := c.DB.Model(&Run{}).Where("id = ?", v.ID).Updates(map[string]any{"status": "completed", "plan_hash": "damaged"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := c.ListContext(context.Background(), testUser); err != nil || len(rows) != 0 {
+		t.Fatalf("a settled run that cannot be read: %v %+v", err, rows)
+	}
+	// Not settled, it may still have live orders, so nothing reads as if it were not there.
+	if err := c.DB.Model(&Run{}).Where("id = ?", v.ID).Update("status", "running").Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ListContext(context.Background(), testUser); err == nil {
+		t.Fatal("a run at work that cannot be read was left out")
 	}
 }

@@ -1,17 +1,16 @@
 import { useRef, type MutableRefObject, type ReactNode } from 'react'
 import { SquarePen } from 'lucide-react'
+import { ChatComposer } from '@/components/common/chat-composer'
+import { ChatThread, type ChatMessage } from '@/components/common/chat-thread'
+import { ModelPicker } from '@/components/common/model-picker'
 import { Segmented } from '@/components/common/segmented'
+import { TurnSteps, type ActivityItem } from '@/components/common/turn-steps'
 import { SettingsLink } from '@/components/settings/settings-link'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { AppSelect } from '@/components/ui/select'
 import { useLanguage } from '@/contexts/language-context'
-import { connectionModel, useModelChoices } from '@/hooks/use-connections'
 import { t } from '@/i18n'
 import type { AgentModel } from '@/types'
-import { AssistantThread } from './assistant-thread'
-import type { ActivityItem } from './futures-activity'
-import type { ChatMessage } from './use-futures-assistant'
 
 // What each suggestion puts in the input, to edit or send.
 const STARTERS = [
@@ -21,9 +20,6 @@ const STARTERS = [
 ]
 
 export type AssistantPane = 'chat' | 'plans'
-
-// A model picked from the list: which connection, and which of its provider's models.
-const choiceValue = (id: string, name: string) => `${id} ${name}`
 
 interface FuturesAssistantProps {
   pane: AssistantPane
@@ -86,8 +82,6 @@ export function FuturesAssistant({
   const { language } = useLanguage()
   const label = (key: string) => t(`futures.${key}`, language)
   const input = useRef<HTMLTextAreaElement>(null)
-  const choices = useModelChoices(models)
-  const current = models.find((model) => model.id === modelID)
   return (
     <aside
       id="futures-assistant"
@@ -122,11 +116,11 @@ export function FuturesAssistant({
         </Button>
       </header>
       <div hidden={pane !== 'chat'} className="min-h-0 flex-1">
-        <AssistantThread
+        <ChatThread
           messages={messages}
-          trace={trace}
+          steps={<TurnSteps items={trace} busy={futuresBusy} />}
           streaming={streaming}
-          futuresBusy={futuresBusy}
+          changes={[trace]}
           followRef={followRef}
         />
       </div>
@@ -160,59 +154,24 @@ export function FuturesAssistant({
               ))}
             </div>
           )}
-          <form
-            onSubmit={(event) => {
-              event.preventDefault()
-              onSend()
-            }}
-          >
-            <div className="rounded-md border border-vergex-line transition-colors focus-within:border-vergex-ink/40">
-              <textarea
-                ref={input}
-                aria-label={label('tradeIdea')}
-                className="block max-h-40 min-h-10 w-full resize-none border-0 bg-transparent px-3 py-2 text-[13px] leading-relaxed text-vergex-ink shadow-none outline-none [field-sizing:content] placeholder:text-vergex-faint focus:bg-transparent focus:shadow-none max-sm:text-base"
-                value={instruction}
-                onChange={(event) => onInstructionChange(event.target.value)}
-                placeholder={label('composerHint')}
-                maxLength={8000}
-                disabled={busy}
-                onKeyDown={(event) => {
-                  // Enter while composing Chinese picks a word; it does not send.
-                  if (
-                    event.key === 'Enter' &&
-                    !event.shiftKey &&
-                    !event.nativeEvent.isComposing
-                  ) {
-                    event.preventDefault()
-                    onSend()
-                  }
-                }}
-              />
-              <div className="flex items-center gap-2 p-1.5">
+          <ChatComposer
+            label={label('tradeIdea')}
+            placeholder={label('composerHint')}
+            value={instruction}
+            onChange={onInstructionChange}
+            onSubmit={() => onSend()}
+            disabled={busy}
+            inputRef={input}
+            controls={
+              <>
                 {models.length > 0 ? (
-                  <AppSelect
-                    aria-label={label('agentModel')}
-                    className="mr-auto h-8 w-auto min-w-0 border-transparent px-2 text-[13px] hover:bg-vergex-surface-muted max-sm:h-10"
-                    value={choiceValue(
-                      modelID,
-                      modelName || (current ? connectionModel(current) : '')
-                    )}
+                  <ModelPicker
+                    label={label('agentModel')}
+                    models={models}
+                    modelID={modelID}
+                    modelName={modelName}
                     disabled={busy}
-                    onChange={(value) => {
-                      const { id, name } = choices.find(
-                        (choice) =>
-                          choiceValue(choice.id, choice.name) === value
-                      )!
-                      const model = models.find((row) => row.id === id)
-                      onModelChange(
-                        id,
-                        model && name === connectionModel(model) ? '' : name
-                      )
-                    }}
-                    options={choices.map(({ id, name }) => ({
-                      value: choiceValue(id, name),
-                      label: name,
-                    }))}
+                    onChange={onModelChange}
                   />
                 ) : (
                   <SettingsLink
@@ -252,9 +211,9 @@ export function FuturesAssistant({
                     {label('send')}
                   </Button>
                 )}
-              </div>
-            </div>
-          </form>
+              </>
+            }
+          />
         </div>
       )}
     </aside>

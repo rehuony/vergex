@@ -17,6 +17,7 @@ import (
 	"vergex/internal/account"
 	"vergex/internal/futures"
 	"vergex/internal/futures/plan"
+	"vergex/internal/logger"
 )
 
 type Market interface {
@@ -43,7 +44,7 @@ type Controller struct {
 func New(db *gorm.DB, f Factory, m Market) (*Controller, error) {
 	c := &Controller{DB: db, Factory: f, Market: m, workers: map[string]context.CancelFunc{}}
 	// Restart never silently releases overdue TWAP slices or repeats submissions.
-	if e := db.Model(&Run{}).Where("state IN ?", []string{"starting", "running", "stopping", "position_open"}).Updates(map[string]any{"state": "needs_attention", "error": "Service restarted: reconcile submitted orders only; no automatic replay or new entries", "updated_at": time.Now().UTC()}).Error; e != nil {
+	if e := db.Model(&Run{}).Where("status IN ?", []string{"starting", "running", "stopping", "position_open"}).Updates(map[string]any{"status": "needs_attention", "error": "Service restarted: reconcile submitted orders only; no automatic replay or new entries", "updated_at": time.Now().UTC()}).Error; e != nil {
 		return nil, e
 	}
 	return c, nil
@@ -110,12 +111,19 @@ func (c *Controller) ListContext(ctx context.Context, user string) ([]View, erro
 		return nil, e
 	}
 	out := []View{}
-	for _, run := range loaded {
+	for i, run := range loaded {
 		v, e := run.view, run.err
 		if e != nil {
+			// A run that has settled sends nothing more, so one that cannot be read is left out
+			// rather than hide all the others. One that has not may still have live orders,
+			// and stays an error.
+			if futures.RunSettled(rows[i].Status) {
+				logger.Warnf("Futures: left a finished run out of the list, as it cannot be read: run=%s err=%v", rows[i].ID, e)
+				continue
+			}
 			return nil, e
 		}
-		if v.State == "approved" && !time.Now().Before(v.Plan.Expires) {
+		if v.Status == "approved" && !time.Now().Before(v.Plan.Expires) {
 			v, e = c.CheckStatus(ctx, user, v.ID)
 			if e != nil {
 				return nil, e
@@ -165,10 +173,10 @@ func (c *Controller) ApproveReplacing(ctx context.Context, user, planID, hash, p
 	// new lease. The transaction below still arbitrates concurrent approvals.
 	var previousLease account.Lease
 	if err := c.DB.Where("account_id = ?", d.AccountID).First(&previousLease).Error; err == nil {
-		if _, err = c.CheckStatus(ctx, user, previousLease.HolderID); err != nil {
+		if _, err = c.CheckStatus(ctx, user, previousLease.SourceID); err != nil {
 			return View{}, err
 		}
-		lock := c.runLock(previousLease.HolderID)
+		lock := c.runLock(previousLease.SourceID)
 		if err = lock.LockContext(ctx); err != nil {
 			return View{}, err
 		}
@@ -177,21 +185,21 @@ func (c *Controller) ApproveReplacing(ctx context.Context, user, planID, hash, p
 		return View{}, err
 	}
 	now := time.Now().UTC()
-	r := Run{ID: uuid.NewString(), UserID: user, AccountID: d.AccountID, AccountKey: acct, PlanID: p.ID, PlanHash: p.Hash, ApprovalHash: digest(p, user, d.AccountID, acct), State: "approved", ApprovedAt: now, UpdatedAt: now}
+	r := Run{ID: uuid.NewString(), UserID: user, AccountID: d.AccountID, AccountKey: acct, PlanID: p.ID, PlanHash: p.Hash, ApprovalHash: digest(p, user, d.AccountID, acct), Status: "approved", ApprovedAt: now, UpdatedAt: now}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e = c.DB.Transaction(func(tx *gorm.DB) error {
 		var lease account.Lease
 		if err := tx.Where("account_id = ?", d.AccountID).First(&lease).Error; err == nil {
 			var previous Run
-			if lease.HolderID != previousLease.HolderID || tx.Where("id = ? AND user_id = ?", lease.HolderID, user).First(&previous).Error != nil {
+			if lease.SourceID != previousLease.SourceID || tx.Where("id = ? AND user_id = ?", lease.SourceID, user).First(&previous).Error != nil {
 				return errors.New("Account approval changed. Refresh and review the order again.")
 			}
 			v, er := loadRun(tx, previous)
 			if er != nil {
 				return er
 			}
-			if v.PlanID == p.ID || v.State != "approved" || v.ID != replaceID || v.ApprovalHash != replaceHash {
+			if v.PlanID == p.ID || v.Status != "approved" || v.ID != replaceID || v.ApprovalHash != replaceHash {
 				return errors.New("An earlier trade is reserving this account. Review the current trade before confirming a new order.")
 			}
 			if er = retireUnusedApproval(tx, v, "cancelled", "Unused approval replaced by a newly confirmed order; no exchange order was submitted."); er != nil {
@@ -207,7 +215,7 @@ func (c *Controller) ApproveReplacing(ctx context.Context, user, planID, hash, p
 		if res.RowsAffected != 1 {
 			return errors.New("only an unchanged draft can be approved")
 		}
-		if er := tx.Create(&account.Lease{AccountID: d.AccountID, Holder: account.LeaseHolderFutures, HolderID: r.ID}).Error; er != nil {
+		if er := tx.Create(&account.Lease{AccountID: d.AccountID, Source: account.SourceFutures, SourceID: r.ID}).Error; er != nil {
 			return errors.New("An earlier trade is reserving this account. Open Positions & orders to check its status or cancel its unused approval.")
 		}
 		return tx.Create(&r).Error
@@ -316,14 +324,14 @@ func (c *Controller) Execute(ctx context.Context, user, id, hash string) (out Vi
 	if hash != v.ApprovalHash {
 		return v, errors.New("locked approval hash required")
 	}
-	if v.State != "approved" {
-		if v.State == "cancelled" || v.State == "expired" {
+	if v.Status != "approved" {
+		if v.Status == "cancelled" || v.Status == "expired" {
 			return v, errors.New("This approval is no longer valid. Review the plan again before placing an order.")
 		}
 		return v, nil
 	}
 	defer func() {
-		if err == nil || v.State != "approved" || v.StartedAt != nil || len(v.Orders) != 0 {
+		if err == nil || v.Status != "approved" || v.StartedAt != nil || len(v.Orders) != 0 {
 			return
 		}
 		reason := "Order not submitted: " + err.Error()
@@ -395,7 +403,7 @@ func (c *Controller) Execute(ctx context.Context, user, id, hash string) (out Vi
 	}
 	v.StartedAt = &now
 	v.Deadline = &deadline
-	v.State = "running"
+	v.Status = "running"
 	v.Orders = []Order{}
 	specs := v.Plan.Orders
 	if len(specs) == 0 {
@@ -460,7 +468,7 @@ func (c *Controller) ReconcileContext(ctx context.Context, user, id string) (Vie
 	if e != nil {
 		return v, e
 	}
-	if v.State == "needs_attention" || v.State == "position_open" {
+	if v.Status == "needs_attention" || v.Status == "position_open" {
 		c.launch(id, user)
 	}
 	return v, nil
@@ -484,10 +492,10 @@ func (c *Controller) StopContext(ctx context.Context, user, id, hash string) (Vi
 	if hash != v.ApprovalHash {
 		return v, errors.New("locked approval hash required")
 	}
-	if v.State == "approved" || v.State == "expired" {
-		v.State = "cancelled"
+	if v.Status == "approved" || v.Status == "expired" {
+		v.Status = "cancelled"
 		e = c.DB.Transaction(func(tx *gorm.DB) error {
-			if e := tx.Model(&Run{}).Where("id = ? AND user_id = ?", v.ID, user).Updates(map[string]any{"state": "cancelled", "updated_at": time.Now().UTC()}).Error; e != nil {
+			if e := tx.Model(&Run{}).Where("id = ? AND user_id = ?", v.ID, user).Updates(map[string]any{"status": "cancelled", "updated_at": time.Now().UTC()}).Error; e != nil {
 				return e
 			}
 			if e := releaseLease(tx, v.ID); e != nil {
@@ -497,10 +505,10 @@ func (c *Controller) StopContext(ctx context.Context, user, id, hash string) (Vi
 		})
 		return v, e
 	}
-	if v.State == "completed" || v.State == "cancelled" {
+	if v.Status == "completed" || v.Status == "cancelled" {
 		return v, nil
 	}
-	v.State = "stopping"
+	v.Status = "stopping"
 	if e = c.save(&v); e != nil {
 		return v, e
 	}
@@ -532,18 +540,18 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 	if e != nil {
 		return true
 	}
-	if v.State == "completed" || v.State == "cancelled" || v.State == "approved" {
+	if v.Status == "completed" || v.Status == "cancelled" || v.Status == "approved" {
 		return true
 	}
 	if v.StartedAt == nil {
-		v.State = "needs_attention"
+		v.Status = "needs_attention"
 		v.Error = "Execution has no valid start record; no orders will be submitted"
 		_ = c.save(&v)
 		return true
 	}
 	broker, key, e := c.Factory(ctx, user, v.AccountID)
 	if e != nil || key != v.AccountKey || !brokerFits(broker, v.Plan.Snapshot) {
-		v.State = "needs_attention"
+		v.Status = "needs_attention"
 		v.Error = "Account unavailable or identity changed. Further entries stopped; check Vergex account settings."
 		_ = c.save(&v)
 		return true
@@ -551,16 +559,16 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 	observationsValid, receiptsValid := true, true
 	attention := func(message string) {
 		observationsValid = false
-		v.State = "needs_attention"
+		v.Status = "needs_attention"
 		v.Error = message
 	}
-	if v.Deadline != nil && time.Now().After(*v.Deadline) && v.State == "running" {
-		v.State = "stopping"
+	if v.Deadline != nil && time.Now().After(*v.Deadline) && v.Status == "running" {
+		v.Status = "stopping"
 	}
 	for i := range v.Orders {
 		o := &v.Orders[i]
 		if o.Role != "entry" && (cmp(o.Filled, "0") > 0 || o.Status == "TRIGGERED") {
-			v.State = "stopping"
+			v.Status = "stopping"
 		}
 		if o.Status == "scheduled" || o.Status == "FILLED" || o.Status == "CANCELED" || o.Status == "REJECTED" || o.Status == "EXPIRED" {
 			continue
@@ -583,7 +591,7 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 		}
 		*o = result
 		if o.Role != "entry" && (cmp(o.Filled, "0") > 0 || o.Status == "TRIGGERED") {
-			v.State = "stopping"
+			v.Status = "stopping"
 		}
 	}
 	// Persist observed fills before constructing protectors; a restart can safely
@@ -680,7 +688,7 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 			receipt.ParentID = entry.ClientID
 			v.Orders[len(v.Orders)-1] = receipt
 			if receipt.Status == "TRIGGERED" || cmp(receipt.Filled, "0") > 0 {
-				v.State = "stopping"
+				v.Status = "stopping"
 			}
 			if e = c.save(&v); e != nil {
 				return true
@@ -688,7 +696,7 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 		}
 	}
 	finishReplacements(ctx, broker, &v, attention)
-	if v.State == "stopping" || v.State == "needs_attention" {
+	if v.Status == "stopping" || v.Status == "needs_attention" {
 		for i := 0; i < entries; i++ {
 			o := &v.Orders[i]
 			if o.Status == "scheduled" {
@@ -702,7 +710,7 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 			}
 		}
 	}
-	if v.State == "running" {
+	if v.Status == "running" {
 		for i := 0; i < entries; i++ {
 			o := &v.Orders[i]
 			if o.Status != "scheduled" {
@@ -793,7 +801,7 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 			}
 		}
 		if er == nil {
-			v.State = "completed"
+			v.Status = "completed"
 			v.Error = ""
 			e = c.DB.Transaction(func(tx *gorm.DB) error {
 				// Keep all durable lifecycle writes on the same transaction.
@@ -812,7 +820,7 @@ func (c *Controller) step(ctx context.Context, user, id string) bool {
 		}
 	}
 	if !pending && er == nil && observationsValid && confirmedProtectedPosition(v.Orders, account) {
-		v.State = "position_open"
+		v.Status = "position_open"
 		v.Error = ""
 	}
 	if e = c.save(&v); e != nil {

@@ -1,41 +1,44 @@
 import type { ReactNode } from 'react'
 import type { Overview } from '@/api/dashboard'
 import { StatStrip, type Stat } from '@/components/common/figures'
+import { Skeleton } from '@/components/ui/skeleton'
 import { fmtUsd } from '@/utils/trader-format'
 import { equityText } from './flow-members'
 
 type Label = (key: string, params?: Record<string, string | number>) => string
 
 // What the page answers first: how the money stands and whether anything needs the user.
+// Until the overview is read the names stand with skeletons where the figures will be.
 export function OverviewFigures({
   overview,
   attention,
   label,
 }: {
-  overview: Overview
+  overview: Overview | undefined
   /** Always the last cell, as a problem must not move the rest. */
   attention: ReactNode
   label: Label
 }) {
-  const today = overview.realized_today
-  const running = overview.traders.filter((row) => row.is_running).length
+  const today = overview?.realized_today
+  const running = overview?.traders.filter((row) => row.running).length
+  const reading = <Skeleton className="w-20" />
   const stats: Stat[] = [
     {
       name: label('figures.equity'),
-      value: equityText(overview),
+      value: overview ? equityText(overview) : reading,
     },
     {
       name: label('figures.today'),
-      value: fmtUsd(today ?? undefined, true),
+      value: overview ? fmtUsd(today ?? undefined, true) : reading,
       gain: today,
     },
     {
       name: label('figures.running'),
-      value: `${running} / ${overview.traders.length}`,
+      value: overview ? `${running} / ${overview.traders.length}` : reading,
     },
     {
       name: label('figures.positions'),
-      value: overview.positions.length,
+      value: overview ? overview.positions.length : reading,
     },
   ]
   return (

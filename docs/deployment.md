@@ -6,7 +6,7 @@ For remote access, add nginx on the host. It has three jobs:
 
 1. Terminate TLS and forward public port 443 to `127.0.0.1:8000`.
 2. Add access control on top of the application login: basic auth, an IP allowlist, or both.
-3. Avoid buffering streams: the Futures agent chat and market feed use SSE.
+3. Avoid buffering streams: the assistant, the Futures agent chat and the market feed use SSE.
 
 Vergex has no setup script for this. Adapt the config below and place it at `/etc/nginx/conf.d/vergex.conf`.
 

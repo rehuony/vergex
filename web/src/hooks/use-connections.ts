@@ -23,7 +23,7 @@ export const MODEL_CATALOG_KEY = 'model-catalog'
 
 // The model a connection is set to: the name given to it, else its provider's default.
 export const connectionModel = (model: AgentModel) =>
-  model.customModelName || model.defaultModel || model.name
+  model.model_name || model.default_model || model.name
 
 // What each connection's provider offers, its own model first. Providers rarely change
 // this, and a provider that will not say leaves just the model it is set to.
@@ -66,7 +66,7 @@ export const useTraders = () =>
 // a disabled one stays listed so it can be edited again.
 export const configuredModels = (models: AgentModel[] = []) =>
   models.filter(
-    (m) => m.enabled || m.has_api_key || Boolean(m.customApiUrl?.trim())
+    (m) => m.enabled || m.has_api_key || Boolean(m.base_url?.trim())
   )
 
 export const configuredAccounts = (accounts: Account[] = []) =>

@@ -8,6 +8,11 @@ import { Segmented } from '@/components/common/segmented'
 import { SettingActions } from '@/components/common/setting-row'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  mergeFormValue,
+  useAssistantForm,
+  type AssistantFormField,
+} from '@/hooks/use-assistant-page'
 import { useAccounts, useModelConfigs } from '@/hooks/use-connections'
 import { t, type Language } from '@/i18n'
 import type {
@@ -23,6 +28,12 @@ import { GridSection, gridProblem } from './grid-section'
 import { MarketDataSection } from './market-data-section'
 import { PromptSection } from './prompt-section'
 import { RiskProfileSection } from './risk-profile-section'
+import {
+  MAX_INTERVAL,
+  MIN_INTERVAL,
+  accountLabel,
+  modelLabel,
+} from './trader-dialog'
 import { useTokenEstimate } from './use-token-estimate'
 
 type SettingsPart = 'basic' | 'coins' | 'risk' | 'market' | 'prompt' | 'grid'
@@ -32,11 +43,14 @@ type SettingsPart = 'basic' | 'coins' | 'risk' | 'market' | 'prompt' | 'grid'
 export function TraderSettings({
   traderId,
   running,
+  active = true,
   language,
   onDirty,
 }: {
   traderId: string
   running: boolean
+  // Whether its tab is the one showing: it stays mounted to keep a draft.
+  active?: boolean
   language: Language
   // Says whether there is a draft worth asking about before leaving this trader.
   onDirty?: (dirty: boolean) => void
@@ -98,6 +112,95 @@ export function TraderSettings({
   }
 
   const problem = grid ? gridProblem(grid, language) : ''
+
+  const dialogLabel = (key: string) => t(`traderDialog.${key}`, language)
+  // What a running trader runs with is locked, as it is by hand.
+  useAssistantForm(
+    active && basic && config
+      ? {
+          id: 'trader.settings',
+          title: t('assistant.formTrader', language),
+          fields: [
+            ...(running
+              ? []
+              : ([
+                  {
+                    name: 'model',
+                    label: dialogLabel('model'),
+                    type: 'choice',
+                    options: (models.data ?? []).map((model) => ({
+                      value: model.id,
+                      label: modelLabel(model),
+                    })),
+                    value: basic.model,
+                  },
+                  {
+                    name: 'account',
+                    label: dialogLabel('account'),
+                    type: 'choice',
+                    options: (accounts.data ?? []).map((account) => ({
+                      value: account.id,
+                      label: accountLabel(account, accounts.data),
+                    })),
+                    value: basic.account,
+                  },
+                  {
+                    name: 'interval',
+                    label: dialogLabel('interval'),
+                    type: 'number',
+                    min: MIN_INTERVAL,
+                    max: MAX_INTERVAL,
+                    value: basic.interval,
+                  },
+                  {
+                    name: 'margin',
+                    label: dialogLabel('margin'),
+                    type: 'choice',
+                    options: [
+                      { value: 'cross', label: dialogLabel('marginCross') },
+                      {
+                        value: 'isolated',
+                        label: dialogLabel('marginIsolated'),
+                      },
+                    ],
+                    value: basic.cross ? 'cross' : 'isolated',
+                  },
+                ] as AssistantFormField[])),
+            {
+              name: 'config',
+              label: t('assistant.formConfig', language),
+              type: 'object',
+              value: config,
+            },
+          ],
+          apply: (values) => {
+            if (values.config)
+              setDraft(
+                mergeFormValue(config, values.config) as
+                  | AgentConfig
+                  | GridConfig
+              )
+            if (running) return
+            setBasicDraft({
+              model:
+                typeof values.model === 'string' ? values.model : basic.model,
+              account:
+                typeof values.account === 'string'
+                  ? values.account
+                  : basic.account,
+              interval:
+                typeof values.interval === 'number'
+                  ? values.interval
+                  : basic.interval,
+              cross:
+                typeof values.margin === 'string'
+                  ? values.margin === 'cross'
+                  : basic.cross,
+            })
+          },
+        }
+      : null
+  )
 
   // Pressing it with nothing changed, or with a problem the bar is already naming, does
   // nothing.

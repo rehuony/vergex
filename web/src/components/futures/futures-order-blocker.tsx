@@ -48,10 +48,10 @@ export function FuturesOrderBlocker({
         (p) => nativeMarket(p.symbol, venue) === nativeMarket(symbol, venue)
       )
     : undefined
-  const approved = run.state === 'approved'
-  const active = ['starting', 'running', 'stopping'].includes(run.state)
+  const approved = run.status === 'approved'
+  const active = ['starting', 'running', 'stopping'].includes(run.status)
   const needsCheck = !active && !approved
-  const unverified = Boolean(position && run.state === 'needs_attention')
+  const unverified = Boolean(position && run.status === 'needs_attention')
   const title = position
     ? label('positionOpen', {
         symbol,
@@ -61,7 +61,7 @@ export function FuturesOrderBlocker({
     : approved
       ? label('notSubmitted', { symbol })
       : active
-        ? run.state === 'stopping'
+        ? run.status === 'stopping'
           ? label('stopping')
           : label('inProgress')
         : fresh
@@ -81,7 +81,7 @@ export function FuturesOrderBlocker({
         : fresh
           ? label('freshDetail')
           : label('staleDetail')
-  const calm = (position && run.state !== 'needs_attention') || active
+  const calm = (position && run.status !== 'needs_attention') || active
   const note = unverified ? `${label('exitsUnverified')} ${detail}` : detail
   // These leave the tab the line is on, so what they opened from closes first.
   const leaving = (action?: () => void) => () => {

@@ -6,6 +6,7 @@ import { traders } from './traders'
 import { dashboard } from './dashboard'
 import { futures } from './futures'
 import { forecast } from './forecast'
+import { assistant } from './assistant'
 
 export const zhCN: typeof en = {
   ...common,
@@ -15,4 +16,5 @@ export const zhCN: typeof en = {
   ...dashboard,
   ...futures,
   ...forecast,
+  ...assistant,
 }

@@ -9,6 +9,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { Skeleton } from '@/components/ui/skeleton'
 import { buildFuturesPath } from '@/constants/route-paths'
 import { t, type Language } from '@/i18n'
 import { cn } from '@/utils/cn'
@@ -123,23 +124,28 @@ export function AttentionList({
   overview,
   language,
 }: {
-  overview: Overview
+  /** Undefined while it is first read. */
+  overview: Overview | undefined
   language: Language
 }) {
   const [open, setOpen] = useState(false)
-  const count = overview.attention.length
+  const count = overview?.attention.length ?? 0
   const title = t('dashboard.needsAttention', language)
   const name = (
     <span className="block whitespace-nowrap text-xs text-vergex-muted">
       {title}
     </span>
   )
-  if (count === 0) {
+  if (!overview || count === 0) {
     return (
       <div className={cellClass}>
         {name}
         <span className="text-[13px] text-vergex-ink">
-          {t('dashboard.attentionNone', language)}
+          {overview ? (
+            t('dashboard.attentionNone', language)
+          ) : (
+            <Skeleton className="w-12" />
+          )}
         </span>
       </div>
     )

@@ -28,7 +28,7 @@ func RefusedSince(db *gorm.DB, since time.Time, limit int) ([]RefusedOrder, erro
 	var orders []RefusedOrder
 	err := db.Raw(`SELECT o.run_id, r.plan_id, r.account_id, o.client_id, o.role, o.symbol, o.quantity, o.error, o.updated_at
 		FROM futures.run_orders o JOIN futures.runs r ON r.id = o.run_id
-		WHERE o.exchange_order_id = '' AND o.error <> '' AND o.updated_at >= ?
+		WHERE o.venue_order_id = '' AND o.error <> '' AND o.updated_at >= ?
 		ORDER BY o.updated_at LIMIT ?`, since, limit).Scan(&orders).Error
 	return orders, err
 }
@@ -44,13 +44,13 @@ func CheckCloseEntries(db *gorm.DB, accountKey, symbol string) error {
 	var runs []Run
 	err := db.Raw(`SELECT r.* FROM futures.runs r
 		JOIN futures.plans p ON p.user_id = r.user_id AND p.id = r.plan_id
-		WHERE r.account_identity = ? AND p.symbol = ? AND r.state NOT IN ?`,
+		WHERE r.account_identity = ? AND p.symbol = ? AND r.status NOT IN ?`,
 		accountKey, symbol, []string{"completed", "cancelled", "expired"}).Scan(&runs).Error
 	if err != nil {
 		return errors.New("Could not verify remaining Futures entries")
 	}
 	for _, run := range runs {
-		if run.State == "approved" || run.State == "starting" || run.State == "running" {
+		if run.Status == "approved" || run.Status == "starting" || run.Status == "running" {
 			return errors.New("Stop remaining Futures entries before closing this position")
 		}
 		var statuses []string

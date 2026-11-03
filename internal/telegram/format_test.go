@@ -3,6 +3,7 @@ package telegram
 import (
 	"encoding/xml"
 	"io"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -44,11 +45,58 @@ func TestWhatModelsWriteBecomesTelegramHTML(t *testing.T) {
 	}
 }
 
-func TestTablesBecomeOneEntryPerRow(t *testing.T) {
-	got := oneHTML(t, "| Coin | Side | P/L |\n| --- | :-: | --: |\n| BTC | long | +3 |\n| ETH | short | -1 |")
-	want := "<b>BTC</b>\nSide: long · P/L: +3\n<b>ETH</b>\nSide: short · P/L: -1"
+func TestATableThatFitsAPhoneLinesUp(t *testing.T) {
+	got := oneHTML(t, "| Coin | Side | P/L |\n| --- | :-: | --: |\n| **BTC** | long | +3 |\n| ETH | short | -1.5 |")
+	want := "<pre><code class=\"language-Table\">Coin  Side    P/L\n─────────────────\nBTC   long     +3\nETH   short  -1.5</code></pre>"
 	if got != want {
 		t.Fatalf("got %q\nwant %q", got, want)
+	}
+	// Chinese is padded with spaces as wide as it is, so the columns hold on any phone.
+	got = oneHTML(t, "| 币种 | 方向 | 盈亏 |\n| - | - | - |\n| BTC | 多 | +3 |")
+	if !strings.Contains(got, `language-表格`) || !strings.Contains(got, "币种\u3000\u3000 方向  盈亏\n") && !strings.Contains(got, "BTC\u3000\u3000  多\u3000") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestATableTooWideForAPhoneBecomesOneEntryPerRow(t *testing.T) {
+	long := strings.Repeat("very long words ", 4)
+	got := oneHTML(t, "| Coin | Note |\n| --- | --- |\n| BTC | "+long+"|\n| ETH | short |")
+	want := "<b>BTC</b>\nNote: " + strings.TrimSpace(long) + "\n<b>ETH</b>\nNote: short"
+	if got != want {
+		t.Fatalf("got %q\nwant %q", got, want)
+	}
+}
+
+func TestATableOfTheBotsOwnLinesUpWhateverItsRowsHold(t *testing.T) {
+	lines := table{caption: "主账户 · 实盘", columns: []column{{name: "品种"}, {name: "方向"}, {name: "盈亏", right: true}}, rows: [][]string{
+		{"BTCUSDT", "多", "+12.30"}, {"SOLUSDT", "空", "-3.10"},
+	}, total: []string{"合计", "", "+9.20"}}.lines("zh")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0].html, `<pre><code class="language-主账户·实盘">`) {
+		t.Fatalf("lines = %q", lines)
+	}
+	rows := strings.Split(strings.TrimPrefix(lines[0].plain, "主账户 · 实盘\n"), "\n")
+	// Every row holds as many narrow and as many wide characters, header and total too, so
+	// each column starts in the same place whatever a wide one measures.
+	narrow, wide := counts(rows[2])
+	for _, row := range []string{rows[0], rows[3], rows[5]} {
+		if a, w := counts(row); a != narrow || w != wide {
+			t.Errorf("%q holds %d narrow and %d wide, %q %d and %d", row, a, w, rows[2], narrow, wide)
+		}
+	}
+
+	// A name too long for a row is cut, and more rows than fit are counted.
+	many := table{caption: "x", columns: []column{{name: "n"}, {name: "Name"}}}
+	for i := 0; i < 12; i++ {
+		many.rows = append(many.rows, []string{strconv.Itoa(i), strings.Repeat("名", 40)})
+	}
+	got := many.lines("en")
+	if len(got) != 2 || got[1].plain != "… 2 more" {
+		t.Fatalf("got %q", got)
+	}
+	for _, row := range strings.Split(got[0].plain, "\n") {
+		if a, w := counts(row); shown(a, w, wideWidth) > tableWidth {
+			t.Errorf("%q is wider than a phone", row)
+		}
 	}
 }
 

@@ -17,8 +17,8 @@ type TraderOrder struct {
 	TraderID        string  `gorm:"column:trader_id" json:"trader_id"`
 	AccountID       string  `gorm:"column:account_id" json:"account_id"`
 	Venue           string  `gorm:"column:venue" json:"venue"`
-	ExchangeOrderID string  `gorm:"column:exchange_order_id" json:"exchange_order_id"`
-	ClientOrderID   string  `gorm:"column:client_order_id" json:"client_order_id"`
+	VenueOrderID    string  `gorm:"column:venue_order_id" json:"venue_order_id"`
+	ClientID        string  `gorm:"column:client_id" json:"client_id"`
 	Symbol          string  `gorm:"column:symbol" json:"symbol"`
 	Side            string  `gorm:"column:side" json:"side"`
 	PositionSide    string  `gorm:"column:position_side" json:"position_side"`
@@ -37,7 +37,7 @@ type TraderOrder struct {
 	OrderAction     string  `gorm:"column:order_action" json:"order_action"`
 	CreatedAt       int64   `gorm:"column:created_at;serializer:unixms;autoCreateTime:false" json:"created_at"`
 	UpdatedAt       int64   `gorm:"column:updated_at;serializer:unixms;autoUpdateTime:false" json:"updated_at"`
-	FilledAt        int64   `gorm:"column:filled_at;serializer:unixms" json:"filled_at"`
+	ClosedAt        int64   `gorm:"column:closed_at;serializer:unixms" json:"closed_at"`
 	// Error is what the exchange or the system said of a failed order, where it was kept.
 	Error string `gorm:"column:error" json:"error,omitempty"`
 }
@@ -51,8 +51,8 @@ type TraderFill struct {
 	AccountID       string  `gorm:"column:account_id" json:"account_id"`
 	Venue           string  `gorm:"column:venue" json:"venue"`
 	OrderID         int64   `gorm:"column:order_id" json:"order_id"`
-	ExchangeOrderID string  `gorm:"column:exchange_order_id" json:"exchange_order_id"`
-	ExchangeTradeID string  `gorm:"column:exchange_trade_id" json:"exchange_trade_id"`
+	VenueOrderID    string  `gorm:"column:venue_order_id" json:"venue_order_id"`
+	VenueTradeID    string  `gorm:"column:venue_trade_id" json:"venue_trade_id"`
 	Symbol          string  `gorm:"column:symbol" json:"symbol"`
 	Side            string  `gorm:"column:side" json:"side"`
 	Price           float64 `gorm:"column:price" json:"price"`
@@ -61,12 +61,12 @@ type TraderFill struct {
 	Commission      float64 `gorm:"column:commission" json:"commission"`
 	CommissionAsset string  `gorm:"column:commission_asset" json:"commission_asset"`
 	RealizedPnL     float64 `gorm:"column:realized_pnl" json:"realized_pnl"`
-	IsMaker         bool    `gorm:"column:is_maker" json:"is_maker"`
+	Maker           bool    `gorm:"column:maker" json:"maker"`
 	CreatedAt       int64   `gorm:"column:created_at;serializer:unixms;autoCreateTime:false" json:"created_at"`
 }
 
 const orderColumns = `o.id, o.source, COALESCE(o.source_id, '') AS trader_id, o.account_id::text AS account_id, i.venue AS venue,
-	COALESCE(o.exchange_order_id, '') AS exchange_order_id, COALESCE(o.client_order_id, '') AS client_order_id,
+	COALESCE(o.venue_order_id, '') AS venue_order_id, COALESCE(o.client_id, '') AS client_id,
 	i.symbol, upper(o.side) AS side, upper(COALESCE(o.position_side, '')) AS position_side, o.role, o.type,
 	o.quantity, COALESCE(o.price, 0) AS price, COALESCE(o.stop_price, 0) AS stop_price, o.status,
 	o.filled_quantity, COALESCE(o.avg_fill_price, 0) AS avg_fill_price,
@@ -74,12 +74,12 @@ const orderColumns = `o.id, o.source, COALESCE(o.source_id, '') AS trader_id, o.
 	COALESCE(o.leverage, 0) AS leverage, o.reduce_only,
 	CASE WHEN o.role IN ('entry', 'grid') THEN 'open_' ELSE 'close_' END ||
 		COALESCE(o.position_side, CASE WHEN (o.role IN ('entry', 'grid')) = (o.side = 'buy') THEN 'long' ELSE 'short' END) AS order_action,
-	o.created_at, o.updated_at, o.closed_at AS filled_at, COALESCE(o.error, '') AS error`
+	o.created_at, o.updated_at, o.closed_at, COALESCE(o.error, '') AS error`
 
 const fillColumns = `f.id, o.source, COALESCE(o.source_id, '') AS trader_id, f.account_id::text AS account_id, i.venue AS venue,
-	f.order_id, COALESCE(o.exchange_order_id, '') AS exchange_order_id, f.exchange_trade_id, i.symbol, upper(f.side) AS side,
+	f.order_id, COALESCE(o.venue_order_id, '') AS venue_order_id, f.venue_trade_id, i.symbol, upper(f.side) AS side,
 	f.price, f.quantity, f.quote_quantity, f.commission, f.commission_asset, COALESCE(f.realized_pnl, 0) AS realized_pnl,
-	f.is_maker, f.executed_at AS created_at`
+	f.maker, f.executed_at AS created_at`
 
 // OrderStore reads orders and fills.
 type OrderStore struct {

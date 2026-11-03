@@ -121,7 +121,7 @@ func (s *Server) handleForecastOverlay(c *gin.Context) {
 	}
 	strategy, err := s.forecast.Store.ActiveStrategy(time.Now())
 	if errors.Is(err, forecast.ErrNoStrategyInUse) {
-		c.JSON(http.StatusOK, forecast.Overlay{Symbol: symbols[0], Interval: interval, Pending: forecast.PendingNoStrategy, Projection: []forecast.CandleRow{}})
+		c.JSON(http.StatusOK, forecast.Overlay{Symbol: symbols[0], Interval: interval, Pending: forecast.PendingNoStrategy})
 		return
 	}
 	if err != nil {

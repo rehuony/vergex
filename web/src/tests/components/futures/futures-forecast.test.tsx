@@ -26,13 +26,17 @@ vi.mock('@/contexts/language-context', () => ({
 }))
 vi.mock('@/api', () => ({ api: { getForecastOverlay: mocks.overlay } }))
 
-const rows = [{ time: 2, open: 1, high: 2, low: 1, close: 2, volume: 0 }]
 const overlay: ForecastOverlay = {
   symbol: 'BTCUSDT',
   interval: '1h',
   direction: 'down',
   display_prob: 0.36,
   calibrated: false,
+  open_time: 7_200_000,
+  target_time: 7_200_000 + 4 * 3_600_000,
+  close: 100,
+  expected_move_pct: 1.2,
+  horizon: 4,
   stats: {
     judged: 160,
     samples: 40,
@@ -43,7 +47,16 @@ const overlay: ForecastOverlay = {
     chance_rate: 0.6,
     avg_return_after_fee_pct: 0.2,
   },
-  projection: rows,
+}
+// What the chart is told to draw from the overlay above.
+const band = {
+  time: 7200,
+  step: 3600,
+  close: 100,
+  expectedMovePct: 1.2,
+  horizon: 4,
+  prob: 0.36,
+  direction: 'down',
 }
 
 interface ShownProps {
@@ -104,7 +117,7 @@ it('stays off until asked, then draws the forecast and remembers', async () => {
     'binance',
     'BTCUSDT',
     '1h',
-    []
+    null
   )
 
   turnOn()
@@ -113,7 +126,7 @@ it('stays off until asked, then draws the forecast and remembers', async () => {
       'binance',
       'BTCUSDT',
       '1h',
-      rows
+      band
     )
   )
   expect(mocks.overlay).toHaveBeenCalledWith('BTCUSDT', '1h')
@@ -180,7 +193,7 @@ it('reads the Binance coin behind an OKX swap and says where it comes from', asy
     'okx',
     'BTC-USDT-SWAP',
     '1h',
-    rows
+    band
   )
 })
 
@@ -210,7 +223,7 @@ it('does not ask for the forecast or draw it before the real candles are on the 
     'binance',
     'BTCUSDT',
     '1h',
-    []
+    null
   )
   expect(screen.queryByRole('status')).toBeNull()
   rerender(candlesReady(true))
@@ -219,7 +232,7 @@ it('does not ask for the forecast or draw it before the real candles are on the 
       'binance',
       'BTCUSDT',
       '1h',
-      rows
+      band
     )
   )
   expect(mocks.overlay).toHaveBeenCalledTimes(1)
@@ -230,7 +243,6 @@ it('passes on why a coin has no forecast yet', async () => {
   mocks.overlay.mockResolvedValue({
     ...overlay,
     pending: 'not_enough_history',
-    projection: [],
   })
   show({})
   expect(await screen.findByText('Not enough history')).toBeVisible()
@@ -244,7 +256,7 @@ it('clears the chart while plans are being compared', async () => {
     'binance',
     'BTCUSDT',
     '1h',
-    []
+    null
   )
 })
 

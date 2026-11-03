@@ -33,7 +33,7 @@ export interface SystemStatus {
   trader_id: string
   trader_name: string
   agent_model: string
-  is_running: boolean
+  running: boolean
   start_time: string
   runtime_minutes: number
   call_count: number
@@ -110,7 +110,7 @@ export interface AccountSnapshot {
 export interface DecisionRecord {
   id: number
   timestamp: string
-  cycle_number: number
+  seq: number
   system_prompt: string
   input_prompt: string
   cot_trace: string
@@ -249,7 +249,7 @@ export interface TraderInfo {
   trader_name: string
   agent_model: string
   account_id?: string
-  is_running?: boolean
+  running?: boolean
   startup_warning?: string
   kind?: TraderKind
   scan_interval_minutes?: number
@@ -266,7 +266,7 @@ export interface TraderConfigData {
   is_cross_margin: boolean
   scan_interval_minutes: number
   initial_balance: number
-  is_running: boolean
+  running: boolean
 }
 
 // Position History Types

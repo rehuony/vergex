@@ -46,14 +46,14 @@ func TestSettingsWritersOfDifferentFieldsKeepBoth(t *testing.T) {
 			if i%2 == 1 {
 				field = map[string]any{"b": i}
 			}
-			if err := database.PatchSetting(db, "m", field); err != nil {
+			if err := database.PatchSetting(db, "market", field); err != nil {
 				t.Error(err)
 			}
 		}()
 	}
 	wg.Wait()
 	var values map[string]any
-	if _, err := database.LoadSetting(db, "m", &values); err != nil {
+	if _, err := database.LoadSetting(db, "market", &values); err != nil {
 		t.Fatal(err)
 	}
 	if values["a"] == nil || values["b"] == nil {

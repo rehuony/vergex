@@ -30,13 +30,13 @@ describe('getTraderModelLabel', () => {
       id: 'model-deepseek',
       name: 'DeepSeek AI',
       provider: 'deepseek',
-      defaultModel: 'deepseek-v4-pro',
+      default_model: 'deepseek-v4-pro',
     },
     {
       id: 'model-openai',
       name: 'OpenAI',
       provider: 'openai',
-      customModelName: 'gpt-4o-mini',
+      model_name: 'gpt-4o-mini',
     },
   ]
 

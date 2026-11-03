@@ -69,7 +69,7 @@ export function useAccountWatch(
           ? {
               id: traderID,
               accountID,
-              running: traders.some((t) => t.is_running),
+              running: traders.some((t) => t.running),
             }
           : null
       )

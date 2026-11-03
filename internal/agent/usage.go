@@ -11,6 +11,8 @@ const (
 	FeatureTrader   = "trader"
 	FeatureFutures  = "futures"
 	FeatureTelegram = "telegram"
+	// FeatureAssistant is the assistant in the web app. In Telegram it counts as Telegram.
+	FeatureAssistant = "assistant"
 	// FeatureTest marks the one-off calls of a model test or a trader dry run.
 	FeatureTest = "test"
 )

@@ -49,7 +49,7 @@ type overviewModel struct {
 type overviewTrader struct {
 	TraderID     string `json:"trader_id"`
 	TraderName   string `json:"trader_name"`
-	IsRunning    bool   `json:"is_running"`
+	Running      bool   `json:"running"`
 	AgentModelID string `json:"agent_model_id"`
 	AccountID    string `json:"account_id"`
 	Kind         string `json:"kind"`
@@ -59,7 +59,7 @@ type overviewRun struct {
 	ID        string    `json:"id"`
 	AccountID string    `json:"account_id"`
 	Symbol    string    `json:"symbol"`
-	State     string    `json:"state"`
+	Status    string    `json:"status"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
@@ -172,7 +172,7 @@ func (s *Server) buildOverview(user string) overviewResponse {
 	if models, err := s.stores.Models.List(user); err == nil {
 		for _, model := range models {
 			if model.Enabled {
-				out.Models = append(out.Models, overviewModel{ID: model.ID, Name: model.Name, Provider: model.Provider, Model: model.CustomModelName, Host: agent.ProviderHost(model.Provider, model.CustomAPIURL)})
+				out.Models = append(out.Models, overviewModel{ID: model.ID, Name: model.Name, Provider: model.Provider, Model: model.ModelName, Host: agent.ProviderHost(model.Provider, model.BaseURL)})
 			}
 		}
 	}
@@ -217,15 +217,15 @@ func (s *Server) addOverviewTraders(user string, traders []*trader.Trader, out *
 		row := overviewTrader{
 			TraderID:     trader.ID,
 			TraderName:   trader.Name,
-			IsRunning:    trader.IsRunning,
+			Running:      trader.Running,
 			AgentModelID: trader.AgentModelID,
 			AccountID:    trader.AccountID,
 			Kind:         trader.Kind,
 		}
 		if at, err := s.traderManager.GetTrader(trader.ID); err == nil {
 			status := at.GetStatus()
-			if running, ok := status["is_running"].(bool); ok {
-				row.IsRunning = running
+			if running, ok := status["running"].(bool); ok {
+				row.Running = running
 			}
 			if blocked, _ := status["trading_blocked"].(bool); blocked {
 				detail, _ := status["trading_error"].(string)
@@ -238,7 +238,7 @@ func (s *Server) addOverviewTraders(user string, traders []*trader.Trader, out *
 			if halt := at.ActiveHalt(); halt != nil {
 				out.Attention = append(out.Attention, overviewAttention{Kind: "trader_halted", Name: trader.Name, Detail: halt.Reason, TraderID: trader.ID})
 			}
-		} else if loadErr := s.traderManager.GetLoadError(trader.ID); loadErr != nil && trader.IsRunning {
+		} else if loadErr := s.traderManager.GetLoadError(trader.ID); loadErr != nil && trader.Running {
 			out.Attention = append(out.Attention, overviewAttention{Kind: "trader_load_failed", Name: trader.Name, Detail: loadErr.Error(), TraderID: trader.ID})
 		}
 		out.Traders = append(out.Traders, row)
@@ -279,7 +279,7 @@ func (s *Server) PlanRunsForAlerts(ctx context.Context, user string) ([]telegram
 	}
 	out := make([]telegram.PlanRun, 0, len(runs))
 	for _, run := range runs {
-		out = append(out, telegram.PlanRun{ID: run.ID, Symbol: run.Plan.Snapshot.Symbol, State: run.State, Error: run.Error})
+		out = append(out, telegram.PlanRun{ID: run.ID, Symbol: run.Plan.Snapshot.Symbol, Status: run.Status, Error: run.Error})
 	}
 	return out, nil
 }
@@ -316,7 +316,7 @@ func (s *Server) ProblemsForAlerts(user string) []telegram.Problem {
 		logger.Warnf("Alerts: read skipped fills: %v", err)
 	}
 	for _, fill := range fills {
-		problems = append(problems, telegram.Problem{Key: telegram.ProblemFillSkipped + ":" + fill.ExchangeTradeID, Kind: telegram.ProblemFillSkipped, Name: fill.NativeSymbol, Detail: fill.Detail})
+		problems = append(problems, telegram.Problem{Key: telegram.ProblemFillSkipped + ":" + fill.VenueTradeID, Kind: telegram.ProblemFillSkipped, Name: fill.NativeSymbol, Detail: fill.Detail})
 	}
 	return problems
 }
@@ -335,12 +335,12 @@ func (s *Server) addOverviewRuns(user string, out *overviewResponse) {
 		return
 	}
 	for _, run := range runs {
-		if settledRunStates[run.State] {
+		if settledRunStates[run.Status] {
 			continue
 		}
 		symbol := run.Plan.Snapshot.Symbol
-		out.Runs = append(out.Runs, overviewRun{ID: run.ID, AccountID: run.AccountID, Symbol: symbol, State: run.State, UpdatedAt: run.UpdatedAt})
-		if run.State == "needs_attention" {
+		out.Runs = append(out.Runs, overviewRun{ID: run.ID, AccountID: run.AccountID, Symbol: symbol, Status: run.Status, UpdatedAt: run.UpdatedAt})
+		if run.Status == "needs_attention" {
 			out.Attention = append(out.Attention, overviewAttention{Kind: "plan_needs_attention", Name: symbol, Detail: run.Error, AccountID: run.AccountID, PlanID: run.PlanID})
 		}
 	}
@@ -416,7 +416,7 @@ func (s *Server) addOverviewSkippedFills(user string, out *overviewResponse) {
 			lines = append(lines, "and more")
 			break
 		}
-		line := fmt.Sprintf("trade %s: %s", fill.ExchangeTradeID, fill.Detail)
+		line := fmt.Sprintf("trade %s: %s", fill.VenueTradeID, fill.Detail)
 		// The row already names the first contract, and a phone has little room.
 		if fill.NativeSymbol != fills[0].NativeSymbol {
 			line = fill.NativeSymbol + " " + line
@@ -526,7 +526,7 @@ func overviewPositionOwner(traders []overviewTrader, runs []overviewRun, account
 		if trader.AccountID != accountID {
 			continue
 		}
-		if trader.IsRunning {
+		if trader.Running {
 			return trader.TraderID
 		}
 		if bound == "" {
@@ -544,7 +544,7 @@ func overviewPositionOwner(traders []overviewTrader, runs []overviewRun, account
 func (s *Server) addOverviewServices(out *overviewResponse) {
 	running := 0
 	for _, trader := range out.Traders {
-		if trader.IsRunning {
+		if trader.Running {
 			running++
 		}
 	}

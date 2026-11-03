@@ -264,7 +264,7 @@ func (s *Server) handleUpdateTelegramAlerts(c *gin.Context) {
 
 // handleTestTelegramAlert sends one message so the user can see alerts arrive.
 func (s *Server) handleTestTelegramAlert(c *gin.Context) {
-	if err := telegram.Notify(c.Request.Context(), s.stores.Telegram, telegram.TestAlertText(s.stores.Telegram.GetLanguage())); err != nil {
+	if err := telegram.TestAlert(c.Request.Context(), s.stores.Telegram); err != nil {
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}

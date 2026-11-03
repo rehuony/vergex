@@ -16,7 +16,7 @@ A log lasts as long as its container: `make up` after a change starts a new one.
 
 **Stored keys can't be read after a change.** `DATA_ENCRYPTION_KEY` changed. Restore the old value from your backup; otherwise re-enter the account and model keys.
 
-**`cannot drop schema public` at startup.** The database holds tables from before the schemas were introduced. There is nothing to migrate from them: back up anything you need, then delete the database volume with `docker compose down -v`, or drop and recreate the database.
+**`migration 0002_core.sql changed after it was applied` at startup.** The database was built from an older baseline, which this version replaced without carrying data over, as it may until the schema settles. `cannot drop schema public` is the same for a database from before the schemas. Back up anything you need, then rebuild the database as [database.md](database.md#starting-from-the-baseline) describes.
 
 **Port already in use.** Find the process with `lsof -i :8000` (`:3000` when running from source), or set `VERGEX_FRONTEND_PORT` in `.env`. If `make run-postgresql` finds its port taken, set `DB_PORT` in `.env`.
 

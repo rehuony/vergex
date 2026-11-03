@@ -35,14 +35,14 @@ const (
 	StatusInactive = "inactive" // No longer tracked; its data stays.
 )
 
-// Series is one instrument at one interval, and how far it has been filled. Exchange
-// and Symbol come from the instrument.
+// Series is one instrument at one interval, and how far it has been filled. Venue and
+// Symbol come from the instrument.
 type Series struct {
 	ID           int64  `gorm:"primaryKey;autoIncrement" json:"id"`
 	InstrumentID int64  `json:"-"`
-	Exchange     string `gorm:"column:venue;->" json:"exchange"`
+	Venue        string `gorm:"column:venue;->" json:"venue"`
 	Symbol       string `gorm:"column:symbol;->" json:"symbol"`
-	Interval     string `gorm:"column:timeframe" json:"interval"`
+	Interval     string `gorm:"column:interval" json:"interval"`
 	Tier         int    `json:"tier"`
 	Status       string `json:"status"`
 	Priority     int    `json:"priority"`
@@ -71,10 +71,7 @@ type Candle struct {
 	Low            float64
 	Close          float64
 	Volume         float64
-	QuoteVolume    float64
-	Trades         int64
 	TakerBuyVolume float64
-	TakerBuyQuote  float64
 }
 
 func (Candle) TableName() string { return "market.candles" }
@@ -104,7 +101,7 @@ type Derivative struct {
 	Value        float64
 }
 
-func (Derivative) TableName() string { return "market.derivative_metrics" }
+func (Derivative) TableName() string { return "market.derivatives" }
 
 // settingsModule is the row in core.settings holding Settings.
 const settingsModule = "market"
@@ -182,7 +179,7 @@ func (s *Store) instrumentID(symbol string) (int64, error) {
 	if id, ok := s.instruments.Load(symbol); ok {
 		return id.(int64), nil
 	}
-	id, err := instrument.Ensure(s.db, VenueBinance, instrument.KindPerpetual, symbol, symbol)
+	id, err := instrument.Ensure(s.db, VenueBinance, instrument.KindPerpetual, symbol)
 	if err != nil {
 		return 0, err
 	}
@@ -245,7 +242,7 @@ func (s *Store) seriesQuery() *gorm.DB {
 // FindSeries returns one series, or nil if it does not exist yet.
 func (s *Store) FindSeries(symbol, interval string) (*Series, error) {
 	var series []*Series
-	err := s.seriesQuery().Where("i.venue = ? AND i.kind = ? AND i.symbol = ? AND s.timeframe = ?", VenueBinance, instrument.KindPerpetual, symbol, interval).
+	err := s.seriesQuery().Where("i.venue = ? AND i.kind = ? AND i.symbol = ? AND s.interval = ?", VenueBinance, instrument.KindPerpetual, symbol, interval).
 		Limit(1).Find(&series).Error
 	if err != nil || len(series) == 0 {
 		return nil, err
@@ -274,7 +271,7 @@ func (s *Store) EnsureSeries(symbol, interval string, tier int, now int64) (*Ser
 // ListSeries returns every series.
 func (s *Store) ListSeries() ([]*Series, error) {
 	var series []*Series
-	err := s.seriesQuery().Order("i.symbol, s.timeframe").Find(&series).Error
+	err := s.seriesQuery().Order("i.symbol, s.interval").Find(&series).Error
 	return series, err
 }
 
@@ -322,7 +319,7 @@ func saveSeriesOn(db *gorm.DB, series *Series) error {
 func toRow(seriesID int64, c binance.Candle) Candle {
 	return Candle{
 		SeriesID: seriesID, OpenTime: c.OpenTime, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close,
-		Volume: c.Volume, QuoteVolume: c.QuoteVolume, Trades: c.Trades, TakerBuyVolume: c.TakerBuyVolume, TakerBuyQuote: c.TakerBuyQuote,
+		Volume: c.Volume, TakerBuyVolume: c.TakerBuyVolume,
 	}
 }
 
@@ -356,7 +353,7 @@ func insertCandles(tx *gorm.DB, seriesID int64, candles []binance.Candle) error 
 // purgeShortCandles removes candles under 15 minutes from before the cutoff.
 func (s *Store) purgeShortCandles(before int64) error {
 	return s.db.Where("open_at < ? AND series_id IN (?)", at(before),
-		s.db.Model(&Series{}).Select("id").Where("timeframe IN ?", shortIntervals)).Delete(&Candle{}).Error
+		s.db.Model(&Series{}).Select("id").Where("interval IN ?", shortIntervals)).Delete(&Candle{}).Error
 }
 
 // markOpened records that the user asked for a series.

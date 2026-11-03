@@ -108,7 +108,7 @@ func TestAccountCloseBlocksForeignChangedAndRunningAccounts(t *testing.T) {
 			case "new-entry":
 				f.positions[0]["entryPrice"] = 81800.0
 			case "running":
-				testdb.AddTrader(t, s.stores.DB, &testdb.Trader{AccountID: secondAccount, IsRunning: true})
+				testdb.AddTrader(t, s.stores.DB, &testdb.Trader{AccountID: secondAccount, Running: true})
 			case "no-position":
 				f.positions = nil
 			case "wrong-side":
@@ -140,10 +140,10 @@ func TestAccountCloseWaitsForScheduledAndUnknownEntries(t *testing.T) {
 			ex, _ := s.stores.Accounts.GetByID(testdb.UserID, secondAccount)
 			db := s.stores.DB
 			now := time.Now().UTC()
-			if e := db.Create(&futures.Plan{UserID: testdb.UserID, ID: "plan", AccountID: secondAccount, Venue: "binance", Symbol: "BTCUSDT", Status: "approved", Body: "{}"}).Error; e != nil {
+			if e := db.Create(&futures.Plan{UserID: testdb.UserID, ID: "plan", AccountID: secondAccount, Symbol: "BTCUSDT", Status: "approved", Body: "{}"}).Error; e != nil {
 				t.Fatal(e)
 			}
-			run := run.Run{ID: uuid.NewString(), UserID: testdb.UserID, AccountID: secondAccount, AccountKey: ex.Identity, PlanID: "plan", PlanHash: "h", ApprovalHash: "h", State: "stopping", ApprovedAt: now, UpdatedAt: now}
+			run := run.Run{ID: uuid.NewString(), UserID: testdb.UserID, AccountID: secondAccount, AccountKey: ex.Identity, PlanID: "plan", PlanHash: "h", ApprovalHash: "h", Status: "stopping", ApprovedAt: now, UpdatedAt: now}
 			if e := db.Create(&run).Error; e != nil {
 				t.Fatal(e)
 			}

@@ -93,14 +93,14 @@ func TestFeedFollowsAnOrderAndItsMoneyOnce(t *testing.T) {
 	feed, st, clock := feedFixture(t, nil)
 	ctx := context.Background()
 	ledger := accounttest.NewLedger(t, st.DB)
-	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
 	leverage := 5
 	order := &account.LedgerOrder{
 		AccountID: ledger.Account, InstrumentID: btc, Source: account.SourceTrader, SourceID: trendTrader, Role: account.RoleEntry,
-		ExchangeOrderID: "1", Side: account.SideBuy, PositionSide: account.SideLong, Type: "MARKET", Status: account.OrderNew,
+		VenueOrderID: "1", Side: account.SideBuy, PositionSide: account.SideLong, Type: "MARKET", Status: account.OrderNew,
 		Quantity: decimal.NewFromInt(2), Leverage: &leverage, CreatedAt: *clock,
 	}
 	if err := st.Ledger.RecordOrder(order); err != nil {
@@ -124,7 +124,7 @@ func TestFeedFollowsAnOrderAndItsMoneyOnce(t *testing.T) {
 	*clock = clock.Add(10 * time.Second)
 	opened := clock.Add(-5 * time.Second)
 	recorded, err := st.Ledger.RecordTrade(account.Trade{
-		AccountID: ledger.Account, InstrumentID: btc, ExchangeTradeID: "f1", ExchangeOrderID: "1", Side: account.SideBuy, PositionSide: account.SideLong,
+		AccountID: ledger.Account, InstrumentID: btc, VenueTradeID: "f1", VenueOrderID: "1", Side: account.SideBuy, PositionSide: account.SideLong,
 		Price: decimal.NewFromInt(100), Quantity: decimal.NewFromInt(2), QuoteQuantity: decimal.NewFromInt(200),
 		Commission: decimal.RequireFromString("0.08"), CommissionAsset: "USDT", ExecutedAt: opened,
 	}, account.Owner{})
@@ -161,14 +161,14 @@ func TestFeedFollowsAnOrderAndItsMoneyOnce(t *testing.T) {
 func TestFeedTellsAnOrderFromFuturesAndOneNothingClaims(t *testing.T) {
 	feed, st, clock := feedFixture(t, nil)
 	ledger := accounttest.NewLedger(t, st.DB)
-	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i, owner := range []account.Owner{{Source: account.SourceFutures, SourceID: "run"}, {}} {
 		id := fmt.Sprintf("%d", i)
 		_, err := st.Ledger.RecordTrade(account.Trade{
-			AccountID: ledger.Account, InstrumentID: btc, ExchangeTradeID: id, ExchangeOrderID: id, Side: account.SideBuy, PositionSide: account.SideLong,
+			AccountID: ledger.Account, InstrumentID: btc, VenueTradeID: id, VenueOrderID: id, Side: account.SideBuy, PositionSide: account.SideLong,
 			Price: decimal.NewFromInt(100), Quantity: decimal.NewFromInt(1), QuoteQuantity: decimal.NewFromInt(100), ExecutedAt: *clock,
 		}, owner)
 		if err != nil {
@@ -193,7 +193,7 @@ func TestFeedPutsACycleInTheOrderItHappened(t *testing.T) {
 	acted := saved.Add(-10 * time.Second)
 	record := &trader.DecisionRecord{
 		TraderID:        trendTrader,
-		CycleNumber:     7,
+		Seq:             7,
 		Timestamp:       saved,
 		CandidateCoins:  []string{"BTCUSDT", "ETHUSDT"},
 		Success:         true,
@@ -300,20 +300,20 @@ func TestFuturesOrdersRefusedBeforeTheExchangeStillShow(t *testing.T) {
 func TestAnOrderFilledDuringAnOutageShowsWhenItFilled(t *testing.T) {
 	feed, st, clock := feedFixture(t, nil)
 	ledger := accounttest.NewLedger(t, st.DB)
-	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
 	trade := account.Trade{
-		AccountID: ledger.Account, InstrumentID: btc, ExchangeOrderID: "1", Side: account.SideBuy, PositionSide: account.SideLong,
+		AccountID: ledger.Account, InstrumentID: btc, VenueOrderID: "1", Side: account.SideBuy, PositionSide: account.SideLong,
 		Price: decimal.NewFromInt(100), Quantity: decimal.NewFromInt(1), QuoteQuantity: decimal.NewFromInt(100),
 	}
 	filled := clock.Add(-3 * time.Hour)
-	trade.ExchangeTradeID, trade.ExecutedAt = "recent", filled
+	trade.VenueTradeID, trade.ExecutedAt = "recent", filled
 	if _, err := st.Ledger.RecordTrade(trade, account.Owner{}); err != nil {
 		t.Fatal(err)
 	}
-	trade.ExchangeOrderID, trade.ExchangeTradeID, trade.ExecutedAt = "2", "old", clock.Add(-48*time.Hour)
+	trade.VenueOrderID, trade.VenueTradeID, trade.ExecutedAt = "2", "old", clock.Add(-48*time.Hour)
 	if _, err := st.Ledger.RecordTrade(trade, account.Owner{}); err != nil {
 		t.Fatal(err)
 	}

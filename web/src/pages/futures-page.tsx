@@ -61,11 +61,10 @@ import {
 } from '@/hooks/futures/use-futures-data'
 import { useFuturesChart } from '@/components/futures/futures-chart'
 import { holdingLines } from '@/components/futures/futures-chart/futures-chart-shapes'
-import {
-  type ChatMessage,
-  useFuturesAssistant,
-} from '@/components/futures/use-futures-assistant'
+import type { ChatMessage } from '@/components/common/chat-thread'
+import { useFuturesAssistant } from '@/components/futures/use-futures-assistant'
 import { useFuturesTrades } from '@/hooks/futures/use-futures-trades'
+import { useAssistantForm, useAssistantPage } from '@/hooks/use-assistant-page'
 import { useLanguage } from '@/contexts/language-context'
 import { notify } from '@/components/common/notify'
 import { t } from '@/i18n'
@@ -165,9 +164,9 @@ export function FuturesPage() {
     () =>
       data.records[selected] ||
       (selectedRun
-        ? { plan: selectedRun.plan, state: selectedRun.state }
+        ? { plan: selectedRun.plan, state: selectedRun.status }
         : undefined),
-    [data.records, selected, selectedRun?.plan, selectedRun?.state]
+    [data.records, selected, selectedRun?.plan, selectedRun?.status]
   )
   const run = selectedRun
   const clock = Date.parse(data.now) || Date.now()
@@ -187,7 +186,7 @@ export function FuturesPage() {
     current,
     compare,
     data.records,
-    run?.state,
+    run?.status,
     setError
   )
   const assistant = useFuturesAssistant({
@@ -322,7 +321,7 @@ export function FuturesPage() {
       return
     fitPlan.current = false
     void chart.current
-      .plot(current.plan, current.state, [])
+      .plot(current.plan, current.status, [])
       .then(() => chart.current?.focusPlan())
   }, [current, scene, assistant.futuresBusy, compare.length])
   // What the account holds on this market stays on the chart, whatever else is drawn.
@@ -478,11 +477,63 @@ export function FuturesPage() {
     // What is on the trade tab went with it, and must not be saved under its ID again.
     if (session.current === h.id) newSession()
   }
+  // One deleted elsewhere, by the assistant say, goes the same way once the list no longer
+  // has it. A list of another account says nothing of it.
+  const listed = useRef({ account: '', ids: new Set<string>() })
+  useEffect(() => {
+    const ids = new Set(history.map((row) => row.id))
+    const before = listed.current
+    if (
+      before.account === accountId &&
+      before.ids.has(session.current) &&
+      !ids.has(session.current)
+    )
+      newSession()
+    listed.current = { account: accountId, ids }
+  }, [history])
   // The line that says what went wrong is on the trade tab.
   useEffect(() => {
     if (error && tab !== 'trade') notify.error(error)
   }, [error])
   const deckPlans = batchPlans(records, currentBatch)
+  useAssistantForm({
+    id: 'futures.request',
+    title: label('tradeIdea'),
+    fields: [
+      {
+        name: 'request',
+        label: t('assistant.formRequest', language),
+        type: 'text',
+        value: assistant.instruction,
+      },
+    ],
+    apply: (values) => {
+      if (typeof values.request !== 'string') return
+      setTab('trade')
+      setPane('chat')
+      assistant.setInstruction(values.request)
+    },
+  })
+  useAssistantPage('futures', () => {
+    const shown = chart.current?.context()
+    return {
+      tab,
+      venue,
+      symbol,
+      account: account && {
+        id: account.id,
+        name: accountName(account),
+        testnet: Boolean(account.testnet),
+      },
+      leverage,
+      interval,
+      visible_from: shown?.visible_from,
+      visible_to: shown?.visible_to,
+      plan_ids: deckPlans.map((plan) => plan.id),
+      selected_plan: selected || undefined,
+      compared_plans: compare,
+    }
+  })
   const waitingForEntry = Boolean(
     currentBatch?.waiting && !assistant.futuresBusy
   )
@@ -688,7 +739,7 @@ export function FuturesPage() {
           active={tab === 'history'}
           accountID={accountId}
           runs={data.runs.filter(
-            (r) => r.account_id === accountId && runSettled(r.state)
+            (r) => r.account_id === accountId && runSettled(r.status)
           )}
           archived={archivedRecords}
           clock={clock}
@@ -698,7 +749,7 @@ export function FuturesPage() {
           onOpenConversation={openConversation}
           onRenameConversation={renameConversation}
           onDeleteConversation={removeConversation}
-          onDeleteDraft={(plan) => deletePlan(plan.id)}
+          onDeletePlan={(plan) => deletePlan(plan.id)}
         />
       </div>
       <div role="tabpanel" hidden={tab !== 'settings'}>

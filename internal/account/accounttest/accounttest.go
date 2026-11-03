@@ -51,7 +51,7 @@ func (l *Ledger) Open(traderID, symbol, side string, quantity, price float64, at
 		leverage := l.Leverage
 		err := l.ledger.RecordOrder(&account.LedgerOrder{
 			AccountID: l.Account, InstrumentID: trade.InstrumentID, Source: account.SourceTrader, SourceID: traderID, Role: account.RoleEntry,
-			ExchangeOrderID: trade.ExchangeOrderID, Side: tradeSide, PositionSide: side, Type: "MARKET", Status: account.OrderNew,
+			VenueOrderID: trade.VenueOrderID, Side: tradeSide, PositionSide: side, Type: "MARKET", Status: account.OrderNew,
 			Quantity: trade.Quantity, Leverage: &leverage, CreatedAt: at,
 		})
 		if err != nil {
@@ -75,7 +75,7 @@ func (l *Ledger) Close(traderID, symbol, side string, quantity, price, realized 
 
 func (l *Ledger) trade(symbol, side, positionSide string, quantity, price float64, at time.Time) account.Trade {
 	l.t.Helper()
-	instrumentID, err := instrument.Ensure(l.db, "binance", instrument.KindPerpetual, symbol, symbol)
+	instrumentID, err := instrument.Ensure(l.db, "binance", instrument.KindPerpetual, symbol)
 	if err != nil {
 		l.t.Fatalf("instrument: %v", err)
 	}
@@ -83,7 +83,7 @@ func (l *Ledger) trade(symbol, side, positionSide string, quantity, price float6
 	q, p := decimal.NewFromFloat(quantity), decimal.NewFromFloat(price)
 	return account.Trade{
 		AccountID: l.Account, InstrumentID: instrumentID,
-		ExchangeTradeID: fmt.Sprintf("%s-trade-%d", l.Account[:8], l.next), ExchangeOrderID: fmt.Sprintf("%s-order-%d", l.Account[:8], l.next),
+		VenueTradeID: fmt.Sprintf("%s-trade-%d", l.Account[:8], l.next), VenueOrderID: fmt.Sprintf("%s-order-%d", l.Account[:8], l.next),
 		Side: side, PositionSide: positionSide, Price: p, Quantity: q, QuoteQuantity: p.Mul(q), CommissionAsset: "USDT", ExecutedAt: at,
 	}
 }

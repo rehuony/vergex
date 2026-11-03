@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { MemoryRouter } from 'react-router-dom'
 import { TradersPage } from '@/pages/traders-page'
@@ -61,22 +61,32 @@ beforeEach(() => {
   }
 })
 afterEach(cleanup)
-const open = () =>
+const open = (state?: unknown) =>
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[{ pathname: '/traders', state }]}>
       <TradersPage />
     </MemoryRouter>
   )
-it('offers creation once connections are saved', () => {
+it('drops the list with no traders, and offers creation in the panel', () => {
   open()
+  expect(screen.queryByRole('navigation', { name: 'Traders' })).toBeNull()
+  const empty = screen.getByRole('status')
+  expect(within(empty).getByText('No traders yet')).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Create trader' })).toBeEnabled()
   expect(mocks.update).not.toHaveBeenCalled()
 })
 it('leads to the missing model instead of offering creation', () => {
   mocks.models.data = []
   open()
-  expect(screen.queryByRole('button', { name: 'Create trader' })).toBeNull()
-  expect(screen.getByRole('link', { name: 'Add model' })).toBeVisible()
+  const empty = screen.getByRole('status')
+  expect(
+    within(empty).queryByRole('button', { name: 'Create trader' })
+  ).toBeNull()
+  expect(within(empty).getByRole('link', { name: 'Add model' })).toBeVisible()
+})
+it('opens creation when the overview asks for it', () => {
+  open({ create: true })
+  expect(screen.getByRole('dialog')).toHaveTextContent('Create trader')
 })
 it('shows a read failure instead of inventing an empty configuration', () => {
   mocks.models = { data: undefined as never, error: new Error('fixture') }

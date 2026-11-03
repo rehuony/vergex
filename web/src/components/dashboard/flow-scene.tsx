@@ -13,7 +13,9 @@ import type {
   ActivityTotals,
   Overview,
 } from '@/api/dashboard'
+import { PanelLoading } from '@/components/common/panel'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/utils/cn'
 import {
   BLOCKS,
@@ -53,7 +55,8 @@ export interface FlowSceneHandle {
 }
 
 interface FlowSceneProps {
-  overview: Overview
+  /** Undefined while it is first read: the stage draws, and the names wait for their figures. */
+  overview: Overview | undefined
   totals: ActivityTotals
   stream: ActivityStream | null
   kind: string
@@ -70,7 +73,8 @@ interface FlowSceneProps {
 
 // The Dashboard's main surface. The stage draws in WebGL and everything that reads as text
 // stays in the page, moved to where the stage says it belongs, so it keeps the type scale
-// and can be focused. Nothing moves here unless an event just happened.
+// and can be focused. Nothing moves here unless an event just happened. It mounts with the
+// page, so the stage's code, the largest download on it, comes in beside the first figures.
 export const FlowScene = forwardRef<FlowSceneHandle, FlowSceneProps>(
   function FlowScene(
     {
@@ -93,6 +97,8 @@ export const FlowScene = forwardRef<FlowSceneHandle, FlowSceneProps>(
     const anchors = useRef(new Map<string, HTMLElement>())
     const timers = useRef(new Set<ReturnType<typeof setTimeout>>())
     const [ready, setReady] = useState(false)
+    // The names wait for the first frame, which puts them where they belong.
+    const [placed, setPlaced] = useState(false)
     const [hovered, setHovered] = useState<string | null>(null)
     const [bursts, setBursts] = useState<Partial<Record<LineKey, number>>>({})
     const [viewMoved, setViewMoved] = useState(false)
@@ -105,7 +111,7 @@ export const FlowScene = forwardRef<FlowSceneHandle, FlowSceneProps>(
     })
 
     const views = useMemo(
-      () => blockViews(overview, label, totals, stream),
+      () => overview && blockViews(overview, label, totals, stream),
       [overview, label, totals, stream]
     )
 
@@ -147,6 +153,7 @@ export const FlowScene = forwardRef<FlowSceneHandle, FlowSceneProps>(
                   element.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`
                 }
               })
+              setPlaced(true)
             },
           })
           setReady(true)
@@ -165,7 +172,7 @@ export const FlowScene = forwardRef<FlowSceneHandle, FlowSceneProps>(
     }, [onUnavailable])
 
     useEffect(() => {
-      if (!ready) return
+      if (!ready || !views) return
       stage.current?.setData({
         views,
         volumes: Object.fromEntries(
@@ -279,12 +286,13 @@ export const FlowScene = forwardRef<FlowSceneHandle, FlowSceneProps>(
       if (focus.includes('>')) {
         return lineSummary(focus as LineKey, totals, label)
       }
-      const view = views[focus as SceneBlock]
+      const view = views?.[focus as SceneBlock]
+      const name = label(`flow.block.${focus}`)
+      if (!view) return name
       const names = view.members
         .concat(view.shortMembers ?? [])
         .map((member) => member.title.split(' · ')[0])
         .filter(Boolean)
-      const name = label(`flow.block.${focus}`)
       if (!names.length) return `${name} · ${view.sub}`
       const more = names.length - NAMES_SHOWN
       return `${name} · ${names.slice(0, NAMES_SHOWN).join(', ')}${more > 0 ? ` +${more}` : ''}`
@@ -303,27 +311,35 @@ export const FlowScene = forwardRef<FlowSceneHandle, FlowSceneProps>(
         title={hovered ? describe(hovered) : undefined}
         className="relative h-[clamp(480px,calc(56.25vw-28px),calc(100dvh-190px))] cursor-grab select-none overflow-hidden xl:h-full"
       >
+        {!placed && <PanelLoading className="absolute inset-0" />}
         {STAGES.map((row) => (
           <span
             key={row.key}
             ref={anchor(`stage:${row.key}`)}
-            className="pointer-events-none absolute left-0 top-0 whitespace-nowrap font-mono text-[11px] text-vergex-muted"
+            className={cn(
+              'pointer-events-none absolute left-0 top-0 whitespace-nowrap font-mono text-[11px] text-vergex-muted',
+              !placed && 'invisible'
+            )}
             style={onStage}
           >
             {label(`flow.stage.${row.key}`)}
           </span>
         ))}
         {blockIds.map((id) => {
-          const view = views[id]
+          const view = views?.[id]
+          const name = label(`flow.block.${id}`)
           return (
             <button
               key={id}
               type="button"
               ref={anchor(id)}
               aria-pressed={sameSelection(selection, { type: 'block', id })}
-              aria-label={`${label(`flow.block.${id}`)}: ${view.sub}`}
+              aria-label={view ? `${name}: ${view.sub}` : name}
               style={onStage}
-              className="absolute left-0 top-0 rounded-md px-1.5 py-0.5 text-center font-mono text-[11px] tabular-nums transition-colors hover:bg-vergex-ink-tint hover:duration-0 aria-pressed:bg-vergex-ink-tint"
+              className={cn(
+                'absolute left-0 top-0 rounded-md px-1.5 py-0.5 text-center font-mono text-[11px] tabular-nums transition-colors hover:bg-vergex-ink-tint hover:duration-0 aria-pressed:bg-vergex-ink-tint',
+                !placed && 'invisible'
+              )}
               onMouseEnter={() => setHovered(id)}
               onMouseLeave={() => setHovered(null)}
               onFocus={() => setHovered(id)}
@@ -331,15 +347,15 @@ export const FlowScene = forwardRef<FlowSceneHandle, FlowSceneProps>(
               onClick={() => toggle({ type: 'block', id })}
             >
               <span className="block whitespace-nowrap font-sans text-xs font-medium text-vergex-ink">
-                {label(`flow.block.${id}`)}
+                {name}
               </span>
               <span
                 className={cn(
                   'block whitespace-nowrap',
-                  view.warn ? 'text-vergex-warning' : 'text-vergex-muted'
+                  view?.warn ? 'text-vergex-warning' : 'text-vergex-muted'
                 )}
               >
-                {view.sub}
+                {view ? view.sub : <Skeleton className="w-12" />}
               </span>
             </button>
           )

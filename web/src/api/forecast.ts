@@ -29,6 +29,9 @@ export interface ForecastSignal {
   outcome?: 'hit' | 'miss' | 'neutral'
   target_close?: number
   actual_move_pct?: number
+  // Its window does not overlap an earlier independent signal's, and price moved:
+  // what the statistics count.
+  independent: boolean
 }
 
 // One row of the coin list: a tracked coin and its latest forecast.
@@ -139,8 +142,6 @@ export interface ForecastDetail {
   last_closed: number
   // The candle still open, while the live stream is delivering it.
   forming: ForecastCandle | null
-  // The forecast drawn as candles: a restatement of the reading, not prices.
-  projection: ForecastCandle[]
   indicators?: ForecastIndicators
 }
 
@@ -152,8 +153,14 @@ export interface ForecastOverlay {
   direction?: ForecastDirection
   display_prob: number
   calibrated: boolean
+  // What the forecast band is drawn from: the candle the call was made on, the one
+  // that will judge it, the close it starts from and the expected move at the target.
+  open_time: number
+  target_time: number
+  close: number
+  expected_move_pct: number
+  horizon: number
   stats: ForecastDetail['stats']
-  projection: ForecastCandle[]
 }
 
 export interface ForecastIndicatorPoint {
@@ -169,6 +176,19 @@ export interface ForecastIndicators {
   boll_lower: ForecastIndicatorPoint[]
   vwap: ForecastIndicatorPoint[]
   rsi: ForecastIndicatorPoint[]
+}
+
+// What a chart draws a forecast from: the candle the call was made on, the bar length,
+// the close it starts from, the expected move at the target, how far it looks ahead,
+// the score shown and the call.
+export interface ChartForecast {
+  time: number // Unix seconds.
+  step: number // Seconds per bar.
+  close: number
+  expectedMovePct: number
+  horizon: number
+  prob: number
+  direction: ForecastDirection
 }
 
 export interface ForecastCandle {

@@ -118,7 +118,7 @@ export function batchPlans(
   records: FuturesState['records'][string][],
   batch: PlanBatch | null
 ): Plan[] {
-  const drafts = records.filter((record) => record.state === 'draft')
+  const drafts = records.filter((record) => record.status === 'draft')
   if (!batch) return drafts.length ? [drafts[0].plan] : []
   const found = batch.ids.flatMap((id) => {
     const record = drafts.find((row) => row.plan.id === id)

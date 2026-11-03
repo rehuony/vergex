@@ -49,12 +49,15 @@ Settings come from `.env`; `.env.example` documents each one. Models, accounts a
 | Setting | Default | Notes |
 | :------ | :------ | :---- |
 | `VERGEX_BIND_ADDRESS`, `VERGEX_FRONTEND_PORT` | `127.0.0.1`, `8000` | Where the web UI and its `/api/` proxy listen |
+| `VERGEX_BACKEND_PORT` | `3000` | The backend's port on the host, used only when its mapping in `docker-compose.yml` is uncommented |
+| `VERGEX_AGENT_MAX_TOKENS` | `8000` | The most a model may write in one reply. The Futures assistant asks for more: see [models.md](models.md#choosing-a-model) |
+| `TZ` | `Asia/Shanghai` | The containers' timezone, for their logs. Days in reports and limits are UTC days whatever it says |
 | `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSLMODE` | `vergex`, generated, `vergex`, `disable` | PostgreSQL. `make run-postgresql` and `make up` start it with these values |
 | `DB_HOST`, `DB_PORT` | `127.0.0.1`, `5432` | Where the backend and tests find the database when running from source, and the port `make run-postgresql` publishes. `make up` connects its containers over their own network instead, so start the stack with it rather than plain `docker compose up` |
 | `TRANSPORT_ENCRYPTION` | `false` | Encrypt API keys in the browser before sending; needs HTTPS or localhost |
 | `CORS_ALLOWED_ORIGINS` | localhost origins | Only needed when the UI is served from another origin |
 
-The schema is migrated automatically at startup, by the SQL files in `internal/database/migrations`. Migrations only go forward: see [database.md](database.md).
+The schema is migrated automatically at startup, by the SQL files in `internal/database/migrations`. Migrations only go forward. Until the schema settles, an update may replace the baseline instead, and a database built from the old one refuses to start until it is rebuilt: see [database.md](database.md#starting-from-the-baseline).
 
 ## Data and backups
 

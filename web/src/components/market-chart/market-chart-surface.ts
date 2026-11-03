@@ -3,10 +3,18 @@ import {
   ColorType,
   CrosshairMode,
   HistogramSeries,
+  LineSeries,
   createChart,
   type AutoscaleInfo,
   type IChartApi,
+  type IPrimitivePaneRenderer,
+  type IPrimitivePaneView,
+  type ISeriesPrimitive,
+  type SeriesAttachedParameter,
+  type Time,
+  type UTCTimestamp,
 } from 'lightweight-charts'
+import type { ChartForecast } from '@/api/forecast'
 
 // The market chart's surface on lightweight-charts, shared by Futures and
 // Forecast: colours, theme and the candle and volume series.
@@ -87,6 +95,11 @@ export function candleColors() {
   }
 }
 
+// priceMargins is the room above and below the candles, as shares of the pane. The
+// bottom holds the volume lane; a chart may ask for more at the top for what floats
+// there.
+export const priceMargins = { top: 0.08, bottom: 0.16 }
+
 // createMarketChart creates the candle and volume series on host.
 export function createMarketChart(
   host: HTMLElement,
@@ -104,7 +117,7 @@ export function createMarketChart(
     crosshair: { ...theme.crosshair, mode: CrosshairMode.Normal },
     rightPriceScale: {
       borderVisible: false,
-      scaleMargins: { top: 0.08, bottom: 0.22 },
+      scaleMargins: priceMargins,
     },
     timeScale: {
       borderVisible: false,
@@ -124,32 +137,133 @@ export function createMarketChart(
     lastValueVisible: false,
     priceLineVisible: false,
   })
+  // The volume lane takes the bottom of the pane, under the candles' own margin.
   chart.priceScale('volume').applyOptions({
-    scaleMargins: { top: 0.82, bottom: 0 },
+    scaleMargins: { top: 0.88, bottom: 0 },
   })
   return { chart, candles, volume }
 }
 
-// A simulated candle must not pass for a real one: mostly see-through, with only
-// its outline at some strength.
-export function projectionColors() {
-  const up = colors.up
-  const down = colors.down
-  return {
-    upColor: tint(up, 0.18),
-    downColor: tint(down, 0.18),
-    borderUpColor: tint(up, 0.65),
-    borderDownColor: tint(down, 0.65),
-    wickUpColor: tint(up, 0.65),
-    wickDownColor: tint(down, 0.65),
+// forecastPath lays a forecast out bar by bar. Its middle drifts in the call's
+// direction as far as the score says, up to the expected move at the target, and the
+// band around it widens as the square root of time to the expected move. A neutral
+// call, or a score a curve has put on the other side of 50 from the call, drifts
+// nowhere.
+export function forecastPath(forecast: ChartForecast) {
+  const move = forecast.expectedMovePct / 100
+  let drift = ((forecast.prob - 0.5) / 0.5) * move
+  if (
+    forecast.direction === 'neutral' ||
+    (forecast.direction === 'up') !== drift > 0
+  )
+    drift = 0
+  const points = []
+  for (let bar = 0; bar <= forecast.horizon; bar++) {
+    const share = bar / forecast.horizon
+    points.push({
+      time: forecast.time + bar * forecast.step,
+      mid: forecast.close * (1 + drift * share),
+      half: forecast.close * move * Math.sqrt(share),
+    })
   }
+  return points
 }
 
-// addProjectionSeries adds the series that draws a forecast as simulated candles.
-export function addProjectionSeries(chart: IChartApi) {
-  return chart.addSeries(CandlestickSeries, {
-    ...projectionColors(),
+// addHorizonSeries adds a series with nothing to draw, whose whitespace points keep
+// the forecast's horizon on the time scale, so the band has somewhere to go.
+export function addHorizonSeries(chart: IChartApi) {
+  return chart.addSeries(LineSeries, {
     priceLineVisible: false,
     lastValueVisible: false,
+    crosshairMarkerVisible: false,
   })
+}
+
+// horizonPoints are the whitespace points of a forecast's horizon.
+export function horizonPoints(forecast: ChartForecast | null) {
+  if (!forecast) return []
+  return forecastPath(forecast)
+    .slice(1)
+    .map((point) => ({ time: point.time as UTCTimestamp }))
+}
+
+type RenderTarget = Parameters<IPrimitivePaneRenderer['draw']>[0]
+
+// ForecastBand draws a forecast on the candle series it is attached to: a see-through
+// band in the call's colour from the last close to the target candle, with a dashed
+// middle. It only restates the reading, which is why it is drawn faint: only the
+// direction of these calls has been tested, not the size or the path.
+export class ForecastBand implements ISeriesPrimitive<Time> {
+  private forecast: ChartForecast | null = null
+  private params: SeriesAttachedParameter<Time> | null = null
+  private readonly views: IPrimitivePaneView[] = [
+    {
+      zOrder: () => 'normal',
+      renderer: () => ({
+        draw: (target: RenderTarget) => this.paint(target),
+      }),
+    },
+  ]
+  attached(params: SeriesAttachedParameter<Time>) {
+    this.params = params
+  }
+  detached() {
+    this.params = null
+  }
+  paneViews() {
+    return this.views
+  }
+  set(forecast: ChartForecast | null) {
+    this.forecast = forecast
+    this.params?.requestUpdate()
+  }
+  // Draws again in the theme's colours.
+  repaint() {
+    this.params?.requestUpdate()
+  }
+  private paint(target: RenderTarget) {
+    const params = this.params
+    const forecast = this.forecast
+    if (!params || !forecast || forecast.horizon <= 0) return
+    const tone =
+      forecast.direction === 'up'
+        ? colors.up
+        : forecast.direction === 'down'
+          ? colors.down
+          : colors.muted
+    const scale = params.chart.timeScale()
+    const points: { x: number; mid: number; high: number; low: number }[] = []
+    for (const point of forecastPath(forecast)) {
+      const x = scale.timeToCoordinate(point.time as UTCTimestamp)
+      const mid = params.series.priceToCoordinate(point.mid)
+      const high = params.series.priceToCoordinate(point.mid + point.half)
+      const low = params.series.priceToCoordinate(point.mid - point.half)
+      if (x === null || mid === null || high === null || low === null) return
+      points.push({ x, mid, high, low })
+    }
+    target.useMediaCoordinateSpace(({ context: ctx }) => {
+      ctx.beginPath()
+      points.forEach((p, i) =>
+        i === 0 ? ctx.moveTo(p.x, p.high) : ctx.lineTo(p.x, p.high)
+      )
+      for (let i = points.length - 1; i >= 0; i--)
+        ctx.lineTo(points[i].x, points[i].low)
+      ctx.closePath()
+      ctx.fillStyle = tint(tone, 0.12)
+      ctx.fill()
+      ctx.strokeStyle = tint(tone, 0.45)
+      ctx.lineWidth = 1
+      ctx.setLineDash([])
+      ctx.stroke()
+      ctx.beginPath()
+      ctx.setLineDash([4, 3])
+      ctx.strokeStyle = tint(tone, 0.9)
+      ctx.lineWidth = 1.5
+      points.forEach((p, i) =>
+        i === 0 ? ctx.moveTo(p.x, p.mid) : ctx.lineTo(p.x, p.mid)
+      )
+      ctx.stroke()
+      ctx.setLineDash([])
+    })
+  }
 }

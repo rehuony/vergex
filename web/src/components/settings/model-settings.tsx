@@ -45,7 +45,8 @@ const modelIcon = (model: AgentModel) =>
     <Brain className="size-5" />
   )
 
-const defaultModel = (model: AgentModel) => model.defaultModel || model.provider
+const defaultModel = (model: AgentModel) =>
+  model.default_model || model.provider
 
 /** The models Futures, traders and Telegram call, with their keys. */
 export function ModelSettings({ language }: { language: Language }) {
@@ -112,7 +113,7 @@ export function ModelSettings({ language }: { language: Language }) {
                 )}
               </SettingBadge>
             }
-            detail={model.customModelName || defaultModel(model)}
+            detail={model.model_name || defaultModel(model)}
           >
             <Button
               type="button"
@@ -154,11 +155,11 @@ function ModelForm({
   const [apiKey, setApiKey] = useState('')
   // null until edited: the field shows the provider's own endpoint.
   const [baseUrl, setBaseUrl] = useState<string | null>(
-    existing?.customApiUrl || null
+    existing?.base_url || null
   )
   // Like the endpoint: null until edited, and the field shows the provider's own.
   const [modelName, setModelName] = useState<string | null>(
-    existing?.customModelName || null
+    existing?.model_name || null
   )
   // What the provider offers with what is in the form, and whether that is still coming.
   const [catalog, setCatalog] = useState<string[]>([])
@@ -171,8 +172,8 @@ function ModelForm({
   const ready = Boolean(model) && (apiKey.trim() !== '' || keySaved)
   const keyLink = model && AGENT_PROVIDER_CONFIG[model.provider]?.apiUrl
   const officialUrl =
-    supported.find((row) => row.provider === model?.provider)?.defaultBaseUrl ??
-    ''
+    supported.find((row) => row.provider === model?.provider)
+      ?.default_base_url ?? ''
   const shownUrl = baseUrl ?? officialUrl
   // The official endpoint is saved as none, so it stays whatever the provider's default is.
   const customUrl = shownUrl.trim() === officialUrl ? '' : shownUrl.trim()
@@ -196,7 +197,7 @@ function ModelForm({
         .listAvailableModels({
           agent_model_id: model.id,
           api_key: key,
-          custom_api_url: customUrl,
+          base_url: customUrl,
         })
         .then((names) => live && setCatalog(names))
         // Only a convenience: a name can still be typed.
@@ -214,8 +215,8 @@ function ModelForm({
     fields: {
       enabled: boolean
       api_key: string
-      custom_api_url: string
-      custom_model_name: string
+      base_url: string
+      model_name: string
     },
     done: string,
     failed: string
@@ -250,8 +251,8 @@ function ModelForm({
         await api.testModelConfig({
           agent_model_id: model.id,
           api_key: key,
-          custom_api_url: customUrl,
-          custom_model_name: customModel,
+          base_url: customUrl,
+          model_name: customModel,
         })
       )
     } catch (err) {
@@ -293,8 +294,8 @@ function ModelForm({
       {
         enabled: true,
         api_key: key,
-        custom_api_url: customUrl,
-        custom_model_name: customModel,
+        base_url: customUrl,
+        model_name: customModel,
       },
       'agentTradersToast.modelConfigUpdated',
       'saveConfigFailed'

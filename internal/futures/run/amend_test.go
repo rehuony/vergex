@@ -18,8 +18,8 @@ func openPosition(t *testing.T) (*Controller, *testBroker, *testMarket, View) {
 	protected(t, c, b, v.ID)
 	c.step(context.Background(), testUser, v.ID)
 	got, err := c.Get(testUser, v.ID)
-	if err != nil || got.State != "position_open" || len(got.Orders) != 3 {
-		t.Fatalf("run = %s, orders %+v, err %v", got.State, got.Orders, err)
+	if err != nil || got.Status != "position_open" || len(got.Orders) != 3 {
+		t.Fatalf("run = %s, orders %+v, err %v", got.Status, got.Orders, err)
 	}
 	return c, b, m, got
 }
@@ -56,16 +56,16 @@ func TestMovingAStopPlacesTheNewOneBeforeCancellingTheOld(t *testing.T) {
 	if fresh.Price != "99500" || fresh.Replaces != oldStop.ClientID || fresh.Quantity != oldStop.Quantity || fresh.ParentID != oldStop.ParentID || fresh.ClientID == oldStop.ClientID {
 		t.Fatalf("new stop = %+v", fresh)
 	}
-	if got.State != "position_open" || got.Plan.Idea.Stop != "99000" {
-		t.Fatalf("run = %s, plan stop %s", got.State, got.Plan.Idea.Stop)
+	if got.Status != "position_open" || got.Plan.Idea.Stop != "99000" {
+		t.Fatalf("run = %s, plan stop %s", got.Status, got.Plan.Idea.Stop)
 	}
 
 	// It reads back as written, and the worker sees a protected position with nothing to add.
 	placed := len(b.placed)
 	c.step(context.Background(), testUser, v.ID)
 	after, err := c.Get(testUser, v.ID)
-	if err != nil || after.State != "position_open" || len(b.placed) != placed {
-		t.Fatalf("after a step: %s, %d placed, err %v", after.State, len(b.placed)-placed, err)
+	if err != nil || after.Status != "position_open" || len(b.placed) != placed {
+		t.Fatalf("after a step: %s, %d placed, err %v", after.Status, len(b.placed)-placed, err)
 	}
 
 	// The ledger has the new order and the old one's end.
@@ -107,12 +107,12 @@ func TestMovingAnExitCanBeRepeatedOrAskedTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if orderOf(t, got, "tp", "NEW").Price != "106000" || got.State != "position_open" {
-		t.Fatalf("after moving twice: %s, %+v", got.State, got.Orders)
+	if orderOf(t, got, "tp", "NEW").Price != "106000" || got.Status != "position_open" {
+		t.Fatalf("after moving twice: %s, %+v", got.Status, got.Orders)
 	}
 	c.step(context.Background(), testUser, v.ID)
-	if after, err := c.Get(testUser, v.ID); err != nil || after.State != "position_open" {
-		t.Fatalf("after a step: %+v, err %v", after.State, err)
+	if after, err := c.Get(testUser, v.ID); err != nil || after.Status != "position_open" {
+		t.Fatalf("after a step: %+v, err %v", after.Status, err)
 	}
 }
 
@@ -163,8 +163,8 @@ func TestARefusedMoveLeavesTheOldStopAlone(t *testing.T) {
 	if !errors.As(err, &rejection) || rejection.Key != "exitRefused" {
 		t.Fatalf("err = %v", err)
 	}
-	if len(b.cancelled) != 0 || got.State != "position_open" || orderOf(t, got, "sl", "NEW").ClientID != v.Orders[1].ClientID {
-		t.Fatalf("run = %s, cancelled %v, orders %+v", got.State, b.cancelled, got.Orders)
+	if len(b.cancelled) != 0 || got.Status != "position_open" || orderOf(t, got, "sl", "NEW").ClientID != v.Orders[1].ClientID {
+		t.Fatalf("run = %s, cancelled %v, orders %+v", got.Status, b.cancelled, got.Orders)
 	}
 	if refused := orderOf(t, got, "sl", "REJECTED"); refused.Error == "" {
 		t.Fatalf("refused = %+v", refused)
@@ -173,8 +173,8 @@ func TestARefusedMoveLeavesTheOldStopAlone(t *testing.T) {
 	// The worker carries on with the old one, and a later move still works.
 	b.errorPlace = nil
 	c.step(context.Background(), testUser, v.ID)
-	if after, err := c.Get(testUser, v.ID); err != nil || after.State != "position_open" {
-		t.Fatalf("after a step: %s, err %v", after.State, err)
+	if after, err := c.Get(testUser, v.ID); err != nil || after.Status != "position_open" {
+		t.Fatalf("after a step: %s, err %v", after.Status, err)
 	}
 	if got, err = c.AmendExit(context.Background(), testUser, v.ID, "sl", "99600"); err != nil {
 		t.Fatal(err)
@@ -189,8 +189,8 @@ func TestALostAnswerIsReconciledAndNeverSentAgain(t *testing.T) {
 	c, b, _, v := openPosition(t)
 	b.errorPlace = errors.New("connection reset")
 	got, err := c.AmendExit(context.Background(), testUser, v.ID, "sl", "99500")
-	if err == nil || got.State != "needs_attention" || len(b.cancelled) != 0 {
-		t.Fatalf("err = %v, run = %s, cancelled %v", err, got.State, b.cancelled)
+	if err == nil || got.Status != "needs_attention" || len(b.cancelled) != 0 {
+		t.Fatalf("err = %v, run = %s, cancelled %v", err, got.Status, b.cancelled)
 	}
 	orderOf(t, got, "sl", "UNKNOWN")
 	b.errorPlace = nil
@@ -212,8 +212,8 @@ func TestALostAnswerIsReconciledAndNeverSentAgain(t *testing.T) {
 		t.Fatalf("orders = %+v, cancelled %v", after.Orders, b.cancelled)
 	}
 	c.step(context.Background(), testUser, v.ID)
-	if after, err = c.Get(testUser, v.ID); err != nil || after.State != "position_open" {
-		t.Fatalf("after reconciling: %s, err %v", after.State, err)
+	if after, err = c.Get(testUser, v.ID); err != nil || after.Status != "position_open" {
+		t.Fatalf("after reconciling: %s, err %v", after.Status, err)
 	}
 }
 
@@ -231,8 +231,8 @@ func TestANewOrderThatNeverLeftIsDroppedAndTheOldStays(t *testing.T) {
 	// While the exchange's answer is unclear, the run waits.
 	c.step(context.Background(), testUser, v.ID)
 	got, err := c.Get(testUser, v.ID)
-	if err != nil || got.State != "needs_attention" || len(b.placed) != placed {
-		t.Fatalf("run = %s, err %v, sent %d", got.State, err, len(b.placed)-placed)
+	if err != nil || got.Status != "needs_attention" || len(b.placed) != placed {
+		t.Fatalf("run = %s, err %v, sent %d", got.Status, err, len(b.placed)-placed)
 	}
 
 	// Once it says it has no such order, the old stop is the stop again.
@@ -240,8 +240,8 @@ func TestANewOrderThatNeverLeftIsDroppedAndTheOldStays(t *testing.T) {
 	c.step(context.Background(), testUser, v.ID)
 	c.step(context.Background(), testUser, v.ID)
 	got, err = c.Get(testUser, v.ID)
-	if err != nil || got.State != "position_open" || len(b.placed) != placed || len(b.cancelled) != 0 {
-		t.Fatalf("run = %s (%s), err %v, sent %d, cancelled %v", got.State, got.Error, err, len(b.placed)-placed, b.cancelled)
+	if err != nil || got.Status != "position_open" || len(b.placed) != placed || len(b.cancelled) != 0 {
+		t.Fatalf("run = %s (%s), err %v, sent %d, cancelled %v", got.Status, got.Error, err, len(b.placed)-placed, b.cancelled)
 	}
 	if orderOf(t, got, "sl", "NEW").ClientID != old.ClientID || orderOf(t, got, "sl", "REJECTED").ClientID != fresh.ClientID {
 		t.Fatalf("orders = %+v", got.Orders)
@@ -252,20 +252,20 @@ func TestAnOldStopThatWouldNotCancelIsCancelledLater(t *testing.T) {
 	c, b, _, v := openPosition(t)
 	b.cancelErr = errors.New("timeout")
 	got, err := c.AmendExit(context.Background(), testUser, v.ID, "sl", "99500")
-	if err == nil || got.State != "needs_attention" {
-		t.Fatalf("err = %v, run = %s", err, got.State)
+	if err == nil || got.Status != "needs_attention" {
+		t.Fatalf("err = %v, run = %s", err, got.Status)
 	}
 	c.step(context.Background(), testUser, v.ID)
-	if still, _ := c.Get(testUser, v.ID); still.State != "needs_attention" {
-		t.Fatalf("run = %s with the cancel still failing", still.State)
+	if still, _ := c.Get(testUser, v.ID); still.Status != "needs_attention" {
+		t.Fatalf("run = %s with the cancel still failing", still.Status)
 	}
 	b.cancelErr = nil
 	placed := len(b.placed)
 	c.step(context.Background(), testUser, v.ID)
 	c.step(context.Background(), testUser, v.ID)
 	after, err := c.Get(testUser, v.ID)
-	if err != nil || after.State != "position_open" || len(b.placed) != placed || after.Orders[1].Status != "CANCELED" {
-		t.Fatalf("run = %s, err %v, sent %d, old %s", after.State, err, len(b.placed)-placed, after.Orders[1].Status)
+	if err != nil || after.Status != "position_open" || len(b.placed) != placed || after.Orders[1].Status != "CANCELED" {
+		t.Fatalf("run = %s, err %v, sent %d, old %s", after.Status, err, len(b.placed)-placed, after.Orders[1].Status)
 	}
 }
 
@@ -283,8 +283,8 @@ func TestAMovedStopThatFiresFinishesTheRun(t *testing.T) {
 		t.Fatal("the run did not finish")
 	}
 	out, err := c.Get(testUser, v.ID)
-	if err != nil || out.State != "completed" {
-		t.Fatalf("run = %s (%s), err %v", out.State, out.Error, err)
+	if err != nil || out.Status != "completed" {
+		t.Fatalf("run = %s (%s), err %v", out.Status, out.Error, err)
 	}
 	if orderOf(t, out, "tp", "CANCELED").Role != "tp" {
 		t.Fatalf("orders = %+v", out.Orders)
@@ -298,8 +298,8 @@ func TestAStopThatFiresWhileBeingMovedLeavesNothingBehind(t *testing.T) {
 	oldStop := v.Orders[1]
 	b.cancelErr = errors.New("already triggered")
 	got, err := c.AmendExit(context.Background(), testUser, v.ID, "sl", "99500")
-	if err == nil || got.State != "needs_attention" {
-		t.Fatalf("err = %v, run = %s", err, got.State)
+	if err == nil || got.Status != "needs_attention" {
+		t.Fatalf("err = %v, run = %s", err, got.Status)
 	}
 	fired := b.orders[oldStop.ClientID]
 	fired.Status, fired.Filled = "FILLED", fired.Quantity
@@ -313,8 +313,8 @@ func TestAStopThatFiresWhileBeingMovedLeavesNothingBehind(t *testing.T) {
 		}
 	}
 	out, err := c.Get(testUser, v.ID)
-	if err != nil || out.State != "completed" {
-		t.Fatalf("run = %s (%s), err %v, orders %+v", out.State, out.Error, err, out.Orders)
+	if err != nil || out.Status != "completed" {
+		t.Fatalf("run = %s (%s), err %v, orders %+v", out.Status, out.Error, err, out.Orders)
 	}
 	if b.orders[fresh.ClientID].Status != "CANCELED" || b.orders[target.ClientID].Status != "CANCELED" {
 		t.Fatalf("left on the exchange: %+v", b.orders)

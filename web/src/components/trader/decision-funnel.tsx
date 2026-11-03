@@ -66,7 +66,7 @@ export function DecisionFunnel({
   }))
   return (
     <section
-      aria-label={`${label('latestCycle')} · ${t('traderDetail.cycleNumber', language, { cycle: latest.cycle_number })}`}
+      aria-label={`${label('latestCycle')} · ${t('traderDetail.cycleNumber', language, { cycle: latest.seq })}`}
     >
       <dl className="grid grid-cols-3 gap-px border-b border-vergex-line bg-vergex-line max-sm:grid-cols-1">
         <Layer title={label('candidates')} items={candidates} />

@@ -60,8 +60,8 @@ export function findBlockingRun(
   return runs.find(
     (r) =>
       r.account_id === accountID &&
-      reservingStates.includes(r.state) &&
-      !(r.state === 'approved' && expired(r.plan, clock))
+      reservingStates.includes(r.status) &&
+      !(r.status === 'approved' && expired(r.plan, clock))
   )
 }
 

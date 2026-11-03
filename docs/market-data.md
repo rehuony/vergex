@@ -36,11 +36,11 @@ The market tables are in the main PostgreSQL database, on a connection pool of t
 
 | Table | Holds |
 | :---- | :---- |
-| `market.instruments` | One row per venue, market kind and symbol, so spot and perpetual BTCUSDT would be different instruments |
-| `market.series` | One row per instrument and timeframe: its tier, status, water mark, next turn and last error |
-| `market.candles` | Closed candles |
+| `market.instruments` | One row per venue, market kind and symbol, so spot and perpetual BTCUSDT would be different instruments. A venue's own name for one is worked out from the symbol when it is needed |
+| `market.series` | One row per instrument and interval: its tier, status, water mark, next turn and last error |
+| `market.candles` | Closed candles: open, high, low, close, volume and taker buy volume |
 | `market.candle_gaps` | Ranges the exchange confirmed it has no candles for |
-| `market.derivative_metrics` | Timed funding, open interest value and long/short ratio readings |
+| `market.derivatives` | Timed funding, open interest value and long/short ratio readings |
 
 The watchlist, the number of high-volume coins and the current ranking are the `market` row of `core.settings`.
 

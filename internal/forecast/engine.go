@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,7 +21,7 @@ const (
 	calibrateEvery   = time.Hour
 	maxCatchUpBars   = 8 // After downtime, only the latest candles get a forecast.
 	staleBars        = 3 // A series this far behind is no longer current.
-	recentSignalRows = 50
+	recentSignalRows = 120
 )
 
 // Engine stores forecasts as candles close, judges them when their target
@@ -31,7 +30,7 @@ type Engine struct {
 	Store  *Store
 	market *feed.Service
 	now    func() time.Time
-	notify func(ctx context.Context, text string) error
+	notify func(ctx context.Context, alert Alert) error
 
 	mu             sync.Mutex
 	skipped        map[int64]skip
@@ -39,8 +38,6 @@ type Engine struct {
 	backtestRun    int64
 	cancelBacktest context.CancelFunc
 	calibrated     time.Time
-	// Language gives the language alerts are written in. Nil means English.
-	Language func() string
 }
 
 // skip is why a series has no forecast for its newest candle.
@@ -49,9 +46,9 @@ type skip struct {
 	reason  string
 }
 
-// NewEngine creates an engine over the market data service. notify sends alert
-// text and may be nil.
-func NewEngine(store *Store, service *feed.Service, notify func(ctx context.Context, text string) error) *Engine {
+// NewEngine creates an engine over the market data service. notify tells the user of
+// calls that crossed the threshold, and may be nil.
+func NewEngine(store *Store, service *feed.Service, notify func(ctx context.Context, alert Alert) error) *Engine {
 	return &Engine{Store: store, market: service, now: time.Now, notify: notify, skipped: map[int64]skip{}}
 }
 
@@ -373,7 +370,7 @@ func (e *Engine) Calibrate(strategy *Strategy, interval string) error {
 		return e.Store.removeCalibration(strategy.ID, interval)
 	}
 	return e.Store.saveCalibration(Calibration{
-		StrategyID: strategy.ID, Interval: interval, Samples: len(points),
+		StrategyID: strategy.ID, Interval: interval,
 		Knots: encodeKnots(knots), BuiltAt: e.now().UnixMilli(),
 	})
 }
@@ -400,10 +397,6 @@ func (e *Engine) alert(ctx context.Context, strategy string, created []Signal) {
 	for _, symbol := range marketSettings.Watchlist {
 		watched[symbol] = true
 	}
-	language := "en"
-	if e.Language != nil {
-		language = e.Language()
-	}
 	newest := map[int64]*Signal{}
 	for i := range created {
 		if held := newest[created[i].SeriesID]; held == nil || created[i].OpenTime > held.OpenTime {
@@ -411,7 +404,7 @@ func (e *Engine) alert(ctx context.Context, strategy string, created []Signal) {
 		}
 	}
 	now := e.now().UnixMilli()
-	lines := []string{alertHeading(language, strategy)}
+	alert := Alert{Strategy: strategy}
 	var fired, rearmed []int64
 	for i := range created {
 		signal := &created[i]
@@ -422,7 +415,7 @@ func (e *Engine) alert(ctx context.Context, strategy string, created []Signal) {
 		case !beyondThreshold(signal, settings.AlertThreshold):
 			rearmed = append(rearmed, signal.SeriesID)
 		case slices.Contains(settings.AlertIntervals, signal.Interval) && now < signal.OpenTime+2*intervalMillis(signal.Interval) && !e.Store.alertArm(signal.SeriesID):
-			lines = append(lines, alertLine(language, signal))
+			alert.Signals = append(alert.Signals, *signal)
 			fired = append(fired, signal.SeriesID)
 		}
 	}
@@ -434,7 +427,7 @@ func (e *Engine) alert(ctx context.Context, strategy string, created []Signal) {
 	if len(fired) == 0 {
 		return
 	}
-	if err := e.notify(ctx, strings.Join(lines, "\n")); err != nil {
+	if err := e.notify(ctx, alert); err != nil {
 		logger.Warnf("Forecast: send alert: %v", err)
 		return
 	}
@@ -458,56 +451,16 @@ func beyondThreshold(signal *Signal, threshold int) bool {
 	return false
 }
 
-func alertHeading(language, strategy string) string {
-	if language == "zh" {
-		return "📈 预测信号（策略：" + strategy + "）"
-	}
-	return "📈 Forecast signals (strategy: " + strategy + ")"
+// Alert is the calls of one strategy that crossed the threshold together, for whoever tells
+// the user of them.
+type Alert struct {
+	Strategy string
+	Signals  []Signal
 }
 
-func alertLine(language string, signal *Signal) string {
-	score := Score(signal.DisplayProb)
-	span := int64(signal.Horizon) * intervalMillis(signal.Interval)
-	if language == "zh" {
-		direction := "上涨"
-		if signal.Direction == DirectionDown {
-			direction = "下跌"
-		}
-		value := fmt.Sprintf("评分 %d", score)
-		if signal.Calibrated {
-			value = fmt.Sprintf("%d%%", score)
-		}
-		return fmt.Sprintf("%s %s：%s，%s，约 %s内", signal.Symbol, signal.Interval, direction, value, roughSpan(language, span))
-	}
-	direction := "Up"
-	if signal.Direction == DirectionDown {
-		direction = "Down"
-	}
-	value := fmt.Sprintf("Score %d", score)
-	if signal.Calibrated {
-		value = fmt.Sprintf("%d%%", score)
-	}
-	return fmt.Sprintf("%s %s: %s, %s, over about %s", signal.Symbol, signal.Interval, direction, value, roughSpan(language, span))
-}
-
-// roughSpan says how long a stretch of time is in the largest unit that reads well, since
-// nobody works out four 15m bars in their head.
-func roughSpan(language string, millis int64) string {
-	minutes := int(math.Round(float64(millis) / 60000))
-	amount, unit := minutes, "minute"
-	switch {
-	case minutes >= 48*60:
-		amount, unit = int(math.Round(float64(minutes)/(24*60))), "day"
-	case minutes >= 60:
-		amount, unit = int(math.Round(float64(minutes)/60)), "hour"
-	}
-	if language == "zh" {
-		return fmt.Sprintf("%d %s", amount, map[string]string{"minute": "分钟", "hour": "小时", "day": "天"}[unit])
-	}
-	if amount != 1 {
-		unit += "s"
-	}
-	return fmt.Sprintf("%d %s", amount, unit)
+// Span is how far ahead a call looks.
+func (s Signal) Span() time.Duration {
+	return time.Duration(int64(s.Horizon)*intervalMillis(s.Interval)) * time.Millisecond
 }
 
 // Candles reads local candles as Klines, for backtests.
@@ -679,8 +632,6 @@ type Detail struct {
 	// Forming is the candle still open, while the stream is delivering it. Forecasts
 	// only ever use closed candles.
 	Forming *CandleRow `json:"forming"`
-	// Projection draws the forecast as candles. See Project.
-	Projection []CandleRow `json:"projection"`
 	// Indicators is there when asked for.
 	Indicators *Indicators `json:"indicators,omitempty"`
 }
@@ -709,7 +660,7 @@ func (e *Engine) Detail(strategy *Strategy, symbol, interval string, prices map[
 	if err != nil {
 		return nil, err
 	}
-	detail := &Detail{Symbol: symbol, Interval: interval, Signals: []Signal{}, Candles: []CandleRow{}, Projection: []CandleRow{}, LastClosed: series.LastClosedTime}
+	detail := &Detail{Symbol: symbol, Interval: interval, Signals: []Signal{}, Candles: []CandleRow{}, LastClosed: series.LastClosedTime}
 	if quote, ok := prices[symbol]; ok {
 		detail.Price, detail.Change24hPct = &quote.Price, quote.Change24hPct
 	}
@@ -752,7 +703,6 @@ func (e *Engine) Detail(strategy *Strategy, symbol, interval string, prices map[
 		if detail.Latest, err = e.currentSignal(strategy, series, result, signals); err != nil {
 			return nil, err
 		}
-		detail.Projection = Project(*detail.Latest, step)
 	}
 	if options.Indicators {
 		if err := e.addIndicators(detail, series, step); err != nil {
@@ -776,28 +726,34 @@ func (e *Engine) addIndicators(detail *Detail, series *feed.Series, step int64) 
 }
 
 // Overlay is what another page's chart shows of a coin's forecast under the strategy
-// in use. It holds less than a Detail, since that chart has candles of its own.
+// in use. It holds less than a Detail, since that chart has candles of its own: the
+// call, its record, and what the chart needs to draw the forecast band from the
+// candle the call was made on to its target.
 type Overlay struct {
 	Symbol   string `json:"symbol"`
 	Interval string `json:"interval"`
 	// Pending says why there is nothing to show yet.
-	Pending     string      `json:"pending,omitempty"`
-	Direction   string      `json:"direction,omitempty"`
-	DisplayProb float64     `json:"display_prob"`
-	Calibrated  bool        `json:"calibrated"`
-	Stats       SignalStats `json:"stats"`
-	Projection  []CandleRow `json:"projection"`
+	Pending         string      `json:"pending,omitempty"`
+	Direction       string      `json:"direction,omitempty"`
+	DisplayProb     float64     `json:"display_prob"`
+	Calibrated      bool        `json:"calibrated"`
+	OpenTime        int64       `json:"open_time"`
+	TargetTime      int64       `json:"target_time"`
+	Close           float64     `json:"close"`
+	ExpectedMovePct float64     `json:"expected_move_pct"`
+	Horizon         int         `json:"horizon"`
+	Stats           SignalStats `json:"stats"`
 }
 
 // OverlayFor opens a coin, starting it if it is not tracked, and works out what to
-// draw. A series that has fallen behind shows nothing rather than a projection that
-// starts in the past.
+// draw. A series that has fallen behind shows nothing rather than a band that starts
+// in the past.
 func (e *Engine) OverlayFor(strategy *Strategy, symbol, interval string) (*Overlay, error) {
 	series, err := e.market.Open(symbol, interval)
 	if err != nil {
 		return nil, err
 	}
-	overlay := &Overlay{Symbol: symbol, Interval: interval, Projection: []CandleRow{}}
+	overlay := &Overlay{Symbol: symbol, Interval: interval}
 	step := feed.IntervalMillis(interval)
 	switch {
 	case series.LastClosedTime == 0:
@@ -823,11 +779,12 @@ func (e *Engine) OverlayFor(strategy *Strategy, symbol, interval string) (*Overl
 		return nil, err
 	}
 	overlay.Direction, overlay.DisplayProb, overlay.Calibrated = latest.Direction, latest.DisplayProb, latest.Calibrated
+	overlay.OpenTime, overlay.TargetTime, overlay.Close = latest.OpenTime, latest.TargetTime, latest.Close
+	overlay.ExpectedMovePct, overlay.Horizon = latest.ExpectedMovePct, latest.Horizon
 	overlay.Stats, err = e.Store.SignalStats(strategy.ID, series.ID)
 	if err != nil {
 		return nil, err
 	}
-	overlay.Projection = Project(*latest, step)
 	return overlay, nil
 }
 

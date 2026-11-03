@@ -40,7 +40,7 @@ export function preserveFuturesPlans(
           : record.plan
       return [
         id,
-        old.state === record.state && plan === old.plan
+        old.status === record.status && plan === old.plan
           ? old
           : { ...record, plan },
       ]

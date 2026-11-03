@@ -41,8 +41,8 @@ func (tc Config) AlertMuted(kind string) bool {
 // a time for a stream of events, or that a standing problem was reported. It is
 // kept in the database so a restart repeats nothing.
 type AlertMark struct {
-	Key string `gorm:"column:key;primaryKey"`
-	At  int64  `gorm:"column:at;serializer:unixms"`
+	Name     string `gorm:"column:name;primaryKey"`
+	MarkedAt int64  `gorm:"column:marked_at;serializer:unixms"`
 }
 
 func (AlertMark) TableName() string { return "telegram.alert_marks" }
@@ -213,22 +213,22 @@ func (s *telegramConfigStore) SetMutedAlerts(kinds []string) error {
 
 func (s *telegramConfigStore) AlertMark(key string) (int64, bool) {
 	var mark AlertMark
-	if err := s.db.Where(`"key" = ?`, key).First(&mark).Error; err != nil {
+	if err := s.db.Where("name = ?", key).First(&mark).Error; err != nil {
 		return 0, false
 	}
-	return mark.At, true
+	return mark.MarkedAt, true
 }
 
 func (s *telegramConfigStore) SetAlertMark(key string, at int64) error {
-	return s.db.Save(&AlertMark{Key: key, At: at}).Error
+	return s.db.Save(&AlertMark{Name: key, MarkedAt: at}).Error
 }
 
 func (s *telegramConfigStore) DeleteAlertMark(key string) error {
-	return s.db.Where(`"key" = ?`, key).Delete(&AlertMark{}).Error
+	return s.db.Where("name = ?", key).Delete(&AlertMark{}).Error
 }
 
 func (s *telegramConfigStore) AlertMarkKeys(prefix string) ([]string, error) {
 	var keys []string
-	err := s.db.Model(&AlertMark{}).Where(`"key" LIKE ?`, prefix+"%").Pluck(`"key"`, &keys).Error
+	err := s.db.Model(&AlertMark{}).Where("name LIKE ?", prefix+"%").Pluck("name", &keys).Error
 	return keys, err
 }

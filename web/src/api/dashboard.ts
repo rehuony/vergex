@@ -21,7 +21,7 @@ export interface OverviewModel {
 export interface OverviewTrader {
   trader_id: string
   trader_name: string
-  is_running: boolean
+  running: boolean
   agent_model_id: string
   account_id: string
   kind?: string
@@ -31,7 +31,7 @@ export interface OverviewRun {
   id: string
   account_id: string
   symbol: string
-  state: string
+  status: string
   updated_at: string
 }
 

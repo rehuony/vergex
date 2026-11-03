@@ -9,18 +9,18 @@ import (
 
 func TestEnsureCreatesOnceAndKeepsKindsApart(t *testing.T) {
 	db := testdb.Open(t)
-	perpetual, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	perpetual, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	again, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if again != perpetual {
 		t.Fatalf("second call made a new instrument: %d != %d", again, perpetual)
 	}
-	spot, err := instrument.Ensure(db, "binance", instrument.KindSpot, "BTCUSDT", "BTCUSDT")
+	spot, err := instrument.Ensure(db, "binance", instrument.KindSpot, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,10 +32,7 @@ func TestEnsureCreatesOnceAndKeepsKindsApart(t *testing.T) {
 	if err := db.Order("id").Find(&rows).Error; err != nil {
 		t.Fatal(err)
 	}
-	if rows[0].BaseAsset != "BTC" || rows[0].QuoteAsset != "USDT" || rows[0].SettleAsset == nil || *rows[0].SettleAsset != "USDT" {
-		t.Fatalf("perpetual = %+v", rows[0])
-	}
-	if rows[1].SettleAsset != nil {
-		t.Fatalf("spot settles in %s", *rows[1].SettleAsset)
+	if len(rows) != 2 || rows[0].Kind != instrument.KindPerpetual || rows[1].Kind != instrument.KindSpot || rows[0].Symbol != rows[1].Symbol {
+		t.Fatalf("instruments = %+v", rows)
 	}
 }

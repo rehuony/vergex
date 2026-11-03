@@ -122,7 +122,8 @@ export function FlowEvents({
   positions,
   label,
 }: {
-  overview: Overview
+  /** Undefined while it is first read; the events wait for it, as their links need it. */
+  overview: Overview | undefined
   events: ActivityEvent[]
   loaded: boolean
   stale: boolean
@@ -135,7 +136,8 @@ export function FlowEvents({
   label: Label
 }) {
   const shown = events.filter((event) => eventMatches(event, kind, selection))
-  const nothingYet = overview.traders.length === 0 && overview.runs.length === 0
+  const nothingYet =
+    overview?.traders.length === 0 && overview.runs.length === 0
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -152,7 +154,7 @@ export function FlowEvents({
               ? [
                   {
                     value: 'positions' as const,
-                    label: overview.positions.length
+                    label: overview?.positions.length
                       ? `${label('positions')} ${overview.positions.length}`
                       : label('positions'),
                   },
@@ -166,7 +168,7 @@ export function FlowEvents({
         <div className="min-h-0 flex-1 border-t border-vergex-line">
           {positions}
         </div>
-      ) : !loaded ? (
+      ) : !loaded || !overview ? (
         stale ? (
           <PanelState
             role="alert"

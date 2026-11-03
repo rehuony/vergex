@@ -1,10 +1,6 @@
 /* Entry point. Tokens in tokens.css, element defaults in base.css, the app
-   shell in shell.css; a page's own CSS sits beside the page. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap')
-layer(base);
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap')
-layer(base);
-
+   shell in shell.css; a page's own CSS sits beside the page. The fonts are
+   imported in main.tsx. */
 @import 'tailwindcss';
 @import './tokens.css';
 @import './base.css';

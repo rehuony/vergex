@@ -139,7 +139,7 @@ type AgentCallSummary struct {
 	PromptTokens     int64                        `json:"prompt_tokens"`
 	CompletionTokens int64                        `json:"completion_tokens"`
 	ByModel          map[string]AgentCallModelSum `json:"by_model"`
-	// ByFeature says what made the calls: traders, Futures, Telegram or a test.
+	// ByFeature says what made the calls: traders, Futures, Telegram, the assistant or a test.
 	ByFeature map[string]AgentCallModelSum `json:"by_feature"`
 	// RecentErrors are the last calls that failed, newest first.
 	RecentErrors []CallError `json:"recent_errors"`

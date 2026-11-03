@@ -85,7 +85,7 @@ export function useFuturesChart(
     chart.current
       .plot(
         current?.plan || null,
-        runState || current?.state || 'draft',
+        runState || current?.status || 'draft',
         list.length >= 2 ? list : []
       )
       .catch((e) => setError(e.message))

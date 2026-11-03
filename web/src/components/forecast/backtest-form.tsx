@@ -8,6 +8,7 @@ import { Panel, PanelLoading } from '@/components/common/panel'
 import { Segmented } from '@/components/common/segmented'
 import { SettingActions, SettingRow } from '@/components/common/setting-row'
 import { Button } from '@/components/ui/button'
+import { useAssistantForm } from '@/hooks/use-assistant-page'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AppSelect } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
@@ -96,6 +97,50 @@ export function BacktestForm({
   useEffect(() => {
     if (backfilledAt) void refreshCoverage()
   }, [backfilledAt, refreshCoverage])
+
+  useAssistantForm({
+    id: 'forecast.backtest',
+    title: label('newBacktest'),
+    fields: [
+      {
+        name: 'strategy',
+        label: label('strategy'),
+        type: 'choice',
+        options: usable.map((item) => ({ value: item.id, label: item.name })),
+        value: strategy,
+      },
+      { name: 'name', label: label('strategyName'), type: 'text', value: name },
+      {
+        name: 'coins',
+        label: label('coins'),
+        type: 'list',
+        value: chosenSymbols,
+      },
+      {
+        name: 'intervals',
+        label: label('intervals'),
+        type: 'list',
+        value: intervals,
+      },
+      { name: 'from', label: label('periodFrom'), type: 'text', value: from },
+      { name: 'to', label: label('periodTo'), type: 'text', value: to },
+    ],
+    apply: (values) => {
+      if (typeof values.strategy === 'string') setStrategyId(values.strategy)
+      if (typeof values.name === 'string') setName(values.name)
+      if (Array.isArray(values.coins)) setSymbols(values.coins as string[])
+      if (Array.isArray(values.intervals))
+        setIntervals(
+          (values.intervals as string[]).filter((interval) =>
+            (FORECAST_INTERVALS as readonly string[]).includes(interval)
+          )
+        )
+      if (typeof values.from === 'string' || typeof values.to === 'string')
+        setRange('custom')
+      if (typeof values.from === 'string') setFrom(values.from)
+      if (typeof values.to === 'string') setTo(values.to)
+    },
+  })
 
   const fromMs = new Date(`${from}T00:00:00`).getTime()
   const today = dayText(new Date())

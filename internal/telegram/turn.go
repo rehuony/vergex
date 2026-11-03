@@ -3,14 +3,15 @@ package telegram
 import (
 	"context"
 	"errors"
+	"html"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"vergex/internal/assistant"
 	"vergex/internal/logger"
 	"vergex/internal/service"
-	telegramagent "vergex/internal/telegram/agent"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -48,7 +49,8 @@ func (r *runner) work() {
 				defer close(done)
 				job()
 			}, func(any) {
-				sendMsg(r.bot, r.owner, pick(r.st.Telegram.GetLanguage(), "❌ Something went wrong handling that. Nothing further will happen", "❌ 处理这条消息时出错了，不会再继续"))
+				lang := r.st.Telegram.GetLanguage()
+				r.send(newMessage(lang).notice(emojiFailed, pick(lang, "Something went wrong", "处理时出错了"), pick(lang, "Nothing further will happen", "不会再继续")))
 			})
 			<-done
 		}
@@ -60,13 +62,31 @@ func (r *runner) enqueue(job func()) {
 	select {
 	case r.jobs <- job:
 	default:
-		sendMsg(r.bot, r.owner, pick(r.st.Telegram.GetLanguage(), "⏳ Too much is waiting already. Send /stop or try again in a moment", "⏳ 等待处理的消息太多了。可以发 /stop，或稍后再试"))
+		lang := r.st.Telegram.GetLanguage()
+		r.send(newMessage(lang).notice(emojiWorking, pick(lang, "Too much is waiting", "等待处理的消息太多"), pick(lang, "Send /stop, or try again in a moment", "可以发 /stop，或稍后再试")))
 	}
 }
 
-// runTurn shows a placeholder for a piece of work, keeps it saying what is under way, and
+// runTurn hands a message to the assistant, under a placeholder, and lays out what the turn
+// came to, then asks about what it now holds.
+func (r *runner) runTurn(run func(ctx context.Context, progress *assistant.Progress) assistant.Reply) {
+	var held *assistant.Confirmation
+	r.runWorkIn(func(ctx context.Context, progress *assistant.Progress) *message {
+		reply := run(ctx, progress)
+		held = reply.Confirm
+		return replyMessage(reply, r.st.Telegram.GetLanguage())
+	})
+	r.askToConfirm(held)
+}
+
+// runWork is runWorkIn for work that does not need to hear it was stopped.
+func (r *runner) runWork(work func(progress *assistant.Progress) *message) {
+	r.runWorkIn(func(_ context.Context, progress *assistant.Progress) *message { return work(progress) })
+}
+
+// runWorkIn shows a placeholder for a piece of work, keeps it saying what is under way, and
 // replaces it with what the work came to.
-func (r *runner) runTurn(run func(ctx context.Context, progress *telegramagent.Progress) telegramagent.Reply) {
+func (r *runner) runWorkIn(work func(ctx context.Context, progress *assistant.Progress) *message) {
 	ctx, cancel := context.WithTimeout(context.Background(), turnLimit)
 	defer cancel()
 	r.turnMu.Lock()
@@ -79,12 +99,11 @@ func (r *runner) runTurn(run func(ctx context.Context, progress *telegramagent.P
 	}()
 
 	status := r.startStatus()
-	reply := run(ctx, &telegramagent.Progress{Stage: status.set, Text: status.addText})
+	m := work(ctx, &assistant.Progress{Stage: status.set, Text: status.addText})
 	messageID := status.finish()
 	// Whatever the buttons were for has been answered by now.
 	r.closeConfirming()
-	deliver(r.bot, r.owner, messageID, reply.Text)
-	r.askToConfirm(reply.Confirm)
+	deliver(r.bot, r.owner, messageID, m, nil)
 }
 
 // stopTurn stops what is under way and drops what waits behind it. It reports whether
@@ -169,7 +188,9 @@ func (s *turnStatus) addText(text string) {
 	s.partial.WriteString(text)
 }
 
-func (s *turnStatus) text() string {
+// text is what the placeholder says now. A reply being written shows as it will read, so its
+// marks never show.
+func (s *turnStatus) text() messagePart {
 	s.mu.Lock()
 	stage, partial := s.stage, s.partial.String()
 	s.mu.Unlock()
@@ -178,16 +199,19 @@ func (s *turnStatus) text() string {
 		if runes := []rune(partial); len(runes) > maxPartialRunes {
 			partial = "…" + string(runes[len(runes)-maxPartialRunes:])
 		}
-		return partial + "\n\n⏳"
+		if parts := renderReply(partial); len(parts) > 0 {
+			last := parts[len(parts)-1]
+			return messagePart{HTML: last.HTML + "\n\n" + emojiWorking, Plain: last.Plain + "\n\n" + emojiWorking}
+		}
 	}
-	if stage == "" {
-		return "⏳"
+	line := emojiWorking
+	if stage != "" {
+		line += " " + stage
+		if elapsed := time.Since(s.started); elapsed >= elapsedStep {
+			line += " · " + strconv.Itoa(int(elapsed/elapsedStep)*int(elapsedStep/time.Second)) + "s"
+		}
 	}
-	elapsed := time.Since(s.started)
-	if elapsed < elapsedStep {
-		return "⏳ " + stage
-	}
-	return "⏳ " + stage + " · " + strconv.Itoa(int(elapsed/elapsedStep)*int(elapsedStep/time.Second)) + "s"
+	return messagePart{HTML: html.EscapeString(line), Plain: line}
 }
 
 // keep is the placeholder's one writer, so edits never overtake one another.
@@ -199,7 +223,7 @@ func (s *turnStatus) keep() {
 	}
 	ticker := time.NewTicker(statusEvery)
 	defer ticker.Stop()
-	shown, nextEdit, nextTyping := "⏳", time.Time{}, time.Time{}
+	shown, nextEdit, nextTyping := emojiWorking, time.Time{}, time.Time{}
 	for {
 		select {
 		case <-s.stop:
@@ -210,15 +234,24 @@ func (s *turnStatus) keep() {
 				s.r.bot.Request(tgbotapi.NewChatAction(s.r.owner, tgbotapi.ChatTyping)) //nolint:errcheck
 			}
 			text := s.text()
-			if text == shown || now.Before(nextEdit) {
+			if text.HTML == shown || now.Before(nextEdit) {
 				continue
 			}
-			edit := tgbotapi.NewEditMessageTextAndMarkup(s.r.owner, s.messageID, text, s.buttons())
-			if _, err := s.r.bot.Send(edit); err != nil {
+			edit := tgbotapi.NewEditMessageTextAndMarkup(s.r.owner, s.messageID, text.HTML, s.buttons())
+			edit.ParseMode = tgbotapi.ModeHTML
+			edit.DisableWebPagePreview = true
+			_, err := s.r.bot.Send(edit)
+			if err != nil && retryAfter(err) == 0 {
+				// Half a reply can be HTML Telegram will not take; its words still can be shown.
+				plain := tgbotapi.NewEditMessageTextAndMarkup(s.r.owner, s.messageID, text.Plain, s.buttons())
+				plain.DisableWebPagePreview = true
+				_, err = s.r.bot.Send(plain)
+			}
+			if err != nil {
 				nextEdit = now.Add(retryAfter(err))
 				continue
 			}
-			shown = text
+			shown = text.HTML
 		}
 	}
 }
@@ -252,10 +285,16 @@ func requestPatiently(bot *tgbotapi.BotAPI, c tgbotapi.Chattable) error {
 
 // sendPatiently sends something, waiting once if Telegram says it is going too fast.
 func sendPatiently(bot *tgbotapi.BotAPI, c tgbotapi.Chattable) error {
-	_, err := bot.Send(c)
+	_, err := sendPatientlyFor(bot, c)
+	return err
+}
+
+// sendPatientlyFor is sendPatiently for what comes back.
+func sendPatientlyFor(bot *tgbotapi.BotAPI, c tgbotapi.Chattable) (tgbotapi.Message, error) {
+	sent, err := bot.Send(c)
 	if wait := retryAfter(err); wait > 0 {
 		time.Sleep(wait)
-		_, err = bot.Send(c)
+		sent, err = bot.Send(c)
 	}
-	return err
+	return sent, err
 }

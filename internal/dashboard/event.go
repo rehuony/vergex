@@ -40,7 +40,8 @@ const (
 	BlockPositions = "positions"
 	BlockAgentCost = "agent_cost"
 	BlockFees      = "fees"
-	// BlockOther is a call outside the scene, such as a model test.
+	// BlockOther is a call outside the scene, such as a model test or the assistant in the
+	// web app.
 	BlockOther = "other"
 )
 

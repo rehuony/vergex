@@ -58,35 +58,34 @@ const (
 
 // LedgerOrder is one real order.
 type LedgerOrder struct {
-	ID                  int64               `gorm:"primaryKey;autoIncrement"`
-	AccountID           string              `gorm:"column:account_id"`
-	InstrumentID        int64               `gorm:"column:instrument_id"`
-	Source              string              `gorm:"column:source"`
-	SourceID            string              `gorm:"column:source_id;serializer:nulltext"`
-	Seq                 *int                `gorm:"column:seq"`
-	Role                string              `gorm:"column:role"`
-	ClientOrderID       string              `gorm:"column:client_order_id;serializer:nulltext"`
-	VenueClientID       string              `gorm:"column:venue_client_id;serializer:nulltext"`
-	ExchangeOrderID     string              `gorm:"column:exchange_order_id;serializer:nulltext"`
-	TriggeredOrderID    string              `gorm:"column:triggered_order_id;serializer:nulltext"`
-	ParentClientOrderID string              `gorm:"column:parent_client_order_id;serializer:nulltext"`
-	Side                string              `gorm:"column:side"`
-	PositionSide        string              `gorm:"column:position_side;serializer:nulltext"`
-	Type                string              `gorm:"column:type"`
-	Status              string              `gorm:"column:status"`
-	Quantity            decimal.Decimal     `gorm:"column:quantity"`
-	Price               decimal.NullDecimal `gorm:"column:price"`
-	StopPrice           decimal.NullDecimal `gorm:"column:stop_price"`
-	FilledQuantity      decimal.Decimal     `gorm:"column:filled_quantity"`
-	AvgFillPrice        decimal.NullDecimal `gorm:"column:avg_fill_price"`
-	ReduceOnly          bool                `gorm:"column:reduce_only"`
-	PostOnly            bool                `gorm:"column:post_only"`
-	Leverage            *int                `gorm:"column:leverage"`
-	MarginMode          string              `gorm:"column:margin_mode;serializer:nulltext"`
-	Error               string              `gorm:"column:error;serializer:nulltext"`
-	CreatedAt           time.Time           `gorm:"column:created_at;autoCreateTime:false"`
-	UpdatedAt           time.Time           `gorm:"column:updated_at;autoUpdateTime:false"`
-	ClosedAt            *time.Time          `gorm:"column:closed_at"`
+	ID               int64               `gorm:"primaryKey;autoIncrement"`
+	AccountID        string              `gorm:"column:account_id"`
+	InstrumentID     int64               `gorm:"column:instrument_id"`
+	Source           string              `gorm:"column:source"`
+	SourceID         string              `gorm:"column:source_id;serializer:nulltext"`
+	Seq              *int                `gorm:"column:seq"`
+	Role             string              `gorm:"column:role"`
+	ClientID         string              `gorm:"column:client_id;serializer:nulltext"`
+	VenueClientID    string              `gorm:"column:venue_client_id;serializer:nulltext"`
+	VenueOrderID     string              `gorm:"column:venue_order_id;serializer:nulltext"`
+	TriggeredOrderID string              `gorm:"column:triggered_order_id;serializer:nulltext"`
+	Side             string              `gorm:"column:side"`
+	PositionSide     string              `gorm:"column:position_side;serializer:nulltext"`
+	Type             string              `gorm:"column:type"`
+	Status           string              `gorm:"column:status"`
+	Quantity         decimal.Decimal     `gorm:"column:quantity"`
+	Price            decimal.NullDecimal `gorm:"column:price"`
+	StopPrice        decimal.NullDecimal `gorm:"column:stop_price"`
+	FilledQuantity   decimal.Decimal     `gorm:"column:filled_quantity"`
+	AvgFillPrice     decimal.NullDecimal `gorm:"column:avg_fill_price"`
+	ReduceOnly       bool                `gorm:"column:reduce_only"`
+	PostOnly         bool                `gorm:"column:post_only"`
+	Leverage         *int                `gorm:"column:leverage"`
+	MarginMode       string              `gorm:"column:margin_mode;serializer:nulltext"`
+	Error            string              `gorm:"column:error;serializer:nulltext"`
+	CreatedAt        time.Time           `gorm:"column:created_at;autoCreateTime:false"`
+	UpdatedAt        time.Time           `gorm:"column:updated_at;autoUpdateTime:false"`
+	ClosedAt         *time.Time          `gorm:"column:closed_at"`
 }
 
 func (LedgerOrder) TableName() string { return "account.orders" }
@@ -98,7 +97,7 @@ type LedgerFill struct {
 	PositionID        *int64              `gorm:"column:position_id"`
 	AccountID         string              `gorm:"column:account_id"`
 	InstrumentID      int64               `gorm:"column:instrument_id"`
-	ExchangeTradeID   string              `gorm:"column:exchange_trade_id"`
+	VenueTradeID      string              `gorm:"column:venue_trade_id"`
 	Side              string              `gorm:"column:side"`
 	Price             decimal.Decimal     `gorm:"column:price"`
 	Quantity          decimal.Decimal     `gorm:"column:quantity"`
@@ -107,7 +106,7 @@ type LedgerFill struct {
 	CommissionAsset   string              `gorm:"column:commission_asset"`
 	RealizedPnL       decimal.NullDecimal `gorm:"column:realized_pnl"`
 	UnmatchedQuantity decimal.Decimal     `gorm:"column:unmatched_quantity"`
-	IsMaker           bool                `gorm:"column:is_maker"`
+	Maker             bool                `gorm:"column:maker"`
 	ExecutedAt        time.Time           `gorm:"column:executed_at"`
 	RecordedAt        time.Time           `gorm:"column:recorded_at;autoCreateTime"`
 }
@@ -141,13 +140,13 @@ func (LedgerPosition) TableName() string { return "account.positions" }
 
 // SkippedFill is a trade an exchange reported that cannot be booked.
 type SkippedFill struct {
-	ID              int64     `gorm:"primaryKey;autoIncrement"`
-	AccountID       string    `gorm:"column:account_id"`
-	NativeSymbol    string    `gorm:"column:native_symbol"`
-	ExchangeTradeID string    `gorm:"column:exchange_trade_id"`
-	Detail          string    `gorm:"column:detail"`
-	ExecutedAt      time.Time `gorm:"column:executed_at"`
-	RecordedAt      time.Time `gorm:"column:recorded_at;autoCreateTime"`
+	ID           int64     `gorm:"primaryKey;autoIncrement"`
+	AccountID    string    `gorm:"column:account_id"`
+	NativeSymbol string    `gorm:"column:native_symbol"`
+	VenueTradeID string    `gorm:"column:venue_trade_id"`
+	Detail       string    `gorm:"column:detail"`
+	ExecutedAt   time.Time `gorm:"column:executed_at"`
+	RecordedAt   time.Time `gorm:"column:recorded_at;autoCreateTime"`
 }
 
 func (SkippedFill) TableName() string { return "account.skipped_fills" }
@@ -162,8 +161,8 @@ type Owner struct {
 type Trade struct {
 	AccountID       string
 	InstrumentID    int64
-	ExchangeTradeID string
-	ExchangeOrderID string
+	VenueTradeID    string
+	VenueOrderID    string
 	Side            string // SideBuy or SideSell
 	PositionSide    string // SideLong or SideShort; empty in one-way mode
 	Price           decimal.Decimal
@@ -172,7 +171,7 @@ type Trade struct {
 	Commission      decimal.Decimal // what it cost; negative for a rebate
 	CommissionAsset string
 	RealizedPnL     decimal.NullDecimal
-	IsMaker         bool
+	Maker           bool
 	ExecutedAt      time.Time
 }
 
@@ -194,7 +193,7 @@ func (s *Ledger) RecordSkippedFill(fill *SkippedFill) (bool, error) {
 
 // ClearSkippedFill forgets a skipped trade that has since been booked.
 func (s *Ledger) ClearSkippedFill(accountID, nativeSymbol, tradeID string) error {
-	return s.db.Where("account_id = ? AND native_symbol = ? AND exchange_trade_id = ?", accountID, nativeSymbol, tradeID).
+	return s.db.Where("account_id = ? AND native_symbol = ? AND venue_trade_id = ?", accountID, nativeSymbol, tradeID).
 		Delete(&SkippedFill{}).Error
 }
 
@@ -219,7 +218,7 @@ func (s *Ledger) LeaseOwner(accountID string) (Owner, error) {
 	if err != nil {
 		return Owner{}, err
 	}
-	return Owner{Source: lease.Holder, SourceID: lease.HolderID}, nil
+	return Owner{Source: lease.Source, SourceID: lease.SourceID}, nil
 }
 
 // OpenSymbols lists the symbols with a position still open on an account.
@@ -257,7 +256,7 @@ func (s *Ledger) RecordOrder(order *LedgerOrder) error {
 		}
 		now := time.Now().UTC()
 		order.UpdatedAt = now
-		existing, err := findExchangeOrder(tx, order.AccountID, order.InstrumentID, order.ExchangeOrderID)
+		existing, err := findVenueOrder(tx, order.AccountID, order.InstrumentID, order.VenueOrderID)
 		if err != nil {
 			return err
 		}
@@ -269,19 +268,19 @@ func (s *Ledger) RecordOrder(order *LedgerOrder) error {
 		}
 		order.ID = existing.ID
 		updates := map[string]any{
-			"source":          order.Source,
-			"source_id":       database.NullText(order.SourceID),
-			"role":            order.Role,
-			"client_order_id": database.NullText(order.ClientOrderID),
-			"type":            order.Type,
-			"quantity":        order.Quantity,
-			"price":           order.Price,
-			"stop_price":      order.StopPrice,
-			"reduce_only":     order.ReduceOnly,
-			"post_only":       order.PostOnly,
-			"leverage":        order.Leverage,
-			"margin_mode":     database.NullText(order.MarginMode),
-			"updated_at":      now,
+			"source":      order.Source,
+			"source_id":   database.NullText(order.SourceID),
+			"role":        order.Role,
+			"client_id":   database.NullText(order.ClientID),
+			"type":        order.Type,
+			"quantity":    order.Quantity,
+			"price":       order.Price,
+			"stop_price":  order.StopPrice,
+			"reduce_only": order.ReduceOnly,
+			"post_only":   order.PostOnly,
+			"leverage":    order.Leverage,
+			"margin_mode": database.NullText(order.MarginMode),
+			"updated_at":  now,
 		}
 		if !existing.FilledQuantity.LessThan(order.Quantity) {
 			updates["status"] = OrderFilled
@@ -305,13 +304,13 @@ func (s *Ledger) RecordOrder(order *LedgerOrder) error {
 	})
 }
 
-func findExchangeOrder(tx *gorm.DB, accountID string, instrumentID int64, exchangeOrderID string) (*LedgerOrder, error) {
-	if exchangeOrderID == "" {
+func findVenueOrder(tx *gorm.DB, accountID string, instrumentID int64, venueOrderID string) (*LedgerOrder, error) {
+	if venueOrderID == "" {
 		return nil, nil
 	}
 	var order LedgerOrder
-	err := tx.Where("account_id = ? AND instrument_id = ? AND (exchange_order_id = ? OR triggered_order_id = ?)",
-		accountID, instrumentID, exchangeOrderID, exchangeOrderID).First(&order).Error
+	err := tx.Where("account_id = ? AND instrument_id = ? AND (venue_order_id = ? OR triggered_order_id = ?)",
+		accountID, instrumentID, venueOrderID, venueOrderID).First(&order).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
@@ -333,7 +332,7 @@ func (s *Ledger) RecordTrade(trade Trade, fallback Owner) (bool, error) {
 		}
 		var seen int64
 		err := tx.Model(&LedgerFill{}).
-			Where("account_id = ? AND instrument_id = ? AND exchange_trade_id = ?", trade.AccountID, trade.InstrumentID, trade.ExchangeTradeID).
+			Where("account_id = ? AND instrument_id = ? AND venue_trade_id = ?", trade.AccountID, trade.InstrumentID, trade.VenueTradeID).
 			Count(&seen).Error
 		if err != nil || seen != 0 {
 			return err
@@ -350,7 +349,7 @@ func (s *Ledger) RecordTrade(trade Trade, fallback Owner) (bool, error) {
 			OrderID:         order.ID,
 			AccountID:       trade.AccountID,
 			InstrumentID:    trade.InstrumentID,
-			ExchangeTradeID: trade.ExchangeTradeID,
+			VenueTradeID:    trade.VenueTradeID,
 			Side:            trade.Side,
 			Price:           trade.Price,
 			Quantity:        trade.Quantity,
@@ -358,7 +357,7 @@ func (s *Ledger) RecordTrade(trade Trade, fallback Owner) (bool, error) {
 			Commission:      trade.Commission,
 			CommissionAsset: trade.CommissionAsset,
 			RealizedPnL:     trade.RealizedPnL,
-			IsMaker:         trade.IsMaker,
+			Maker:           trade.Maker,
 			ExecutedAt:      trade.ExecutedAt,
 		}
 		result := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&fill)
@@ -379,18 +378,18 @@ func (s *Ledger) RecordTrade(trade Trade, fallback Owner) (bool, error) {
 
 // WorkingOrder is an order the ledger still has as working on the exchange.
 type WorkingOrder struct {
-	ID              int64
-	Symbol          string
-	ExchangeOrderID string
+	ID           int64
+	Symbol       string
+	VenueOrderID string
 }
 
 // WorkingOrders lists the account's orders still working, placed since a time. Futures
 // watches its own.
 func (s *Ledger) WorkingOrders(accountID string, since time.Time) ([]WorkingOrder, error) {
 	var orders []WorkingOrder
-	err := s.db.Raw(`SELECT o.id, i.symbol, o.exchange_order_id FROM account.orders o
+	err := s.db.Raw(`SELECT o.id, i.symbol, o.venue_order_id FROM account.orders o
 		JOIN market.instruments i ON i.id = o.instrument_id
-		WHERE o.account_id = ? AND o.source <> ? AND o.exchange_order_id IS NOT NULL AND o.closed_at IS NULL
+		WHERE o.account_id = ? AND o.source <> ? AND o.venue_order_id IS NOT NULL AND o.closed_at IS NULL
 			AND o.status IN (?, ?) AND o.created_at >= ?
 		ORDER BY i.symbol, o.id`, accountID, SourceFutures, OrderNew, OrderPartiallyFilled, since).Scan(&orders).Error
 	return orders, err
@@ -404,10 +403,10 @@ func (s *Ledger) SettleOrder(id int64, status string) error {
 	return s.db.Model(&LedgerOrder{}).Where("id = ? AND closed_at IS NULL", id).Updates(updates).Error
 }
 
-// SettleExchangeOrder is SettleOrder for an order known by its exchange ID. An order the
+// SettleVenueOrder is SettleOrder for an order known by its exchange ID. An order the
 // ledger has not heard of has nothing to settle.
-func (s *Ledger) SettleExchangeOrder(accountID string, instrumentID int64, exchangeOrderID, status string) error {
-	order, err := findExchangeOrder(s.db, accountID, instrumentID, exchangeOrderID)
+func (s *Ledger) SettleVenueOrder(accountID string, instrumentID int64, venueOrderID, status string) error {
+	order, err := findVenueOrder(s.db, accountID, instrumentID, venueOrderID)
 	if err != nil || order == nil {
 		return err
 	}
@@ -520,7 +519,7 @@ func (b *tradeBooking) openPositions(side string, owner Owner) ([]LedgerPosition
 // findOrder finds the trade's order, or records one for an order nothing knew of.
 func (b *tradeBooking) findOrder(fallback Owner) (*LedgerOrder, error) {
 	trade := b.trade
-	order, err := findExchangeOrder(b.tx, trade.AccountID, trade.InstrumentID, trade.ExchangeOrderID)
+	order, err := findVenueOrder(b.tx, trade.AccountID, trade.InstrumentID, trade.VenueOrderID)
 	if err != nil || order != nil {
 		return order, err
 	}
@@ -542,18 +541,18 @@ func (b *tradeBooking) findOrder(fallback Owner) (*LedgerOrder, error) {
 		}
 	}
 	created := LedgerOrder{
-		AccountID:       trade.AccountID,
-		InstrumentID:    trade.InstrumentID,
-		Source:          owner.Source,
-		SourceID:        owner.SourceID,
-		Role:            role,
-		ExchangeOrderID: trade.ExchangeOrderID,
-		Side:            trade.Side,
-		PositionSide:    trade.PositionSide,
-		Status:          OrderFilled,
-		Quantity:        decimal.Zero,
-		CreatedAt:       trade.ExecutedAt,
-		UpdatedAt:       time.Now().UTC(),
+		AccountID:    trade.AccountID,
+		InstrumentID: trade.InstrumentID,
+		Source:       owner.Source,
+		SourceID:     owner.SourceID,
+		Role:         role,
+		VenueOrderID: trade.VenueOrderID,
+		Side:         trade.Side,
+		PositionSide: trade.PositionSide,
+		Status:       OrderFilled,
+		Quantity:     decimal.Zero,
+		CreatedAt:    trade.ExecutedAt,
+		UpdatedAt:    time.Now().UTC(),
 	}
 	if err := b.tx.Create(&created).Error; err != nil {
 		return nil, err

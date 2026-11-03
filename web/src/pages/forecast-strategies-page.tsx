@@ -37,6 +37,11 @@ import { Button, buttonVariants } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AppSelect } from '@/components/ui/select'
 import { ROUTES } from '@/constants/route-paths'
+import {
+  mergeFormValue,
+  useAssistantForm,
+  useAssistantPage,
+} from '@/hooks/use-assistant-page'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
 import { cn } from '@/utils/cn'
@@ -118,6 +123,16 @@ export function ForecastStrategiesPage() {
       data?.strategies[0],
     [data, selectedId]
   )
+  useAssistantPage('forecast_strategies', () => ({
+    strategy: selected && {
+      id: selected.id,
+      name: selected.name,
+      in_use: selected.id === data?.active_strategy_id,
+      retired: selected.retired,
+    },
+    tab,
+    drafting_a_new_one: Boolean(draft),
+  }))
 
   const rulesFrom = (from: string): ForecastConfig | null => {
     if (!data) return null
@@ -136,6 +151,46 @@ export function ForecastStrategiesPage() {
     }
     return { ...config, horizons }
   }
+
+  useAssistantForm(
+    data
+      ? {
+          id: 'forecast.strategy',
+          title: label('newStrategy'),
+          fields: [
+            {
+              name: 'name',
+              label: label('strategyName'),
+              type: 'text',
+              value: draft?.name ?? '',
+            },
+            {
+              name: 'config',
+              label: t('assistant.formConfig', language),
+              type: 'object',
+              value: draft?.config ?? rulesFrom(selected?.id ?? FROM_DEFAULTS),
+            },
+          ],
+          apply: (values) => {
+            const from = draft?.from ?? selected?.id ?? FROM_DEFAULTS
+            const config = draft?.config ?? rulesFrom(from)
+            if (!config) return
+            setDraft({
+              from,
+              name:
+                typeof values.name === 'string'
+                  ? values.name
+                  : (draft?.name ?? ''),
+              config: values.config
+                ? (mergeFormValue(config, values.config) as ForecastConfig)
+                : config,
+              pristine: draft?.pristine ?? JSON.stringify(config),
+              tried: draft?.tried ?? false,
+            })
+          },
+        }
+      : null
+  )
 
   // Leaving a draft with changes asks first. It reports whether the draft is gone.
   const leaveDraft = async () => {

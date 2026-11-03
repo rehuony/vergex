@@ -10,7 +10,7 @@ import {
 
 const make = (id: string, kind: string, equity = '1000') =>
   ({
-    state: 'draft',
+    status: 'draft',
     plan: {
       id,
       idea: { execution: { kind } },

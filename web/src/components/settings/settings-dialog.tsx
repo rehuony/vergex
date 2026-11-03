@@ -9,16 +9,7 @@ import {
   type ReactNode,
 } from 'react'
 import { toast } from 'sonner'
-import {
-  Brain,
-  Eye,
-  EyeOff,
-  KeyRound,
-  Landmark,
-  Receipt,
-  Send,
-  UserRound,
-} from 'lucide-react'
+import { Eye, EyeOff, KeyRound } from 'lucide-react'
 import { useAuth } from '@/contexts/auth-context'
 import { useLanguage } from '@/contexts/language-context'
 import { t, type Language } from '@/i18n'
@@ -34,22 +25,8 @@ import { AvatarEditor } from './avatar-editor'
 import { AccountSettings } from './account-settings'
 import { ModelSettings } from './model-settings'
 import { SettingList, SettingRow } from '@/components/common/setting-row'
+import { SECTIONS, type SettingsSection } from './settings-sections'
 import { TelegramSettings } from './telegram-settings'
-
-// In the order the tabs are shown.
-const SECTIONS = [
-  { id: 'profile', label: 'profileTab', icon: UserRound },
-  { id: 'accounts', label: 'accountsTab', icon: Landmark },
-  { id: 'telegram', label: 'telegramTab', icon: Send },
-  { id: 'models', label: 'modelsTab', icon: Brain },
-  { id: 'costs', label: 'agentCostsTab', icon: Receipt },
-] as const
-
-export type SettingsSection = (typeof SECTIONS)[number]['id']
-
-export function isSettingsSection(value: string): value is SettingsSection {
-  return SECTIONS.some((section) => section.id === value)
-}
 
 const PasswordInput = forwardRef<
   HTMLInputElement,

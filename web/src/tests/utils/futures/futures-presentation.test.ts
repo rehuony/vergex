@@ -18,13 +18,13 @@ it('keeps immutable chart plan references when only execution timestamps refresh
     await import('@/utils/futures/futures-presentation')
   const previous = {
     records: {
-      plan: { plan: { id: 'plan', hash: 'fixed' }, state: 'approved' },
+      plan: { plan: { id: 'plan', hash: 'fixed' }, status: 'approved' },
     },
     runs: [
       {
         id: 'run',
         plan: { id: 'plan', hash: 'fixed' },
-        state: 'needs_attention',
+        status: 'needs_attention',
         updated_at: 'before',
       },
     ],
@@ -39,7 +39,7 @@ it('keeps immutable chart plan references when only execution timestamps refresh
   expect(result.records).toBe(previous.records)
   expect(result.runs[0].plan).toBe(previous.runs[0].plan)
   expect(result.runs[0].updated_at).toBe('after')
-  incoming.records.plan.state = 'completed'
+  incoming.records.plan.status = 'completed'
   expect(preserveFuturesPlans(previous, incoming).records).not.toBe(
     previous.records
   )

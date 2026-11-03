@@ -25,7 +25,7 @@ func TestPartialProposalCanRepairRejectedStructuresWithoutDuplicates(t *testing.
 	engine := Engine{Market: source, Store: store}
 	limits := plan.Constraints{Equity: "10000", MaxRisk: "100", MaxNotional: "1000", MinRewardRisk: "2", FeeBPS: "10", SlippageBPS: "10"}
 	input := Input{proposals: &proposalState{saved: map[string]string{}}}
-	selected := &plan.Record{State: "draft", Plan: plan.Plan{ID: "original"}}
+	selected := &plan.Record{Status: "draft", Plan: plan.Plan{ID: "original"}}
 	limit := plan.Idea{Name: "Limit", Side: "long", Entry: "1000", Stop: "990", Target: "1040", Execution: &plan.Execution{Kind: "limit"}}
 	ladder := limit
 	ladder.Name = "Ladder"

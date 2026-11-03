@@ -88,10 +88,10 @@ func (s *Server) futuresBroker(ctx context.Context, user, id string) (run.Broker
 		return nil, "", errors.New("cannot verify automatic trader state")
 	}
 	for _, t := range running {
-		active := t.IsRunning
+		active := t.Running
 		if s.traderManager != nil {
 			if runtime, e := s.traderManager.GetTrader(t.ID); e == nil {
-				if yes, ok := runtime.GetStatus()["is_running"].(bool); ok && yes {
+				if yes, ok := runtime.GetStatus()["running"].(bool); ok && yes {
 					active = true
 				}
 			}
@@ -212,6 +212,7 @@ func (s *Server) registerFutures(api, protected *gin.RouterGroup) {
 	protected.PUT("/futures/conversations/:id", s.handleFuturesConversationRename)
 	protected.DELETE("/futures/conversations/:id", s.handleFuturesConversationDelete)
 	protected.DELETE("/futures/plans/:id", s.handleFuturesPlanDelete)
+	protected.DELETE("/futures/plans", s.handleFuturesPlansDelete)
 	protected.GET("/futures/preferences", s.handleFuturesPreferences)
 	protected.PUT("/futures/preferences", s.handleFuturesPreferences)
 	protected.GET("/futures/entry-plugins", s.handleFuturesEntryPlugins)
@@ -346,7 +347,6 @@ func (s *Server) handleFuturesCompile(c *gin.Context) {
 		return
 	}
 	ds := futures.NewPlanStore(s.stores.DB, c.GetString("user_id"), ex.ID, ex.Venue)
-	ds.Origin = futures.OriginManual
 	if e = ds.Add([]plan.Plan{draft}); e != nil {
 		futuresError(c, e)
 		return
@@ -402,23 +402,11 @@ func (s *Server) handleFuturesChat(c *gin.Context) {
 		futuresError(c, e)
 		return
 	}
-	agentModel, e := s.stores.Models.Get(user, in.AgentModelID)
-	if e != nil || !agentModel.Enabled || agentModel.APIKey == "" {
-		futuresError(c, errors.New("Select a configured and enabled model owned by the current user"))
+	agentModel, client, e := s.modelClient(user, in.AgentModelID, in.AgentModelName, agent.FeatureFutures)
+	if e != nil {
+		futuresError(c, e)
 		return
 	}
-	client := agent.NewClientByProvider(agentModel.Provider)
-	if client == nil {
-		futuresError(c, errors.New("This model provider is not registered in Vergex"))
-		return
-	}
-	modelName := agentModel.CustomModelName
-	if in.AgentModelName != "" {
-		modelName = in.AgentModelName
-	}
-	client.SetAPIKey(string(agentModel.APIKey), agentModel.CustomAPIURL, modelName)
-	client.SetTimeout(90 * time.Second)
-	agent.TagUsage(client, agent.FeatureFutures, "")
 	p, e := s.futuresService()
 	if e != nil {
 		futuresError(c, e)
@@ -430,7 +418,6 @@ func (s *Server) handleFuturesChat(c *gin.Context) {
 	}
 	defer p.turns.Delete(user)
 	ds := futures.NewPlanStore(s.stores.DB, user, ex.ID, ex.Venue)
-	ds.Origin = futures.OriginAssistant
 	if in.PlanID != "" && !ds.HasDraft(in.PlanID) {
 		futuresError(c, errors.New("Only unapproved drafts on this account can be revised; revoke locked approval first"))
 		return
@@ -698,7 +685,7 @@ func (s *Server) handleFuturesCancelOrder(c *gin.Context) {
 // finished is that plan's, and leaving a position without its stop is not done by hand.
 func cancellableOrder(open []account.OpenOrder, runs []run.View, accountID, orderID string) (account.OpenOrder, error) {
 	for _, row := range runs {
-		if row.AccountID != accountID || row.State == "completed" || row.State == "cancelled" || row.State == "expired" {
+		if row.AccountID != accountID || row.Status == "completed" || row.Status == "cancelled" || row.Status == "expired" {
 			continue
 		}
 		for _, order := range row.Orders {
@@ -722,13 +709,9 @@ func (s *Server) settleCancelledOrder(user, accountID, symbol, orderID string) {
 	if err != nil {
 		return
 	}
-	native := instrument.Normalize(symbol)
-	if ex.Venue == "okx" {
-		native = okx.InstrumentID(native)
-	}
-	instrumentID, err := instrument.Ensure(s.stores.DB, ex.Venue, instrument.KindPerpetual, instrument.Normalize(symbol), native)
+	instrumentID, err := instrument.Ensure(s.stores.DB, ex.Venue, instrument.KindPerpetual, instrument.Normalize(symbol))
 	if err == nil {
-		err = s.stores.Ledger.SettleExchangeOrder(accountID, instrumentID, orderID, account.OrderCanceled)
+		err = s.stores.Ledger.SettleVenueOrder(accountID, instrumentID, orderID, account.OrderCanceled)
 	}
 	if err != nil {
 		logger.Warnf("Futures: settle cancelled order %s: %v", orderID, err)
@@ -757,7 +740,7 @@ func (s *Server) handleFuturesCheckStatus(c *gin.Context) {
 	}
 	// After a restart nothing watches a position until now. Something has to notice when
 	// its stop or target fires, and cancel the other one.
-	if v.State == "position_open" {
+	if v.Status == "position_open" {
 		if _, e := p.controller.ReconcileContext(ctx, c.GetString("user_id"), in.ID); e != nil {
 			logger.Warnf("Futures: watch run %s again: %v", in.ID, e)
 		}
@@ -841,13 +824,14 @@ func (s *Server) handleFuturesConversationRename(c *gin.Context) {
 	c.JSON(200, gin.H{"title": title})
 }
 
-// handleFuturesConversationDelete removes a conversation with what was said in it.
+// handleFuturesConversationDelete removes a conversation with all it held, as
+// deleteConversations says.
 func (s *Server) handleFuturesConversationDelete(c *gin.Context) {
 	row := s.futuresConversationOf(c)
 	if row == nil {
 		return
 	}
-	if e := s.stores.Conversations.Delete(row); e != nil {
+	if _, e := s.deleteConversations(row.UserID, []agent.Conversation{*row}); e != nil {
 		futuresError(c, e)
 		return
 	}
@@ -865,19 +849,49 @@ func (s *Server) futuresConversationOf(c *gin.Context) *agent.Conversation {
 	return row
 }
 
-// handleFuturesPlanDelete removes a plan that never ran.
+// handleFuturesPlanDelete removes a plan with its runs, once nothing of it is at work.
 func (s *Server) handleFuturesPlanDelete(c *gin.Context) {
 	e := futures.NewPlanStore(s.stores.DB, c.GetString("user_id"), "", "").Delete(c.Param("id"))
 	switch {
 	case errors.Is(e, gorm.ErrRecordNotFound):
 		c.JSON(http.StatusNotFound, gin.H{"error": "plan not found"})
-	case errors.Is(e, futures.ErrPlanRan):
+	case errors.Is(e, futures.ErrPlanAtWork):
 		c.JSON(http.StatusConflict, gin.H{"error": e.Error()})
 	case e != nil:
 		futuresError(c, e)
 	default:
 		c.JSON(200, gin.H{"ok": true})
 	}
+}
+
+// futuresPlansDeleted bounds how many plans one request deletes.
+const futuresPlansDeleted = 500
+
+// handleFuturesPlansDelete deletes the plans a request names, each as handleFuturesPlanDelete
+// would, and says how many went and which stayed because they are still at work. One
+// already gone is passed over.
+func (s *Server) handleFuturesPlansDelete(c *gin.Context) {
+	var in struct {
+		IDs []string `json:"ids"`
+	}
+	if c.ShouldBindJSON(&in) != nil || len(in.IDs) == 0 || len(in.IDs) > futuresPlansDeleted {
+		futuresError(c, errors.New("name the plans to delete"))
+		return
+	}
+	store := futures.NewPlanStore(s.stores.DB, c.GetString("user_id"), "", "")
+	deleted, atWork := 0, []string{}
+	for _, id := range in.IDs {
+		switch e := store.Delete(id); {
+		case e == nil:
+			deleted++
+		case errors.Is(e, futures.ErrPlanAtWork):
+			atWork = append(atWork, id)
+		case !errors.Is(e, gorm.ErrRecordNotFound):
+			futuresError(c, e)
+			return
+		}
+	}
+	c.JSON(200, gin.H{"deleted": deleted, "at_work": atWork})
 }
 
 // futuresConversation is a conversation as the Futures page lists it.

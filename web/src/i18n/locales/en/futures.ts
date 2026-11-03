@@ -95,9 +95,12 @@ export const futures = {
     conversationName: 'Conversation name',
     deleteConversation: 'Delete conversation',
     deleteConversationMessage:
-      'Delete {name} and everything said in it? Plans it drafted stay',
+      'Delete {name} with everything said in it, its model calls and the plans it drafted that never ran? A plan that ran stays as the record of its orders',
     deleteDraft: 'Delete draft',
     deleteDraftMessage: 'Delete the draft {name}?',
+    deletePlan: 'Delete plan',
+    deletePlanMessage:
+      'Delete the plan {name}? The orders, fills and positions it sent stay in the account’s records',
     deleteCancel: 'Cancel',
     historyActions: 'More actions',
     historySearch: 'Search history',
@@ -454,13 +457,6 @@ export const futures = {
     activity: {
       planningOnly:
         'No free margin is available. Planning uses account equity as a reference, so these are comparison drafts rather than funded orders. Review with available margin before trading',
-      name: 'Live planning activity',
-      thinking: 'Thinking',
-      thinkingFor: 'Thinking · {seconds}s',
-      thought: 'Thought for {seconds}s · {count} steps',
-      usage: 'Model use',
-      usageDetail: '{prompt} in, {completion} out · {money}',
-      unpriced: 'unpriced',
       title: 'Activity',
       tool: {
         get_candles: 'Read candlesticks',

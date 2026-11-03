@@ -283,12 +283,12 @@ func (s *Service) settle(accountID string, source Source) error {
 				open[item.OrderID] = true
 			}
 		}
-		if open[order.ExchangeOrderID] {
+		if open[order.VenueOrderID] {
 			continue
 		}
-		state, err := source.GetOrderStatus(symbol, order.ExchangeOrderID)
+		state, err := source.GetOrderStatus(symbol, order.VenueOrderID)
 		if err != nil {
-			failures = append(failures, fmt.Errorf("read order %s: %w", order.ExchangeOrderID, err))
+			failures = append(failures, fmt.Errorf("read order %s: %w", order.VenueOrderID, err))
 			continue
 		}
 		status, _ := state["status"].(string)
@@ -338,7 +338,7 @@ func (s *Service) book(ex *account.Account, fills []account.Fill) error {
 	for _, fill := range fills {
 		if fill.Unbookable != "" {
 			isNew, err := ledger.RecordSkippedFill(&account.SkippedFill{
-				AccountID: ex.ID, NativeSymbol: fill.NativeSymbol, ExchangeTradeID: fill.TradeID, Detail: fill.Unbookable, ExecutedAt: fill.Time,
+				AccountID: ex.ID, NativeSymbol: fill.NativeSymbol, VenueTradeID: fill.TradeID, Detail: fill.Unbookable, ExecutedAt: fill.Time,
 			})
 			if err != nil {
 				return fmt.Errorf("record skipped trade %s: %w", fill.TradeID, err)
@@ -348,15 +348,15 @@ func (s *Service) book(ex *account.Account, fills []account.Fill) error {
 			}
 			continue
 		}
-		instrumentID, err := instrument.Ensure(s.db, ex.Venue, instrument.KindPerpetual, fill.Symbol, fill.NativeSymbol)
+		instrumentID, err := instrument.Ensure(s.db, ex.Venue, instrument.KindPerpetual, fill.Symbol)
 		if err != nil {
 			return err
 		}
 		recorded, err := ledger.RecordTrade(account.Trade{
 			AccountID:       ex.ID,
 			InstrumentID:    instrumentID,
-			ExchangeTradeID: fill.TradeID,
-			ExchangeOrderID: fill.OrderID,
+			VenueTradeID:    fill.TradeID,
+			VenueOrderID:    fill.OrderID,
 			Side:            fill.Side,
 			PositionSide:    fill.PositionSide,
 			Price:           fill.Price,
@@ -365,7 +365,7 @@ func (s *Service) book(ex *account.Account, fills []account.Fill) error {
 			Commission:      fill.Commission,
 			CommissionAsset: fill.CommissionAsset,
 			RealizedPnL:     fill.RealizedPnL,
-			IsMaker:         fill.IsMaker,
+			Maker:           fill.IsMaker,
 			ExecutedAt:      fill.Time,
 		}, owner)
 		if err != nil {

@@ -128,7 +128,7 @@ export function FuturesAccount({
     runs.find(
       (run) =>
         run.account_id === accountID &&
-        run.state === 'position_open' &&
+        run.status === 'position_open' &&
         run.plan.snapshot.symbol === position.symbol &&
         run.plan.idea.side === position.side
     )
@@ -138,7 +138,7 @@ export function FuturesAccount({
       .filter(
         (run) =>
           run.account_id === accountID &&
-          !['completed', 'cancelled', 'expired'].includes(run.state)
+          !['completed', 'cancelled', 'expired'].includes(run.status)
       )
       .flatMap((run) => run.orders.map((order) => order.order_id))
   )
@@ -211,11 +211,11 @@ export function FuturesAccount({
       ? orders.rows
       : []
   const importantRuns = runs
-    .filter((run) => run.account_id === accountID && liveStates.has(run.state))
+    .filter((run) => run.account_id === accountID && liveStates.has(run.status))
     .sort(
       (a, b) =>
-        Number(b.state === 'needs_attention') -
-        Number(a.state === 'needs_attention')
+        Number(b.status === 'needs_attention') -
+        Number(a.status === 'needs_attention')
     )
   const key = (p: AccountPosition) => accountID + '/' + p.symbol + '/' + p.side
 
@@ -247,7 +247,7 @@ export function FuturesAccount({
         )
       )
         throw new Error(label('bindingChanged'))
-      if (traders.some((t) => t.account_id === accountID && t.is_running))
+      if (traders.some((t) => t.account_id === accountID && t.running))
         throw new Error(label('stopTraderFirst'))
       await closeAccountPosition(accountID, venue, position, runs, {
         stop: (run) =>
@@ -889,14 +889,14 @@ function RunRows({
             : 'stateFilledUnverified'
         : accepted
           ? 'stateWorking'
-          : run.state === 'approved' && !entries.length
+          : run.status === 'approved' && !entries.length
             ? 'stateApprovedOnly'
             : 'stateNoFill'
   )
-  const attention = run.state === 'needs_attention' || unconfirmed
+  const attention = run.status === 'needs_attention' || unconfirmed
   const headline = unconfirmed
     ? label('submissionUnconfirmed')
-    : run.state === 'needs_attention'
+    : run.status === 'needs_attention'
       ? label('monitorReview')
       : stateLabel
   return (
@@ -940,7 +940,7 @@ function RunRows({
           <span className="flex justify-end gap-2">
             {onCheck &&
               ['needs_attention', 'position_open', 'stopping'].includes(
-                run.state
+                run.status
               ) && (
                 <Button
                   size="sm"
@@ -962,7 +962,7 @@ function RunRows({
           </span>
         </td>
       </tr>
-      {run.state === 'needs_attention' && (
+      {run.status === 'needs_attention' && (
         <tr>
           <td
             colSpan={4}

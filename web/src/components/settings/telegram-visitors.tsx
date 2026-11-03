@@ -22,7 +22,7 @@ const handle = (visitor: TelegramVisitor) =>
   visitor.username ? `@${visitor.username}` : ''
 
 const idOf = (visitor: TelegramVisitor) =>
-  `ID ${visitor.user_id || visitor.chat_id}`
+  `ID ${visitor.sender_id || visitor.chat_id}`
 
 // Who they are by the most readable thing Telegram gave for them: a name and a @username are
 // both optional there, and only the id is always known.
@@ -100,7 +100,7 @@ export function TelegramVisitors({
           const detail = detailOf(visitor)
           return (
             <SettingItem
-              key={`${visitor.chat_id}:${visitor.user_id}`}
+              key={`${visitor.chat_id}:${visitor.sender_id}`}
               icon={<User className="size-5" />}
               title={<span title={nameOf(visitor)}>{nameOf(visitor)}</span>}
               badge={

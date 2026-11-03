@@ -30,8 +30,8 @@ type Account struct {
 	Venue      string                 `gorm:"column:venue" json:"venue"`
 	Name       string                 `gorm:"column:name" json:"name"`
 	UserID     string                 `gorm:"column:user_id" json:"user_id"`
-	APIKey     crypto.EncryptedString `gorm:"column:api_key" json:"apiKey"`
-	SecretKey  crypto.EncryptedString `gorm:"column:secret_key" json:"secretKey"`
+	APIKey     crypto.EncryptedString `gorm:"column:api_key" json:"api_key"`
+	SecretKey  crypto.EncryptedString `gorm:"column:secret_key" json:"secret_key"`
 	Passphrase crypto.EncryptedString `gorm:"column:passphrase" json:"passphrase"`
 	// Testnet says the keys reach the venue's test environment. It never changes.
 	Testnet bool `gorm:"column:testnet" json:"testnet"`
@@ -89,14 +89,12 @@ func Lock(accountID string) func() {
 	return mutex.Unlock
 }
 
-// LeaseHolderFutures holds an account from a Futures trade's approval until it ends.
-const LeaseHolderFutures = "futures"
-
-// AccountLease reserves an account for one holder.
+// Lease reserves an account for one source, such as a Futures run from its approval until
+// it ends: Source is SourceFutures and SourceID the run.
 type Lease struct {
 	AccountID  string    `gorm:"column:account_id;primaryKey"`
-	Holder     string    `gorm:"column:holder"`
-	HolderID   string    `gorm:"column:holder_id"`
+	Source     string    `gorm:"column:source"`
+	SourceID   string    `gorm:"column:source_id"`
 	AcquiredAt time.Time `gorm:"column:acquired_at;autoCreateTime"`
 }
 

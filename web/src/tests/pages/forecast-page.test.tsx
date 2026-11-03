@@ -58,6 +58,7 @@ const signal = (patch: Partial<ForecastSignal>) =>
     regime: 'ranging',
     horizon: 4,
     interval: '1h',
+    independent: true,
     open_time: 1,
     support: 76000,
     resistance: 78000,
@@ -115,7 +116,6 @@ const detail = (patch: Partial<ForecastDetail> = {}) =>
     candles: [{ time: 1, open: 1, high: 1, low: 1, close: 1, volume: 1 }],
     last_closed: 1000,
     forming: null,
-    projection: [],
     ...patch,
   }) as ForecastDetail
 

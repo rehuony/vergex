@@ -43,7 +43,8 @@ internal/
 
   Surfaces: read every feature, and nothing imports them
   dashboard/         the event feed and the overview
-  telegram/          bot and alerts; agent/ for the skill-first assistant
+  assistant/         the skill-first assistant, whatever it is reached from
+  telegram/          bot and alerts
   api/               HTTP API and JWT auth, one file per module
 web/                 React frontend (see web/README.md)
 docker/              Dockerfiles and the frontend nginx config
@@ -76,6 +77,6 @@ In the Docker setup, the frontend container's nginx serves the static files and 
 
 - **Traders:** `internal/trader/auto_trader_loop.go` builds the context, `trader/agent` asks the model for decisions, and the trader executes them within the limits in its settings. See [traders.md](traders.md).
 - **Futures:** chat → compile → approve → execute → reconcile under `/api/futures/*`. The agent can read data, draft plans and draw on the chart, but it cannot place orders. See [futures.md](futures.md).
-- **Telegram:** the agent exposes task-level skills only, and high-risk actions wait for a confirmation checked in Go. See [telegram.md](telegram.md).
+- **Assistant:** Telegram and the web app share one agent, which exposes task-level skills only, and high-risk actions wait for a confirmation checked in Go. See [telegram.md](telegram.md) and [assistant.md](assistant.md).
 
 Code conventions and the rules for live order paths are in [AGENTS.md](../AGENTS.md).

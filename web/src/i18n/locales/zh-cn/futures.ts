@@ -95,9 +95,12 @@ export const futures: typeof template = {
     conversationName: '对话名称',
     deleteConversation: '删除对话',
     deleteConversationMessage:
-      '删除“{name}”和其中的全部内容？它起草的计划会保留',
+      '删除“{name}”及其中的全部内容，包括模型调用记录和它起草但从未执行的计划？已执行的计划是订单记录，会保留',
     deleteDraft: '删除草稿',
     deleteDraftMessage: '删除草稿“{name}”？',
+    deletePlan: '删除计划',
+    deletePlanMessage:
+      '删除计划“{name}”？它下过的订单、成交和持仓仍保留在账户记录里',
     deleteCancel: '取消',
     historyActions: '更多操作',
     historySearch: '搜索历史',
@@ -424,13 +427,6 @@ export const futures: typeof template = {
     activity: {
       planningOnly:
         '当前没有可用保证金。规划以账户权益作参考，这些只是比较用的草稿，不是有资金的订单。交易前请按可用保证金重新检查',
-      name: '实时规划动态',
-      thinking: '正在思考',
-      thinkingFor: '正在思考 · {seconds} 秒',
-      thought: '思考了 {seconds} 秒 · {count} 步',
-      usage: '模型用量',
-      usageDetail: '输入 {prompt}，输出 {completion} · {money}',
-      unpriced: '未定价',
       title: '动态',
       tool: {
         get_candles: '读取 K 线',

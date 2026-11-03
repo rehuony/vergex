@@ -19,7 +19,7 @@ const run = (status: string): LiveRun =>
   ({
     id: 'run',
     account_id: 'account',
-    state: 'stopping',
+    status: 'stopping',
     plan: { snapshot: { symbol: 'BTCUSDT', venue: 'binance' } },
     orders: [{ role: 'entry', status }],
   }) as LiveRun

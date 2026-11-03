@@ -10,7 +10,7 @@ const trader = (name: string, running = false) =>
     trader_name: name,
     agent_model: 'deepseek',
     account_id: 'binance',
-    is_running: running,
+    running: running,
   }) as TraderInfo
 
 const metrics = {

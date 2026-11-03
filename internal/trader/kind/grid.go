@@ -74,30 +74,6 @@ func (c *GridConfig) RiskFields() []string {
 	}
 }
 
-// gridLimits is what bounds a grid trader's orders.
-type gridLimits struct {
-	TotalInvestment   float64 `json:"total_investment"`
-	Leverage          int     `json:"leverage"`
-	UpperPrice        float64 `json:"upper_price"`
-	LowerPrice        float64 `json:"lower_price"`
-	MaxDrawdownPct    float64 `json:"max_drawdown_pct"`
-	StopLossPct       float64 `json:"stop_loss_pct"`
-	DailyLossLimitPct float64 `json:"daily_loss_limit_pct"`
-}
-
-// Limits implements Config.
-func (c *GridConfig) Limits() any {
-	return gridLimits{
-		TotalInvestment:   c.TotalInvestment,
-		Leverage:          c.Leverage,
-		UpperPrice:        c.UpperPrice,
-		LowerPrice:        c.LowerPrice,
-		MaxDrawdownPct:    c.MaxDrawdownPct,
-		StopLossPct:       c.StopLossPct,
-		DailyLossLimitPct: c.DailyLossLimitPct,
-	}
-}
-
 // Validate implements Config.
 func (c *GridConfig) Validate() error {
 	c.Symbol = strings.ToUpper(strings.TrimSpace(c.Symbol))

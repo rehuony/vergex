@@ -26,14 +26,14 @@ vi.mock('@/api', () => ({
         id: 'deepseek',
         name: 'DeepSeek AI',
         provider: 'deepseek',
-        defaultModel: 'deepseek-v4-pro',
-        defaultBaseUrl: 'https://api.deepseek.com',
+        default_model: 'deepseek-v4-pro',
+        default_base_url: 'https://api.deepseek.com',
       },
       {
         id: 'openai',
         name: 'OpenAI',
         provider: 'openai',
-        defaultBaseUrl: 'https://api.openai.com/v1',
+        default_base_url: 'https://api.openai.com/v1',
       },
     ],
     getTraders: mocks.traders,
@@ -52,10 +52,10 @@ beforeEach(() => {
       id: 'agent',
       name: 'My AI',
       provider: 'deepseek',
-      defaultModel: 'deepseek-v4-pro',
+      default_model: 'deepseek-v4-pro',
       enabled: true,
       has_api_key: true,
-      customModelName: 'configured-model',
+      model_name: 'configured-model',
     },
   ])
   mocks.update.mockResolvedValue(undefined)
@@ -104,8 +104,8 @@ it('adds a provider that is not connected yet and sends only that one', async ()
         openai: {
           enabled: true,
           api_key: 'fixture-key',
-          custom_api_url: '',
-          custom_model_name: '',
+          base_url: '',
+          model_name: '',
         },
       },
     })
@@ -125,8 +125,8 @@ it('keeps the saved key when an edit leaves it blank', async () => {
         agent: {
           enabled: true,
           api_key: '',
-          custom_api_url: '',
-          custom_model_name: 'deepseek-reasoner',
+          base_url: '',
+          model_name: 'deepseek-reasoner',
         },
       },
     })
@@ -187,8 +187,8 @@ it('tests the form values without saving and clears the result on edit', async (
   expect(mocks.test).toHaveBeenCalledWith({
     agent_model_id: 'agent',
     api_key: '',
-    custom_api_url: '',
-    custom_model_name: 'configured-model',
+    base_url: '',
+    model_name: 'configured-model',
   })
   expect(
     await screen.findByText('Connected · configured-model · 0.8 s')
@@ -226,8 +226,8 @@ it("fills in the provider's endpoint, and saves it as none", async () => {
         openai: {
           enabled: true,
           api_key: 'sk-new',
-          custom_api_url: '',
-          custom_model_name: '',
+          base_url: '',
+          model_name: '',
         },
       },
     })
@@ -240,10 +240,10 @@ it('keeps a different endpoint, and shows it again', async () => {
       id: 'agent',
       name: 'My AI',
       provider: 'deepseek',
-      defaultModel: 'deepseek-v4-pro',
+      default_model: 'deepseek-v4-pro',
       enabled: true,
       has_api_key: true,
-      customApiUrl: 'https://proxy.example.com/v1',
+      base_url: 'https://proxy.example.com/v1',
     },
   ])
   show()
@@ -256,7 +256,7 @@ it('keeps a different endpoint, and shows it again', async () => {
     expect(mocks.update).toHaveBeenCalledWith({
       models: {
         agent: expect.objectContaining({
-          custom_api_url: 'https://proxy.example.com/v1',
+          base_url: 'https://proxy.example.com/v1',
         }),
       },
     })
@@ -272,7 +272,7 @@ it('takes a name from the list or as typed, and holds only the one in the field'
     expect(mocks.list).toHaveBeenCalledWith({
       agent_model_id: 'agent',
       api_key: '',
-      custom_api_url: '',
+      base_url: '',
     })
   )
   openList()
@@ -309,7 +309,7 @@ it('takes a name from the list or as typed, and holds only the one in the field'
   await waitFor(() =>
     expect(mocks.update).toHaveBeenCalledWith({
       models: {
-        agent: expect.objectContaining({ custom_model_name: 'my-proxy' }),
+        agent: expect.objectContaining({ model_name: 'my-proxy' }),
       },
     })
   )
@@ -321,7 +321,7 @@ it('fills in the provider default, and saves it as no name of its own', async ()
       id: 'agent',
       name: 'My AI',
       provider: 'deepseek',
-      defaultModel: 'deepseek-v4-pro',
+      default_model: 'deepseek-v4-pro',
       enabled: true,
       has_api_key: true,
     },
@@ -332,7 +332,7 @@ it('fills in the provider default, and saves it as no name of its own', async ()
   fireEvent.click(screen.getByRole('button', { name: 'Save' }))
   await waitFor(() =>
     expect(mocks.update).toHaveBeenCalledWith({
-      models: { agent: expect.objectContaining({ custom_model_name: '' }) },
+      models: { agent: expect.objectContaining({ model_name: '' }) },
     })
   )
 })

@@ -21,7 +21,7 @@ func TestHistoryReadsDoNotNeedALoadedTrader(t *testing.T) {
 
 	tr := testdb.AddTrader(t, st.DB, &testdb.Trader{Name: "bot"})
 	other := testdb.AddTrader(t, st.DB, &testdb.Trader{UserID: testdb.OtherUserID, Name: "theirs"})
-	if err := st.Decisions.LogDecision(&trader.DecisionRecord{TraderID: tr.ID, CycleNumber: 1, Success: true}); err != nil {
+	if err := st.Decisions.LogDecision(&trader.DecisionRecord{TraderID: tr.ID, Seq: 1, Success: true}); err != nil {
 		t.Fatalf("log decision: %v", err)
 	}
 	ledger := accounttest.NewLedger(t, st.DB)

@@ -29,12 +29,11 @@ type DecisionStore struct {
 type cycleRow struct {
 	ID               int64              `gorm:"primaryKey;autoIncrement"`
 	TraderID         string             `gorm:"column:trader_id"`
-	CycleNumber      int                `gorm:"column:cycle_number"`
+	Seq              int                `gorm:"column:seq"`
 	ConversationID   string             `gorm:"column:conversation_id;serializer:nulltext"`
 	CandidateSymbols database.TextArray `gorm:"column:candidate_symbols"`
 	ExecutionLog     database.TextArray `gorm:"column:execution_log"`
 	AccountState     *AccountSnapshot   `gorm:"column:account_state;serializer:json"`
-	Limits           any                `gorm:"column:limits;serializer:json"`
 	Success          bool               `gorm:"column:success"`
 	Error            string             `gorm:"column:error;serializer:nulltext"`
 	AgentDurationMs  int64              `gorm:"column:agent_duration_ms"`
@@ -70,7 +69,7 @@ func (decisionRow) TableName() string { return "trader.decisions" }
 type DecisionRecord struct {
 	ID              int64            `json:"id"`
 	TraderID        string           `json:"trader_id"`
-	CycleNumber     int              `json:"cycle_number"`
+	Seq             int              `json:"seq"` // The trader's cycle number, from 1
 	Timestamp       time.Time        `json:"timestamp"`
 	ConversationID  string           `json:"-"`
 	SystemPrompt    string           `json:"system_prompt"`
@@ -83,7 +82,6 @@ type DecisionRecord struct {
 	ErrorMessage    string           `json:"error_message"`
 	AgentDurationMs int64            `json:"agent_duration_ms"`
 	AccountState    *AccountSnapshot `json:"account_state"`
-	Limits          any              `json:"-"` // The limits this cycle ran under, kept for reading it later
 	Decisions       []DecisionAction `json:"decisions"`
 	// ModelUse is what the cycle's calls to the model came to, on a record read in full.
 	ModelUse *agent.CallTotals `json:"model_use,omitempty"`
@@ -150,6 +148,32 @@ func (s *DecisionStore) WithContext(ctx context.Context) *DecisionStore {
 	return &DecisionStore{db: s.db.WithContext(ctx)}
 }
 
+// lostConversations are a trader's conversations no cycle points at: the cycle that opened
+// one was never saved, so nothing can open it.
+const lostConversations = `SELECT c.id FROM agent.conversations c WHERE c.feature = ?
+	AND NOT EXISTS (SELECT 1 FROM trader.cycles y WHERE y.conversation_id = c.id)`
+
+// ForgetConversations deletes the conversations that cycles were never saved for, with what
+// was said in them, and says how many went. With IDs it looks only at those; without, at
+// all of them, which is only safe while no cycle is under way. Their model calls stay,
+// counted for the trader they are attributed to, without the link.
+func (s *DecisionStore) ForgetConversations(ids ...string) (int64, error) {
+	lost, args := lostConversations, []any{agent.FeatureTrader}
+	if len(ids) > 0 {
+		lost, args = lost+" AND c.id IN ?", append(args, ids)
+	}
+	var deleted int64
+	err := s.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("UPDATE agent.calls SET conversation_id = NULL WHERE conversation_id IN ("+lost+")", args...).Error; err != nil {
+			return err
+		}
+		result := tx.Exec("DELETE FROM agent.conversations WHERE id IN ("+lost+")", args...)
+		deleted = result.RowsAffected
+		return result.Error
+	})
+	return deleted, err
+}
+
 // LogDecision saves a cycle and what it decided.
 func (s *DecisionStore) LogDecision(record *DecisionRecord) error {
 	if record.Timestamp.IsZero() {
@@ -159,12 +183,11 @@ func (s *DecisionStore) LogDecision(record *DecisionRecord) error {
 	}
 	cycle := &cycleRow{
 		TraderID:         record.TraderID,
-		CycleNumber:      record.CycleNumber,
+		Seq:              record.Seq,
 		ConversationID:   record.ConversationID,
 		CandidateSymbols: record.CandidateCoins,
 		ExecutionLog:     storableLines(record.ExecutionLog),
 		AccountState:     record.AccountState,
-		Limits:           record.Limits,
 		Success:          record.Success,
 		Error:            database.StorableText(record.ErrorMessage),
 		AgentDurationMs:  record.AgentDurationMs,
@@ -236,7 +259,7 @@ func (s *DecisionStore) records(cycles []*cycleRow) ([]*DecisionRecord, error) {
 		records[i] = &DecisionRecord{
 			ID:              cycle.ID,
 			TraderID:        cycle.TraderID,
-			CycleNumber:     cycle.CycleNumber,
+			Seq:             cycle.Seq,
 			Timestamp:       cycle.FinishedAt,
 			ConversationID:  cycle.ConversationID,
 			CandidateCoins:  cycle.CandidateSymbols,
@@ -440,12 +463,12 @@ func (s *DecisionStore) GetStatistics(traderID string) (*Statistics, error) {
 	return stats, nil
 }
 
-// GetLastCycleNumber gets the last cycle number for specified trader
-func (s *DecisionStore) GetLastCycleNumber(traderID string) (int, error) {
+// LastSeq returns the number of the trader's last cycle, 0 before its first.
+func (s *DecisionStore) LastSeq(traderID string) (int, error) {
 	var cycleNumber *int
 	err := s.db.Model(&cycleRow{}).
 		Where("trader_id = ?", traderID).
-		Select("MAX(cycle_number)").
+		Select("MAX(seq)").
 		Scan(&cycleNumber).Error
 	if err != nil {
 		return 0, err

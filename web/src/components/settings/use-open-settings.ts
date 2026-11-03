@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router-dom'
-import type { SettingsSection } from './settings-dialog'
+import type { SettingsSection } from './settings-sections'
 import { SETTINGS_PARAM } from '@/constants/route-paths'
 
 /**

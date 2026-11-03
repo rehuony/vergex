@@ -225,7 +225,7 @@ func (s *Server) callDryRunModel(ctx context.Context, userID, modelID, systemPro
 	if client == nil {
 		client = agent.NewClient()
 	}
-	client.SetAPIKey(string(model.APIKey), model.CustomAPIURL, model.CustomModelName)
+	client.SetAPIKey(string(model.APIKey), model.BaseURL, model.ModelName)
 	agent.TagUsage(client, agent.FeatureTest, "")
 
 	// Leaving the dialog stops the call rather than paying for an answer nobody will read.

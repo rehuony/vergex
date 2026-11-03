@@ -40,7 +40,7 @@ type Strategy struct {
 	EngineVersion int    `json:"-"`
 	ConfigJSON    string `gorm:"column:config" json:"-"`
 	Config        Config `gorm:"-" json:"config"`
-	IsActive      bool   `json:"-"`
+	Active        bool   `json:"-"`
 	CreatedAt     int64  `gorm:"serializer:unixms;autoCreateTime:false" json:"created_at"`
 	// Retired means the forecast code changed after this was saved. It keeps its
 	// records, but its rules would no longer give the same forecasts, so it cannot be
@@ -64,11 +64,14 @@ type Settings struct {
 	AlertIntervals []string `json:"alert_intervals"`
 }
 
-// DefaultAlertThreshold is used until the user sets one.
-const DefaultAlertThreshold = 70
+// DefaultAlertThreshold is used until the user sets one. Under the default rules it
+// picks about the strongest fifth of calls, which hit five to six points over chance out
+// of sample.
+const DefaultAlertThreshold = 56
 
-// DefaultAlertIntervals leaves out 15m, whose calls would fill the chat.
-var DefaultAlertIntervals = []string{"1h", "4h", "1d"}
+// DefaultAlertIntervals leaves out 15m, whose calls would fill the chat, and 1d, whose
+// calls have too short a record to stand on.
+var DefaultAlertIntervals = []string{"1h", "4h"}
 
 // Signal is one forecast and, later, how it turned out. Symbol and Interval come from
 // its series.
@@ -78,7 +81,7 @@ type Signal struct {
 	SeriesID   int64   `json:"series_id"`
 	OpenTime   int64   `gorm:"column:open_at;serializer:unixms" json:"open_time"`
 	Symbol     string  `gorm:"column:symbol;->" json:"symbol"`
-	Interval   string  `gorm:"column:timeframe;->" json:"interval"`
+	Interval   string  `gorm:"column:interval;->" json:"interval"`
 	Close      float64 `json:"close"`
 	// ProbCandles uses candles only; ProbFull adds derivatives.
 	ProbCandles float64 `json:"prob_candles"`
@@ -101,8 +104,9 @@ type Signal struct {
 	ActualMovePct float64 `gorm:"default:null" json:"actual_move_pct,omitempty"`
 	VerifiedAt    int64   `gorm:"serializer:unixms" json:"verified_at,omitempty"`
 	// Independent means its window does not overlap an earlier independent signal of
-	// the series, and price moved.
-	Independent bool `json:"-"`
+	// the series, and price moved. The statistics count only these, and so does the
+	// chart's record of past calls.
+	Independent bool `json:"independent"`
 }
 
 func (Signal) TableName() string { return "forecast.signals" }
@@ -110,22 +114,21 @@ func (Signal) TableName() string { return "forecast.signals" }
 // Calibration is a strategy's curve for one interval.
 type Calibration struct {
 	StrategyID string `gorm:"primaryKey"`
-	Interval   string `gorm:"column:timeframe;primaryKey"`
-	Samples    int
+	Interval   string `gorm:"column:interval;primaryKey"`
 	Knots      string
 	BuiltAt    int64 `gorm:"serializer:unixms"`
 }
 
 func (Calibration) TableName() string { return "forecast.calibrations" }
 
-// AlertArm remembers that a series has alerted; it re-arms once the score comes
-// back inside the threshold.
-type AlertArm struct {
+// AlertState remembers that a series has alerted; it re-arms once the score comes back
+// inside the threshold.
+type AlertState struct {
 	SeriesID int64 `gorm:"primaryKey;autoIncrement:false"`
 	Alerted  bool
 }
 
-func (AlertArm) TableName() string { return "forecast.alert_states" }
+func (AlertState) TableName() string { return "forecast.alert_states" }
 
 // Backtest states.
 const (
@@ -225,7 +228,7 @@ func (s *Store) createStrategy(db *gorm.DB, config Config, name string, active b
 	}
 	strategy := &Strategy{
 		ID: uuid.NewString(), Name: name, EngineVersion: EngineVersion,
-		ConfigJSON: string(body), Config: config, IsActive: active, CreatedAt: now.UnixMilli(),
+		ConfigJSON: string(body), Config: config, Active: active, CreatedAt: now.UnixMilli(),
 	}
 	if err := db.Create(strategy).Error; err != nil {
 		if errors.Is(err, gorm.ErrDuplicatedKey) {
@@ -355,7 +358,7 @@ func (s *Store) LoadSettings(now time.Time) (Settings, error) {
 // at all. With strategies saved and every one stopped, it returns ErrNoStrategyInUse.
 func (s *Store) ActiveStrategy(now time.Time) (*Strategy, error) {
 	var strategies []Strategy
-	if err := s.db.Where("is_active").Limit(1).Find(&strategies).Error; err != nil {
+	if err := s.db.Where("active").Limit(1).Find(&strategies).Error; err != nil {
 		return nil, err
 	}
 	if len(strategies) == 1 {
@@ -378,10 +381,10 @@ func (s *Store) Activate(id string) error {
 		return err
 	}
 	return s.db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&Strategy{}).Where("is_active").Update("is_active", false).Error; err != nil {
+		if err := tx.Model(&Strategy{}).Where("active").Update("active", false).Error; err != nil {
 			return err
 		}
-		return tx.Model(&Strategy{}).Where("id = ?", strategy.ID).Update("is_active", true).Error
+		return tx.Model(&Strategy{}).Where("id = ?", strategy.ID).Update("active", true).Error
 	})
 }
 
@@ -391,7 +394,7 @@ func (s *Store) Deactivate(id string) error {
 	if uuid.Validate(id) != nil {
 		return ErrStrategyAbsent
 	}
-	result := s.db.Model(&Strategy{}).Where("id = ?", id).Update("is_active", false)
+	result := s.db.Model(&Strategy{}).Where("id = ?", id).Update("active", false)
 	if result.Error == nil && result.RowsAffected == 0 {
 		return ErrStrategyAbsent
 	}
@@ -433,10 +436,10 @@ func (s *Store) Revive(id string) error {
 				return err
 			}
 		}
-		if err := tx.Model(&Strategy{}).Where("is_active").Update("is_active", false).Error; err != nil {
+		if err := tx.Model(&Strategy{}).Where("active").Update("active", false).Error; err != nil {
 			return err
 		}
-		return tx.Model(&Strategy{}).Where("id = ?", id).Updates(map[string]any{"engine_version": EngineVersion, "is_active": true}).Error
+		return tx.Model(&Strategy{}).Where("id = ?", id).Updates(map[string]any{"engine_version": EngineVersion, "active": true}).Error
 	})
 }
 
@@ -462,7 +465,7 @@ var carriedSuffix = regexp.MustCompile(` \(\d+\)$`)
 // takes over, and the old one stays as it was with what it recorded.
 func (s *Store) carryForward(now time.Time) error {
 	var current []Strategy
-	if err := s.db.Where("is_active").Limit(1).Find(&current).Error; err != nil {
+	if err := s.db.Where("active").Limit(1).Find(&current).Error; err != nil {
 		return err
 	}
 	if len(current) == 0 || current[0].EngineVersion == EngineVersion {
@@ -477,7 +480,7 @@ func (s *Store) carryForward(now time.Time) error {
 		if err != nil {
 			return err
 		}
-		if err := tx.Model(&Strategy{}).Where("id = ?", old.ID).Update("is_active", false).Error; err != nil {
+		if err := tx.Model(&Strategy{}).Where("id = ?", old.ID).Update("active", false).Error; err != nil {
 			return err
 		}
 		_, err = s.createStrategy(tx, old.Config, name, true, now)
@@ -508,7 +511,7 @@ func (s *Store) SetAlerts(threshold int, intervals []string) error {
 
 // signalQuery selects signals with their symbol and interval.
 func (s *Store) signalQuery() *gorm.DB {
-	return s.db.Table("forecast.signals AS r").Select("r.*, i.symbol, m.timeframe").
+	return s.db.Table("forecast.signals AS r").Select("r.*, i.symbol, m.interval").
 		Joins("JOIN market.series AS m ON m.id = r.series_id").
 		Joins("JOIN market.instruments AS i ON i.id = m.instrument_id")
 }
@@ -549,7 +552,7 @@ func (s *Store) LatestOpenTimes(strategyID string) (map[int64]int64, error) {
 func (s *Store) LatestSignals(strategyID, interval string) ([]Signal, error) {
 	var signals []Signal
 	err := s.db.Raw(`
-		SELECT r.*, i.symbol, m.timeframe
+		SELECT r.*, i.symbol, m.interval
 		FROM market.series AS m
 		JOIN market.instruments AS i ON i.id = m.instrument_id
 		CROSS JOIN LATERAL (
@@ -557,7 +560,7 @@ func (s *Store) LatestSignals(strategyID, interval string) ([]Signal, error) {
 			WHERE strategy_id = ? AND series_id = m.id
 			ORDER BY open_at DESC LIMIT 1
 		) AS r
-		WHERE m.timeframe = ?`, strategyID, interval).Scan(&signals).Error
+		WHERE m.interval = ?`, strategyID, interval).Scan(&signals).Error
 	return signals, err
 }
 
@@ -647,35 +650,31 @@ func addToStats(tx *gorm.DB, signal *Signal) error {
 		}
 		return 0
 	}
-	moved, rose := signal.TargetClose != signal.Close, signal.TargetClose > signal.Close
+	// Apart from judged, only independent signals count: overlapping windows would count
+	// one move many times.
+	independent := signal.Independent
+	rose := signal.TargetClose > signal.Close
 	hit, miss := signal.Outcome == OutcomeHit, signal.Outcome == OutcomeMiss
-	independentMove := 0.0
-	if signal.Independent {
-		independentMove = signal.ActualMovePct
+	move := 0.0
+	if independent {
+		move = signal.ActualMovePct
 	}
 	opened := at(signal.OpenTime)
 	return tx.Exec(`
 		INSERT INTO forecast.outcome_stats (
 			strategy_id, series_id, month, direction, regime, confidence_band,
-			judged, hits, misses, moved, rose, move_sum,
-			independent_moved, independent_hits, independent_misses, independent_rose, independent_move_sum
-		) VALUES (?, ?, ?::date, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			judged, moved, rose, hits, misses, move_sum
+		) VALUES (?, ?, ?::date, ?, ?, ?, 1, ?, ?, ?, ?, ?)
 		ON CONFLICT (strategy_id, series_id, month, direction, regime, confidence_band) DO UPDATE SET
 			judged = forecast.outcome_stats.judged + 1,
-			hits = forecast.outcome_stats.hits + EXCLUDED.hits,
-			misses = forecast.outcome_stats.misses + EXCLUDED.misses,
 			moved = forecast.outcome_stats.moved + EXCLUDED.moved,
 			rose = forecast.outcome_stats.rose + EXCLUDED.rose,
-			move_sum = forecast.outcome_stats.move_sum + EXCLUDED.move_sum,
-			independent_moved = forecast.outcome_stats.independent_moved + EXCLUDED.independent_moved,
-			independent_hits = forecast.outcome_stats.independent_hits + EXCLUDED.independent_hits,
-			independent_misses = forecast.outcome_stats.independent_misses + EXCLUDED.independent_misses,
-			independent_rose = forecast.outcome_stats.independent_rose + EXCLUDED.independent_rose,
-			independent_move_sum = forecast.outcome_stats.independent_move_sum + EXCLUDED.independent_move_sum`,
+			hits = forecast.outcome_stats.hits + EXCLUDED.hits,
+			misses = forecast.outcome_stats.misses + EXCLUDED.misses,
+			move_sum = forecast.outcome_stats.move_sum + EXCLUDED.move_sum`,
 		signal.StrategyID, signal.SeriesID, fmt.Sprintf("%04d-%02d-01", opened.Year(), opened.Month()),
 		signal.Direction, signal.Regime, confidenceBand(signal.Confidence),
-		count(hit), count(miss), count(moved), count(rose), signal.ActualMovePct,
-		count(signal.Independent), count(signal.Independent && hit), count(signal.Independent && miss), count(signal.Independent && rose), independentMove,
+		count(independent), count(independent && rose), count(independent && hit), count(independent && miss), move,
 	).Error
 }
 
@@ -690,7 +689,7 @@ func (s *Store) IndependentPoints(strategyID, interval string) ([]CalibrationPoi
 	}
 	err := s.db.Table("forecast.signals AS r").Select("r.prob_full, r.target_close > r.close AS up, r.open_at, r.horizon").
 		Joins("JOIN market.series AS m ON m.id = r.series_id").
-		Where("r.strategy_id = ? AND m.timeframe = ? AND r.independent", strategyID, interval).
+		Where("r.strategy_id = ? AND m.interval = ? AND r.independent", strategyID, interval).
 		Order("r.series_id, r.open_at").Scan(&rows).Error
 	if err != nil {
 		return nil, err
@@ -721,11 +720,11 @@ func (s *Store) saveCalibration(calibration Calibration) error {
 }
 
 func (s *Store) removeCalibration(strategyID, interval string) error {
-	return s.db.Where("strategy_id = ? AND timeframe = ?", strategyID, interval).Delete(&Calibration{}).Error
+	return s.db.Where("strategy_id = ? AND interval = ?", strategyID, interval).Delete(&Calibration{}).Error
 }
 
 func (s *Store) alertArm(seriesID int64) bool {
-	var arm AlertArm
+	var arm AlertState
 	if err := s.db.First(&arm, "series_id = ?", seriesID).Error; err != nil {
 		return false
 	}
@@ -733,7 +732,7 @@ func (s *Store) alertArm(seriesID int64) bool {
 }
 
 func (s *Store) setAlertArm(seriesID int64, alerted bool) error {
-	return s.db.Save(&AlertArm{SeriesID: seriesID, Alerted: alerted}).Error
+	return s.db.Save(&AlertState{SeriesID: seriesID, Alerted: alerted}).Error
 }
 
 // backtestName tidies what a run is to be called, or refuses it. Empty is fine: the run
@@ -883,7 +882,7 @@ type SignalStats struct {
 
 // outcomeRow is one line of outcome_stats, or several added up.
 type outcomeRow struct {
-	Timeframe      string
+	Interval       string
 	Regime         string
 	Direction      string
 	ConfidenceBand int
@@ -895,9 +894,9 @@ type outcomeRow struct {
 	MoveSum        float64
 }
 
-const outcomeColumns = `COALESCE(SUM(o.judged), 0) AS judged, COALESCE(SUM(o.independent_moved), 0) AS moved,
-	COALESCE(SUM(o.independent_rose), 0) AS rose, COALESCE(SUM(o.independent_hits), 0) AS hits,
-	COALESCE(SUM(o.independent_misses), 0) AS misses, COALESCE(SUM(o.independent_move_sum), 0) AS move_sum`
+const outcomeColumns = `COALESCE(SUM(o.judged), 0) AS judged, COALESCE(SUM(o.moved), 0) AS moved,
+	COALESCE(SUM(o.rose), 0) AS rose, COALESCE(SUM(o.hits), 0) AS hits,
+	COALESCE(SUM(o.misses), 0) AS misses, COALESCE(SUM(o.move_sum), 0) AS move_sum`
 
 // outcomeTotals adds rows up, keeping up and down calls apart for the chance rate and
 // the sign of their returns.
@@ -957,7 +956,7 @@ func (s *Store) SignalStats(strategyID string, seriesID int64) (SignalStats, err
 // madeCall is one independent call a strategy made and when, which outcome_stats no
 // longer knows.
 type madeCall struct {
-	Timeframe  string
+	Interval   string
 	Regime     string
 	Direction  string
 	Confidence int
@@ -967,7 +966,7 @@ type madeCall struct {
 
 func (s *Store) madeCalls(strategyID string) ([]madeCall, error) {
 	var calls []madeCall
-	err := s.db.Table("forecast.signals AS r").Select("m.timeframe, r.regime, r.direction, r.confidence, r.open_at, r.horizon").
+	err := s.db.Table("forecast.signals AS r").Select("m.interval, r.regime, r.direction, r.confidence, r.open_at, r.horizon").
 		Joins("JOIN market.series AS m ON m.id = r.series_id").
 		Where("r.strategy_id = ? AND r.independent AND r.direction <> ?", strategyID, DirectionNeutral).Scan(&calls).Error
 	return calls, err
@@ -977,14 +976,14 @@ func (s *Store) madeCalls(strategyID string) ([]madeCall, error) {
 // to its interval, so an hour at 1h and an hour at 4h are not the same one.
 func momentsBy(calls []madeCall, key func(outcomeRow) string) map[string]int64 {
 	type moment struct {
-		group, timeframe string
-		index            int64
+		group, interval string
+		index           int64
 	}
 	seen := map[moment]bool{}
 	counts := map[string]int64{}
 	for _, call := range calls {
-		group := key(outcomeRow{Timeframe: call.Timeframe, Regime: call.Regime, Direction: call.Direction, ConfidenceBand: confidenceBand(call.Confidence)})
-		at := moment{group, call.Timeframe, call.OpenAt.UnixMilli() / (max(call.Horizon, 1) * intervalMillis(call.Timeframe))}
+		group := key(outcomeRow{Interval: call.Interval, Regime: call.Regime, Direction: call.Direction, ConfidenceBand: confidenceBand(call.Confidence)})
+		at := moment{group, call.Interval, call.OpenAt.UnixMilli() / (max(call.Horizon, 1) * intervalMillis(call.Interval))}
 		if !seen[at] {
 			seen[at] = true
 			counts[group]++
@@ -1017,10 +1016,10 @@ type CalibrationStatus struct {
 func (s *Store) Performance(strategyID string) (*Performance, error) {
 	var rows []outcomeRow
 	err := s.db.Table("forecast.outcome_stats AS o").
-		Select("m.timeframe, o.regime, o.direction, o.confidence_band, "+outcomeColumns).
+		Select("m.interval, o.regime, o.direction, o.confidence_band, "+outcomeColumns).
 		Joins("JOIN market.series AS m ON m.id = o.series_id").
 		Where("o.strategy_id = ?", strategyID).
-		Group("m.timeframe, o.regime, o.direction, o.confidence_band").Scan(&rows).Error
+		Group("m.interval, o.regime, o.direction, o.confidence_band").Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}
@@ -1037,7 +1036,7 @@ func (s *Store) Performance(strategyID string) (*Performance, error) {
 		// by how often price rose overall. Within the group it would equal the hit rate.
 		overallBase bool
 	}{
-		{dest: &performance.ByInterval, key: func(row outcomeRow) string { return row.Timeframe }},
+		{dest: &performance.ByInterval, key: func(row outcomeRow) string { return row.Interval }},
 		{dest: &performance.ByRegime, key: func(row outcomeRow) string { return row.Regime }},
 		{dest: &performance.ByDirection, key: func(row outcomeRow) string { return row.Direction }, overallBase: true},
 		{dest: &performance.ByConfidence, key: func(row outcomeRow) string { return strconv.Itoa(row.ConfidenceBand) }},

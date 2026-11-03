@@ -16,11 +16,11 @@ func TestFuturesResultsAddUpARunsClosedPositions(t *testing.T) {
 	db := testdb.Open(t)
 	ledger := accounttest.NewLedger(t, db)
 	book := account.NewLedger(db)
-	btc, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	btc, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
-	eth, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "ETHUSDT", "ETHUSDT")
+	eth, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "ETHUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +28,7 @@ func TestFuturesResultsAddUpARunsClosedPositions(t *testing.T) {
 	trade := func(instrumentID int64, id, side string, realized string, owner string) {
 		t.Helper()
 		record := account.Trade{
-			AccountID: ledger.Account, InstrumentID: instrumentID, ExchangeTradeID: id, ExchangeOrderID: "order-" + id, Side: side, PositionSide: account.SideLong,
+			AccountID: ledger.Account, InstrumentID: instrumentID, VenueTradeID: id, VenueOrderID: "order-" + id, Side: side, PositionSide: account.SideLong,
 			Price: decimal.NewFromInt(100), Quantity: decimal.NewFromInt(1), QuoteQuantity: decimal.NewFromInt(100), CommissionAsset: "USDT", ExecutedAt: now,
 		}
 		if realized != "" {

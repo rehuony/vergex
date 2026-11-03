@@ -105,7 +105,7 @@ export async function closeAccountPosition(
       r.account_id === accountID &&
       nativeMarket(r.plan.snapshot.symbol, venue) ===
         nativeMarket(position.symbol, venue) &&
-      !terminal.has(r.state)
+      !terminal.has(r.status)
   )
   for (const run of matching) await actions.stop(run)
   if (matching.length) {
@@ -118,10 +118,10 @@ export async function closeAccountPosition(
         )
         return (
           !!run &&
-          run.state !== 'approved' &&
-          run.state !== 'running' &&
+          run.status !== 'approved' &&
+          run.status !== 'running' &&
           !pendingEntry(run) &&
-          (run.orders.length > 0 || terminal.has(run.state))
+          (run.orders.length > 0 || terminal.has(run.status))
         )
       })
       if (cleared) break

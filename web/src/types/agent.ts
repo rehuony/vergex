@@ -4,13 +4,12 @@ export interface AgentModel {
   provider: string
   enabled: boolean
   has_api_key?: boolean
-  apiKey?: string
-  customApiUrl?: string
-  customModelName?: string
+  base_url?: string
+  model_name?: string
   // What it calls unless given a name of its own.
-  defaultModel?: string
+  default_model?: string
   // On a supported provider: what it uses unless told otherwise.
-  defaultBaseUrl?: string
+  default_base_url?: string
 }
 
 export interface UpdateModelConfigRequest {
@@ -18,8 +17,8 @@ export interface UpdateModelConfigRequest {
     [key: string]: {
       enabled: boolean
       api_key: string
-      custom_api_url?: string
-      custom_model_name?: string
+      base_url?: string
+      model_name?: string
     }
   }
 }
@@ -27,8 +26,8 @@ export interface UpdateModelConfigRequest {
 export interface TestModelConfigRequest {
   agent_model_id: string
   api_key: string
-  custom_api_url: string
-  custom_model_name: string
+  base_url: string
+  model_name: string
 }
 
 export interface ModelTest {

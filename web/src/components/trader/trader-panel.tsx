@@ -82,7 +82,7 @@ export function TraderPanel({
 }) {
   const label = (key: string) => t(`traderDetail.${key}`, language)
   const id = trader.trader_id
-  const running = Boolean(trader.is_running)
+  const running = Boolean(trader.running)
   const { status, account, positions } = useTraderData(id)
   const client = useQueryClient()
   const resume = async () => {
@@ -151,7 +151,7 @@ export function TraderPanel({
           costs={costs}
           costsFailed={Boolean(costsError)}
           positions={positions.data}
-          running={status.data?.is_running}
+          running={status.data?.running}
           nextCycleMs={nextCycleMs}
           language={language}
         />
@@ -297,6 +297,7 @@ export function TraderPanel({
           <TraderSettings
             traderId={id}
             running={running}
+            active={tab === 'settings'}
             language={language}
             onDirty={onDirty}
           />

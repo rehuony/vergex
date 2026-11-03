@@ -21,7 +21,7 @@ function StopAll({ language }: { language: Language }) {
     enabled: Boolean(user && token),
   })
   const [stopping, setStopping] = useState(false)
-  const running = (data ?? []).filter((trader) => trader.is_running)
+  const running = (data ?? []).filter((trader) => trader.running)
   if (running.length === 0) return null
 
   const stopAll = async () => {

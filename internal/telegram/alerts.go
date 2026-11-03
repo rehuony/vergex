@@ -61,7 +61,7 @@ const (
 type PlanRun struct {
 	ID     string
 	Symbol string
-	State  string
+	Status string
 	Error  string
 }
 
@@ -100,7 +100,7 @@ type Problem struct {
 type alertWatcher struct {
 	stores  *Stores
 	sources AlertSources
-	send    func(ctx context.Context, text string) error
+	send    func(ctx context.Context, part messagePart, silent bool) error
 	now     func() time.Time
 	// delivered holds the parts already sent of a message that failed part way, so trying
 	// again sends only the rest.
@@ -114,8 +114,10 @@ func StartAlerts(ctx context.Context, st *Stores, sources AlertSources) {
 	w := &alertWatcher{
 		stores:  st,
 		sources: sources,
-		send:    func(ctx context.Context, text string) error { return Notify(ctx, st.Telegram, text) },
-		now:     time.Now,
+		send: func(ctx context.Context, part messagePart, silent bool) error {
+			return notifyPart(ctx, st.Telegram, part, silent)
+		},
+		now: time.Now,
 	}
 	ticker := time.NewTicker(alertInterval)
 	defer ticker.Stop()
@@ -129,20 +131,49 @@ func StartAlerts(ctx context.Context, st *Stores, sources AlertSources) {
 	}
 }
 
-// pending is one check's messages and the marks to save once they are delivered.
+// pending is one check's events, by the section of the message they go in, and the marks
+// to save once they are delivered.
 type pending struct {
-	cfg     *Config
-	lang    string
-	lines   []string
+	cfg  *Config
+	lang string
+	// attention, orders, entries and closes are the digest's sections, in that order.
+	attention []text
+	orders    []orderEvent
+	entries   []positionEvent
+	closes    []positionEvent
+	// report is the daily report, which goes out on its own.
+	report  *message
 	set     map[string]int64
 	cleared []string
 }
 
-// add queues a line unless the user muted its kind. Either way the mark moves,
-// so turning a kind back on does not replay what happened while it was off.
-func (p *pending) add(kind, line string) {
+// orderEvent is an order that was refused or failed.
+type orderEvent struct {
+	symbol, what, reason string
+	origin               origin
+	late                 string
+}
+
+// positionEvent is a position that opened or closed.
+type positionEvent struct {
+	symbol, side    string
+	quantity, price float64
+	pnl             float64
+	origin          origin
+	late            string
+}
+
+// origin is who an event belongs to: a trader, or Futures, and on what kind of money.
+type origin struct {
+	name    string
+	testnet bool
+}
+
+// add keeps an event unless the user muted its kind. Either way the mark moves, so turning
+// a kind back on does not replay what happened while it was off.
+func (p *pending) add(kind string, keep func()) {
 	if !p.cfg.AlertMuted(kind) {
-		p.lines = append(p.lines, line)
+		keep()
 	}
 }
 
@@ -165,24 +196,27 @@ func (w *alertWatcher) check(ctx context.Context) {
 	p := &pending{cfg: cfg, lang: w.stores.Telegram.GetLanguage(), set: map[string]int64{}}
 	testnet := w.testnetAccounts(user)
 	ids := make([]string, 0, len(traders))
-	names := make(map[string]string, len(traders))
+	owners := make(map[string]origin, len(traders))
 	for _, trader := range traders {
 		ids = append(ids, trader.ID)
-		names[trader.ID] = traderLabel(p.lang, trader.Name, testnet[trader.AccountID])
+		owners[trader.ID] = origin{name: trader.Name, testnet: testnet[trader.AccountID]}
 	}
 
 	now := w.now().UnixMilli()
-	w.checkOrders(ids, names, now, p)
-	w.checkActions(ids, names, now, p)
-	w.checkPositions(ids, names, now, p)
-	w.checkTraderState(traders, names, now, p)
+	w.checkOrders(ids, owners, now, p)
+	w.checkActions(ids, owners, now, p)
+	w.checkPositions(ids, owners, now, p)
+	w.checkTraderState(traders, owners, now, p)
 	w.checkPlans(ctx, user, now, p)
 	w.checkFuturesPositions(user, now, p)
 	w.checkProblems(user, now, p)
 	w.checkDailyReport(user, p)
 
-	if len(p.lines) > 0 {
-		if err := w.deliver(ctx, strings.Join(p.lines, "\n")); err != nil {
+	for _, m := range []*message{p.digest(), p.report} {
+		if m == nil || m.empty() {
+			continue
+		}
+		if err := w.deliver(ctx, m); err != nil {
 			// Marks stay where they are, so the same events go out next time.
 			logger.Warnf("Telegram alerts: send: %v", err)
 			service.Report(service.TelegramAlerts, service.Degraded, err.Error())
@@ -204,18 +238,18 @@ func (w *alertWatcher) check(ctx context.Context) {
 }
 
 // deliver sends a message in parts, skipping those an earlier try already got through.
-func (w *alertWatcher) deliver(ctx context.Context, text string) error {
-	for _, part := range splitMessage(text) {
-		if w.delivered[part] {
+func (w *alertWatcher) deliver(ctx context.Context, m *message) error {
+	for _, part := range m.parts() {
+		if w.delivered[part.HTML] {
 			continue
 		}
-		if err := w.send(ctx, part); err != nil {
+		if err := w.send(ctx, part, m.silent); err != nil {
 			return err
 		}
 		if w.delivered == nil {
 			w.delivered = map[string]bool{}
 		}
-		w.delivered[part] = true
+		w.delivered[part.HTML] = true
 	}
 	w.delivered = nil
 	return nil
@@ -235,7 +269,7 @@ func (w *alertWatcher) since(key string, now int64, p *pending) (int64, bool) {
 	return mark, true
 }
 
-func (w *alertWatcher) checkOrders(ids []string, names map[string]string, now int64, p *pending) {
+func (w *alertWatcher) checkOrders(ids []string, owners map[string]origin, now int64, p *pending) {
 	since, ok := w.since(markOrders, now, p)
 	if !ok {
 		return
@@ -246,12 +280,13 @@ func (w *alertWatcher) checkOrders(ids []string, names map[string]string, now in
 		return
 	}
 	for _, order := range orders {
-		p.add(AlertOrderRejected, w.dated(orderRejectedLine(p.lang, order, names[order.TraderID]), order.UpdatedAt, now))
+		event := orderEvent{symbol: order.Symbol, what: orderSide(p.lang, order.Side), reason: order.Error, origin: owners[order.TraderID], late: w.late(order.UpdatedAt, now)}
+		p.add(AlertOrderRejected, func() { p.orders = append(p.orders, event) })
 		p.set[markOrders] = order.UpdatedAt
 	}
 }
 
-func (w *alertWatcher) checkActions(ids []string, names map[string]string, now int64, p *pending) {
+func (w *alertWatcher) checkActions(ids []string, owners map[string]origin, now int64, p *pending) {
 	since, ok := w.since(markActions, now, p)
 	if !ok {
 		return
@@ -262,12 +297,14 @@ func (w *alertWatcher) checkActions(ids []string, names map[string]string, now i
 		return
 	}
 	for _, action := range actions {
-		p.add(AlertOrderRejected, w.dated(actionFailedLine(p.lang, action, names[action.TraderID]), action.Timestamp.UnixMilli(), now))
-		p.set[markActions] = action.Timestamp.UnixMilli()
+		at := action.Timestamp.UnixMilli()
+		event := orderEvent{symbol: action.Symbol, what: decisionAction(p.lang, action.Action), reason: action.Error, origin: owners[action.TraderID], late: w.late(at, now)}
+		p.add(AlertOrderRejected, func() { p.orders = append(p.orders, event) })
+		p.set[markActions] = at
 	}
 }
 
-func (w *alertWatcher) checkPositions(ids []string, names map[string]string, now int64, p *pending) {
+func (w *alertWatcher) checkPositions(ids []string, owners map[string]origin, now int64, p *pending) {
 	since, ok := w.since(markPositions, now, p)
 	if !ok {
 		return
@@ -278,25 +315,31 @@ func (w *alertWatcher) checkPositions(ids []string, names map[string]string, now
 		return
 	}
 	for _, position := range positions {
-		p.add(AlertPositionClosed, w.dated(positionClosedLine(p.lang, position, names[position.TraderID]), position.ExitTime, now))
+		event := closeEvent(position, owners[position.TraderID], w.late(position.ExitTime, now))
+		p.add(AlertPositionClosed, func() { p.closes = append(p.closes, event) })
 		p.set[markPositions] = position.ExitTime
 	}
 }
 
+func closeEvent(position *account.TraderPosition, owner origin, late string) positionEvent {
+	return positionEvent{symbol: position.Symbol, side: strings.ToLower(position.Side), pnl: position.RealizedPnL, origin: owner, late: late}
+}
+
 // checkTraderState reports safe mode and blocked trading once each time they
 // begin; a mark that clears re-arms the alert.
-func (w *alertWatcher) checkTraderState(traders []*trader.Trader, names map[string]string, now int64, p *pending) {
+func (w *alertWatcher) checkTraderState(traders []*trader.Trader, owners map[string]origin, now int64, p *pending) {
 	if w.sources.TraderStatus == nil {
 		return
 	}
 	for _, trader := range traders {
 		status := w.sources.TraderStatus(trader.ID)
+		name := owners[trader.ID].label(p.lang)
 		safeMode, _ := status["safe_mode"].(bool)
 		reason, _ := status["safe_mode_reason"].(string)
-		w.standing(markSafeMode+trader.ID, safeMode, now, p, safeModeLine(p.lang, names[trader.ID], reason))
+		w.standing(markSafeMode+trader.ID, safeMode, now, p, attentionLine(p.lang, pick(p.lang, "Safe mode", "安全模式"), name, reason))
 		blocked, _ := status["trading_blocked"].(bool)
 		reason, _ = status["trading_error"].(string)
-		w.standing(markBlocked+trader.ID, blocked, now, p, tradingBlockedLine(p.lang, names[trader.ID], reason))
+		w.standing(markBlocked+trader.ID, blocked, now, p, attentionLine(p.lang, pick(p.lang, "Trading blocked", "交易受阻"), name, reason))
 	}
 }
 
@@ -314,13 +357,13 @@ func (w *alertWatcher) testnetAccounts(user string) map[string]bool {
 	return testnet
 }
 
-// dated says when an event happened if the message is going out late, as after downtime or
-// a failed send, when it would otherwise read as just now.
-func (w *alertWatcher) dated(line string, at, now int64) string {
+// late says when an event happened if its message is going out late, as after downtime or a
+// failed send, when it would otherwise read as just now.
+func (w *alertWatcher) late(at, now int64) string {
 	if at <= 0 || now-at < alertLate.Milliseconds() {
-		return line
+		return ""
 	}
-	return line + " (" + time.UnixMilli(at).In(w.now().Location()).Format("01-02 15:04") + ")"
+	return moment(time.UnixMilli(at))
 }
 
 func (w *alertWatcher) checkPlans(ctx context.Context, user string, now int64, p *pending) {
@@ -332,10 +375,10 @@ func (w *alertWatcher) checkPlans(ctx context.Context, user string, now int64, p
 		logger.Warnf("Telegram alerts: read Futures runs: %v", err)
 		return
 	}
-	lines := make(map[string]string)
+	lines := make(map[string]text)
 	for _, run := range runs {
-		if run.State == "needs_attention" {
-			lines[markPlan+run.ID] = planAttentionLine(p.lang, run)
+		if run.Status == "needs_attention" {
+			lines[markPlan+run.ID] = attentionLine(p.lang, pick(p.lang, "Futures plan needs attention", "合约交易计划需要处理"), run.Symbol, run.Error)
 		}
 	}
 	w.ongoing(markPlan, AlertPlanAttention, lines, now, p)
@@ -345,7 +388,7 @@ func (w *alertWatcher) checkPlans(ctx context.Context, user string, now int64, p
 // halted or not loaded, trades the ledger could not book and accounts that stopped reading.
 func (w *alertWatcher) checkProblems(user string, now int64, p *pending) {
 	if w.sources.Problems != nil {
-		lines := make(map[string]string)
+		lines := make(map[string]text)
 		for _, problem := range w.sources.Problems(user) {
 			lines[markProblem+problem.Key] = problemLine(p.lang, problem)
 		}
@@ -360,11 +403,11 @@ func (w *alertWatcher) checkProblems(user string, now int64, p *pending) {
 		return
 	}
 	failing := w.sources.FailingAccounts()
-	lines := make(map[string]string)
+	lines := make(map[string]text)
 	for _, row := range accounts {
 		failure, ok := failing[row.ID]
 		if ok && w.now().Sub(failure.Since) >= accountFailingFor {
-			lines[markAccount+row.ID] = withDetail(fmt.Sprintf(pick(p.lang, "🚨 Account unreadable: %s", "🚨 账户无法读取：%s"), row.Name), failure.Reason)
+			lines[markAccount+row.ID] = attentionLine(p.lang, pick(p.lang, "Account unreadable", "账户无法读取"), row.Name, failure.Reason)
 		}
 	}
 	w.ongoing(markAccount, AlertSystem, lines, now, p)
@@ -372,7 +415,7 @@ func (w *alertWatcher) checkProblems(user string, now int64, p *pending) {
 
 // ongoing tells of each line once, when its mark first appears, and re-arms it once it is
 // gone. Marks under the prefix that are not in lines are gone.
-func (w *alertWatcher) ongoing(prefix, kind string, lines map[string]string, now int64, p *pending) {
+func (w *alertWatcher) ongoing(prefix, kind string, lines map[string]text, now int64, p *pending) {
 	keys := make([]string, 0, len(lines))
 	for key := range lines {
 		keys = append(keys, key)
@@ -381,7 +424,8 @@ func (w *alertWatcher) ongoing(prefix, kind string, lines map[string]string, now
 	for _, key := range keys {
 		if _, seen := w.stores.Telegram.AlertMark(key); !seen {
 			p.set[key] = now
-			p.add(kind, lines[key])
+			line := lines[key]
+			p.add(kind, func() { p.attention = append(p.attention, line) })
 		}
 	}
 	marks, err := w.stores.Telegram.AlertMarkKeys(prefix)
@@ -401,13 +445,18 @@ func (w *alertWatcher) ongoing(prefix, kind string, lines map[string]string, now
 // ledger, which the account's sync keeps.
 func (w *alertWatcher) checkFuturesPositions(user string, now int64, p *pending) {
 	testnet := w.testnetAccounts(user)
+	futures := func(accountID string) origin {
+		return origin{name: pick(p.lang, "Futures", "合约交易"), testnet: testnet[accountID]}
+	}
 	if since, ok := w.since(markFuturesOpened, now, p); ok {
 		positions, err := w.stores.Positions.FuturesOpenedSince(since, alertBatch)
 		if err != nil {
 			logger.Warnf("Telegram alerts: %v", err)
 		}
 		for _, position := range positions {
-			p.add(AlertPlanAttention, w.dated(futuresFilledLine(p.lang, position, testnet[position.AccountID]), position.EntryTime, now))
+			event := positionEvent{symbol: position.Symbol, side: strings.ToLower(position.Side), quantity: position.EntryQuantity,
+				price: position.EntryPrice, origin: futures(position.AccountID), late: w.late(position.EntryTime, now)}
+			p.add(AlertPlanAttention, func() { p.entries = append(p.entries, event) })
 			p.set[markFuturesOpened] = position.EntryTime
 		}
 	}
@@ -417,7 +466,8 @@ func (w *alertWatcher) checkFuturesPositions(user string, now int64, p *pending)
 			logger.Warnf("Telegram alerts: %v", err)
 		}
 		for _, position := range positions {
-			p.add(AlertPositionClosed, w.dated(positionClosedLine(p.lang, position, futuresName(p.lang, testnet[position.AccountID])), position.ExitTime, now))
+			event := closeEvent(position, futures(position.AccountID), w.late(position.ExitTime, now))
+			p.add(AlertPositionClosed, func() { p.closes = append(p.closes, event) })
 			p.set[markFuturesClosed] = position.ExitTime
 		}
 	}
@@ -441,19 +491,18 @@ func (w *alertWatcher) checkDailyReport(user string, p *pending) {
 	if p.cfg.AlertMuted(AlertDailyReport) {
 		return
 	}
-	report, ok := w.dailyReport(user, today.AddDate(0, 0, -1), today, p.lang)
-	if ok {
-		p.add(AlertDailyReport, report)
+	if report, ok := w.dailyReport(user, today.AddDate(0, 0, -1), today, p.lang); ok {
+		p.report = report
 	}
 }
 
 // dailyReport sums a day on the real accounts. Test money counts for nothing, and with no
 // real account there is nothing to report. A figure that cannot be read is a dash.
-func (w *alertWatcher) dailyReport(user string, from, to time.Time, lang string) (string, bool) {
+func (w *alertWatcher) dailyReport(user string, from, to time.Time, lang string) (*message, bool) {
 	accounts, err := w.stores.Accounts.ListNames(user)
 	if err != nil {
 		logger.Warnf("Telegram alerts: read accounts: %v", err)
-		return "", false
+		return nil, false
 	}
 	ids := []string{}
 	for _, row := range accounts {
@@ -462,10 +511,11 @@ func (w *alertWatcher) dailyReport(user string, from, to time.Time, lang string)
 		}
 	}
 	if len(ids) == 0 {
-		return "", false
+		return nil, false
 	}
+	unread := strong("—")
 
-	equity := "—"
+	equity := unread
 	if w.sources.AccountEquity != nil {
 		total, known := 0.0, true
 		for _, id := range ids {
@@ -474,49 +524,53 @@ func (w *alertWatcher) dailyReport(user string, from, to time.Time, lang string)
 			total += value
 		}
 		if known {
-			equity = strconv.FormatFloat(total, 'f', 2, 64) + " USDT"
+			equity = chip(amount(total))
 		}
 	}
-	realized := "—"
+	realized, headline := unread, ""
 	if value, err := w.stores.Positions.RealizedBetween(ids, from, to); err != nil {
 		logger.Warnf("Telegram alerts: %v", err)
 	} else {
-		realized = strconv.FormatFloat(value, 'f', 2, 64) + " USDT"
-		if value >= 0 {
-			realized = "+" + realized
-		}
+		realized, headline = chip(change(value)), change(value)+" USDT"
 	}
-	holding := "—"
+	holding := unread
 	if positions, err := w.stores.Positions.OpenOnAccounts(ids); err != nil {
 		logger.Warnf("Telegram alerts: %v", err)
 	} else {
 		names := make([]string, 0, len(positions))
 		for _, position := range positions {
-			names = append(names, position.Symbol+" "+strings.ToLower(position.Side))
+			names = append(names, position.Symbol+" "+sideOf(strings.ToLower(position.Side), lang))
 		}
-		holding = strconv.Itoa(len(positions))
+		holding = strong(strconv.Itoa(len(positions)))
 		if len(names) > 0 {
-			holding += " (" + strings.Join(names, ", ") + ")"
+			holding = joined(holding, words(pick(lang, " ("+strings.Join(names, ", ")+")", "（"+strings.Join(names, "、")+"）")))
 		}
 	}
-	cost := "—"
+	cost := unread
 	if summary, err := w.stores.Calls.GetSummary("", from.Format("2006-01-02")); err != nil {
 		logger.Warnf("Telegram alerts: %v", err)
 	} else {
-		cost = "$" + strconv.FormatFloat(summary.TotalUSD, 'f', 2, 64)
+		cost = chip(dollars(summary.TotalUSD))
 	}
-	return fmt.Sprintf(pick(lang,
-		"📊 Daily report, %s UTC\nEquity: %s\nRealized: %s\nOpen positions: %s\nModel cost, all calls: %s",
-		"📊 每日汇总，%s UTC\n权益：%s\n已实现：%s\n持仓：%s\n模型花费（全部调用）：%s"),
-		from.Format("2006-01-02"), equity, realized, holding, cost), true
+	m := newMessage(lang)
+	m.silent = true
+	m.title(emojiReport, pick(lang, "Daily report · ", "每日汇总 · ")+from.Format("01-02"), headline).
+		meta(pick(lang, "Real money only · UTC", "只计实盘 · UTC"))
+	m.add(
+		m.fact(pick(lang, "Equity", "账户权益"), equity),
+		m.fact(pick(lang, "Realized", "实现盈亏"), realized),
+		m.fact(pick(lang, "Open positions", "当前持仓"), holding),
+		m.fact(pick(lang, "Model cost, all calls", "模型花费"), cost),
+	)
+	return m, true
 }
 
-func (w *alertWatcher) standing(key string, active bool, now int64, p *pending, line string) {
+func (w *alertWatcher) standing(key string, active bool, now int64, p *pending, line text) {
 	_, seen := w.stores.Telegram.AlertMark(key)
 	switch {
 	case active && !seen:
 		p.set[key] = now
-		p.add(AlertSafeMode, line)
+		p.add(AlertSafeMode, func() { p.attention = append(p.attention, line) })
 	case !active && seen:
 		p.cleared = append(p.cleared, key)
 	}
@@ -529,92 +583,213 @@ func pick(lang, en, zh string) string {
 	return en
 }
 
-func withDetail(line, detail string) string {
+// detailOf cuts what an error adds to a line: a provider's message can run long.
+func detailOf(detail string) string {
 	detail = strings.TrimSpace(detail)
-	if detail == "" {
-		return line
-	}
 	if runes := []rune(detail); len(runes) > maxAlertDetail {
 		detail = string(runes[:maxAlertDetail]) + "…"
 	}
-	return line + ": " + detail
+	return detail
 }
 
-// traderLabel is a trader as an alert names it, so test money never reads as real.
-func traderLabel(lang, name string, testnet bool) string {
-	if testnet {
-		return name + pick(lang, " (testnet)", "（测试网）")
+// label is who an event belongs to, so test money never reads as real.
+func (o origin) label(lang string) string {
+	if o.testnet {
+		return o.name + " · " + pick(lang, "Testnet", "测试网")
 	}
-	return name
+	return o.name
 }
 
-func orderRejectedLine(lang string, order *account.TraderOrder, trader string) string {
-	return withDetail(fmt.Sprintf(pick(lang, "❌ Order rejected: %s %s, %s", "❌ 订单被拒：%s %s，%s"), order.Symbol, order.Side, trader), order.Error)
-}
-
-func actionFailedLine(lang string, action trader.FailedAction, trader string) string {
-	line := fmt.Sprintf(pick(lang, "❌ Order failed: %s %s, %s", "❌ 下单失败：%s %s，%s"), action.Symbol, action.Action, trader)
-	return withDetail(line, action.Error)
-}
-
-func positionClosedLine(lang string, position *account.TraderPosition, trader string) string {
-	pnl := strconv.FormatFloat(position.RealizedPnL, 'f', 2, 64)
-	if position.RealizedPnL >= 0 {
-		pnl = "+" + pnl
+// money is who an event belongs to, with the kind of money either way.
+func (o origin) money(lang string) string {
+	if o.testnet {
+		return o.name + " · " + pick(lang, "Testnet", "测试网")
 	}
-	return fmt.Sprintf(pick(lang, "💰 Position closed: %s %s, %s, P/L %s USDT", "💰 持仓已平：%s %s，%s，盈亏 %s USDT"), position.Symbol, strings.ToLower(position.Side), trader, pnl)
+	return o.name + " · " + pick(lang, "Real money", "实盘")
 }
 
-func safeModeLine(lang, trader, reason string) string {
-	return withDetail(fmt.Sprintf(pick(lang, "⚠️ Safe mode: %s", "⚠️ 安全模式：%s"), trader), reason)
-}
-
-func tradingBlockedLine(lang, trader, reason string) string {
-	return withDetail(fmt.Sprintf(pick(lang, "⚠️ Trading blocked: %s", "⚠️ 交易受阻：%s"), trader), reason)
-}
-
-func planAttentionLine(lang string, run PlanRun) string {
-	return withDetail(fmt.Sprintf(pick(lang, "⚠️ Futures plan needs attention: %s", "⚠️ 合约交易计划需要处理：%s"), run.Symbol), run.Error)
-}
-
-func futuresName(lang string, testnet bool) string {
-	if testnet {
-		return pick(lang, "Futures on testnet", "合约交易·测试网")
+// attentionLine is a problem that lasts: what it is, where, and why when that is known.
+func attentionLine(lang, what, where, reason string) text {
+	line := words("• " + what + " · " + where)
+	if reason = detailOf(reason); reason != "" {
+		line = joined(line, words(pick(lang, ": ", "：")), strong(reason))
 	}
-	return pick(lang, "Futures", "合约交易")
+	return line
 }
 
-func futuresFilledLine(lang string, position *account.TraderPosition, testnet bool) string {
-	return fmt.Sprintf(pick(lang, "✅ Entry filled: %s %s, %.8g at %.8g, %s", "✅ 入场已成交：%s %s，%.8g @ %.8g，%s"),
-		position.Symbol, strings.ToLower(position.Side), position.EntryQuantity, position.EntryPrice, futuresName(lang, testnet))
+func orderSide(lang, side string) string {
+	switch strings.ToUpper(side) {
+	case "BUY":
+		return pick(lang, "buy", "买入")
+	case "SELL":
+		return pick(lang, "sell", "卖出")
+	}
+	return strings.ToLower(side)
 }
 
-func problemLine(lang string, problem Problem) string {
-	var line string
+func decisionAction(lang, action string) string {
+	names := map[string][2]string{"open_long": {"open long", "开多"}, "open_short": {"open short", "开空"}, "close_long": {"close long", "平多"}, "close_short": {"close short", "平空"}}
+	if name, ok := names[action]; ok {
+		return pick(lang, name[0], name[1])
+	}
+	return action
+}
+
+func problemLine(lang string, problem Problem) text {
+	var what string
 	switch problem.Kind {
 	case ProblemService:
-		line = pick(lang, "🚨 Service failed: %s", "🚨 服务故障：%s")
+		what = pick(lang, "Service failed", "服务故障")
 	case ProblemTraderHalt:
-		line = pick(lang, "🚨 Trader stopped opening positions: %s", "🚨 交易员已停止开仓：%s")
+		what = pick(lang, "Trader stopped opening positions", "交易员已停止开仓")
 	case ProblemTraderLoad:
-		line = pick(lang, "🚨 Trader could not start: %s", "🚨 交易员无法启动：%s")
+		what = pick(lang, "Trader could not start", "交易员无法启动")
 	case ProblemFillSkipped:
-		line = pick(lang, "🚨 Trade not booked: %s", "🚨 成交未入账：%s")
+		what = pick(lang, "Trade not booked", "成交未入账")
 	default:
-		line = pick(lang, "🚨 Problem: %s", "🚨 问题：%s")
+		what = pick(lang, "Problem", "问题")
 	}
 	detail := problem.Detail
 	if lang == "zh" && problem.Kind == ProblemTraderHalt {
 		detail = haltReasonZh.Replace(detail)
 	}
-	return withDetail(fmt.Sprintf(line, problem.Name), detail)
+	return attentionLine(lang, what, problem.Name, detail)
 }
 
 // haltReasonZh puts the reasons a trader halts for in Chinese. They are written in
 // English where they are stored.
 var haltReasonZh = strings.NewReplacer("max drawdown exceeded", "超过最大回撤", "daily loss limit exceeded", "超过当日亏损上限")
 
-// TestAlertText is the message Settings sends to check that alerts arrive.
-func TestAlertText(lang string) string {
-	return pick(lang, "Vergex alerts are working", "Vergex 告警工作正常")
+// digest lays out one check's events: what needs attention, orders that failed, entries
+// filled and positions closed, each a section of its own.
+func (p *pending) digest() *message {
+	m := newMessage(p.lang)
+	if n := len(p.attention); n > 0 {
+		m.add(heading(emojiAttention, counted(p.lang, "Needs attention", "需要注意", n)))
+		m.under(p.attention...)
+	}
+	switch n := len(p.orders); {
+	case n == 1:
+		order := p.orders[0]
+		m.add(heading(emojiFailed, pick(p.lang, "Order failed · ", "下单失败 · ")+order.symbol+" "+order.what))
+		m.meta(lateOf(order.origin.money(p.lang), order.late))
+		m.details(order.reason)
+	case n > 1:
+		m.add(heading(emojiFailed, counted(p.lang, "Orders failed", "下单失败", n)))
+		for _, order := range p.orders {
+			m.under(item(words(lateOf(order.symbol+" "+order.what+" · "+order.origin.label(p.lang), order.late))))
+			m.details(order.reason)
+		}
+	}
+	switch n := len(p.entries); {
+	case n == 1:
+		entry := p.entries[0]
+		m.add(heading(emojiEntry, pick(p.lang, "Entry filled · ", "入场成交 · ")+entry.symbol+" "+sideOf(entry.side, p.lang)))
+		m.meta(lateOf(entry.origin.money(p.lang), entry.late))
+		m.under(m.fact(pick(p.lang, "Filled", "成交"), strong(exact(entry.quantity)+" @ "+exact(entry.price))))
+	case n > 1:
+		m.add(heading(emojiEntry, counted(p.lang, "Entries filled", "入场成交", n)))
+		m.meta(since(p.lang, p.entries))
+		for _, group := range byMoney(p.entries) {
+			t := table{caption: moneyCaption(p.lang, pick(p.lang, "Entries", "入场"), group[0].origin.testnet), columns: []column{
+				{name: pick(p.lang, "Symbol", "品种")}, {name: pick(p.lang, "Side", "方向")},
+				{name: pick(p.lang, "Size", "数量"), right: true}, {name: pick(p.lang, "Price", "价格"), right: true}, {name: pick(p.lang, "From", "来源")},
+			}}
+			for _, entry := range group {
+				t.rows = append(t.rows, []string{entry.symbol, sideOf(entry.side, p.lang), exact(entry.quantity), exact(entry.price), entry.origin.name})
+			}
+			m.under(t.lines(p.lang)...)
+		}
+	}
+	switch n := len(p.closes); {
+	case n == 1:
+		closed := p.closes[0]
+		m.add(heading(emojiClosed, pick(p.lang, "Position closed · ", "平仓 · ")+closed.symbol+" "+sideOf(closed.side, p.lang)))
+		m.meta(lateOf(closed.origin.money(p.lang), closed.late))
+		m.under(m.fact(pick(p.lang, "P/L", "盈亏"), chip(change(closed.pnl))))
+	case n > 1:
+		m.add(heading(emojiClosed, pick(p.lang, fmt.Sprintf("%d positions closed", n), fmt.Sprintf("平仓 %d 笔", n))))
+		m.meta(since(p.lang, p.closes))
+		for _, group := range byMoney(p.closes) {
+			t := table{caption: moneyCaption(p.lang, pick(p.lang, "Closed", "平仓"), group[0].origin.testnet), columns: []column{
+				{name: pick(p.lang, "Symbol", "品种")}, {name: pick(p.lang, "Side", "方向")},
+				{name: pick(p.lang, "P/L", "盈亏"), right: true}, {name: pick(p.lang, "From", "来源")},
+			}}
+			sum := 0.0
+			for _, closed := range group {
+				t.rows = append(t.rows, []string{closed.symbol, sideOf(closed.side, p.lang), change(closed.pnl), closed.origin.name})
+				sum += closed.pnl
+			}
+			if len(group) > 1 {
+				t.total = []string{pick(p.lang, "Total", "合计"), "", change(sum), ""}
+			}
+			m.under(t.lines(p.lang)...)
+		}
+	}
+	return m
+}
+
+// byMoney splits events into those on real money and those on test money, so a table and
+// its total are only ever one kind.
+func byMoney(events []positionEvent) [][]positionEvent {
+	var real, test []positionEvent
+	for _, event := range events {
+		if event.origin.testnet {
+			test = append(test, event)
+		} else {
+			real = append(real, event)
+		}
+	}
+	var groups [][]positionEvent
+	for _, group := range [][]positionEvent{real, test} {
+		if len(group) > 0 {
+			groups = append(groups, group)
+		}
+	}
+	return groups
+}
+
+// moneyCaption names a table of test money as such.
+func moneyCaption(lang, name string, testnet bool) string {
+	if testnet {
+		return name + " · " + pick(lang, "Testnet", "测试网")
+	}
+	return name
+}
+
+// since says from when a table's events are, when some of them go out late.
+func since(lang string, events []positionEvent) string {
+	earliest := ""
+	for _, event := range events {
+		if event.late != "" && (earliest == "" || event.late < earliest) {
+			earliest = event.late
+		}
+	}
+	if earliest == "" {
+		return ""
+	}
+	return pick(lang, "Since "+earliest, earliest+" 起")
+}
+
+// counted is a title with how many it holds, once there are several.
+func counted(lang, en, zh string, n int) string {
+	if n == 1 {
+		return pick(lang, en, zh)
+	}
+	return pick(lang, en, zh) + " · " + strconv.Itoa(n)
+}
+
+// lateOf adds when an event happened to what names it, when it goes out late.
+func lateOf(s, late string) string {
+	if late == "" {
+		return s
+	}
+	return s + " · " + late
+}
+
+// TestAlert is the message Settings sends to check that alerts arrive.
+func TestAlert(ctx context.Context, configs ConfigStore) error {
+	lang := configs.GetLanguage()
+	m := newMessage(lang).title(emojiDone, pick(lang, "Vergex alerts are working", "Vergex 告警工作正常"))
+	return Notify(ctx, configs, m)
 }

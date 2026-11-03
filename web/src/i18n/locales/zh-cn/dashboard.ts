@@ -70,6 +70,7 @@ export const dashboard: typeof template = {
         agent_cost: 'Agent 费用',
         fees: '手续费',
         other: '测试',
+        assistant: '助手',
       },
       coinOne: '{count} 个币种',
       coinMany: '{count} 个币种',

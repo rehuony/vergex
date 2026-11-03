@@ -443,22 +443,22 @@ func (at *AutoTrader) recordGridOrder(req *account.LimitOrderRequest, result *ac
 		positionSide = ""
 	}
 	order := account.LedgerOrder{
-		AccountID:       at.accountID,
-		Source:          account.SourceTrader,
-		SourceID:        at.id,
-		Role:            account.RoleGrid,
-		ExchangeOrderID: result.OrderID,
-		ClientOrderID:   result.ClientID,
-		Side:            strings.ToLower(req.Side),
-		PositionSide:    positionSide,
-		Type:            "LIMIT",
-		Status:          account.OrderNew,
-		Quantity:        decimal.NewFromFloat(req.Quantity),
-		Price:           decimal.NewNullDecimal(decimal.NewFromFloat(req.Price)),
-		PostOnly:        req.PostOnly,
-		ReduceOnly:      req.ReduceOnly,
-		Leverage:        &leverage,
-		MarginMode:      at.marginMode(),
+		AccountID:    at.accountID,
+		Source:       account.SourceTrader,
+		SourceID:     at.id,
+		Role:         account.RoleGrid,
+		VenueOrderID: result.OrderID,
+		ClientID:     result.ClientID,
+		Side:         strings.ToLower(req.Side),
+		PositionSide: positionSide,
+		Type:         "LIMIT",
+		Status:       account.OrderNew,
+		Quantity:     decimal.NewFromFloat(req.Quantity),
+		Price:        decimal.NewNullDecimal(decimal.NewFromFloat(req.Price)),
+		PostOnly:     req.PostOnly,
+		ReduceOnly:   req.ReduceOnly,
+		Leverage:     &leverage,
+		MarginMode:   at.marginMode(),
 	}
 	if err := at.saveOrder(&order, req.Symbol); err != nil {
 		logger.Errorf("[Grid] Failed to record order %s: %v", result.OrderID, err)

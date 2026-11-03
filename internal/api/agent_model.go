@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -18,16 +19,39 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// newModelClient is what makes a model's client, replaced in tests.
+var newModelClient = func(provider string) agent.Client { return agent.NewClientByProvider(provider) }
+
+// modelClient makes a client for one of the user's models, its calls counted to a feature.
+// name is another of that connection's models, or blank for the one it is set to.
+func (s *Server) modelClient(userID, modelID, name, feature string) (*agent.Model, agent.Client, error) {
+	model, err := s.stores.Models.Get(userID, modelID)
+	if err != nil || !model.Enabled || model.APIKey == "" {
+		return nil, nil, errors.New("Select a configured and enabled model owned by the current user")
+	}
+	client := newModelClient(model.Provider)
+	if client == nil {
+		return nil, nil, errors.New("This model provider is not registered in Vergex")
+	}
+	if name == "" {
+		name = model.ModelName
+	}
+	client.SetAPIKey(string(model.APIKey), model.BaseURL, name)
+	client.SetTimeout(90 * time.Second)
+	agent.TagUsage(client, feature, "")
+	return model, client, nil
+}
+
 // SafeModelConfig Safe model configuration structure (does not contain sensitive information)
 type SafeModelConfig struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Provider        string `json:"provider"`
-	Enabled         bool   `json:"enabled"`
-	HasAPIKey       bool   `json:"has_api_key"`
-	CustomAPIURL    string `json:"customApiUrl"`    // Custom API URL (usually not sensitive)
-	CustomModelName string `json:"customModelName"` // Custom model name (not sensitive)
-	DefaultModel    string `json:"defaultModel"`    // What it calls with no custom name
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Provider     string `json:"provider"`
+	Enabled      bool   `json:"enabled"`
+	HasAPIKey    bool   `json:"has_api_key"`
+	BaseURL      string `json:"base_url"`      // Custom API URL (usually not sensitive)
+	ModelName    string `json:"model_name"`    // Custom model name (not sensitive)
+	DefaultModel string `json:"default_model"` // What it calls with no custom name
 }
 
 // ModelConfigUpdate is a single model's update payload. It is a named type
@@ -35,10 +59,10 @@ type SafeModelConfig struct {
 // guaranteed to stay in sync with this shape — a mismatch there is what let
 // plaintext credentials reach the logs previously.
 type ModelConfigUpdate struct {
-	Enabled         bool   `json:"enabled"`
-	APIKey          string `json:"api_key"`
-	CustomAPIURL    string `json:"custom_api_url"`
-	CustomModelName string `json:"custom_model_name"`
+	Enabled   bool   `json:"enabled"`
+	APIKey    string `json:"api_key"`
+	BaseURL   string `json:"base_url"`
+	ModelName string `json:"model_name"`
 }
 
 type UpdateModelConfigRequest struct {
@@ -72,13 +96,13 @@ func (s *Server) handleGetModelConfigs(c *gin.Context) {
 			continue
 		}
 		safeModel := SafeModelConfig{
-			ID:              model.ID,
-			Name:            model.Name,
-			Provider:        model.Provider,
-			Enabled:         model.Enabled,
-			HasAPIKey:       model.APIKey != "",
-			CustomAPIURL:    model.CustomAPIURL,
-			CustomModelName: model.CustomModelName,
+			ID:        model.ID,
+			Name:      model.Name,
+			Provider:  model.Provider,
+			Enabled:   model.Enabled,
+			HasAPIKey: model.APIKey != "",
+			BaseURL:   model.BaseURL,
+			ModelName: model.ModelName,
 		}
 		if native, ok := findNativeProvider(model.Provider); ok {
 			safeModel.DefaultModel = native.DefaultModel
@@ -158,12 +182,12 @@ func (s *Server) handleUpdateModelConfigs(c *gin.Context) {
 	// key is the model's id, or a provider name until the model exists.
 	tradersToReload := make(map[string]bool)
 	for key, modelData := range req.Models {
-		// SSRF protection: validate custom_api_url before storing
-		if modelData.CustomAPIURL != "" {
-			cleanURL := strings.TrimSuffix(modelData.CustomAPIURL, "#")
+		// SSRF protection: validate base_url before storing
+		if modelData.BaseURL != "" {
+			cleanURL := strings.TrimSuffix(modelData.BaseURL, "#")
 			if err := security.ValidateURL(cleanURL); err != nil {
-				logger.Warnf("Invalid custom_api_url for model %s: %v", key, err)
-				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid custom_api_url for model %s: URL must be a valid HTTPS endpoint", key)})
+				logger.Warnf("Invalid base_url for model %s: %v", key, err)
+				c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("Invalid base_url for model %s: URL must be a valid HTTPS endpoint", key)})
 				return
 			}
 		}
@@ -183,7 +207,7 @@ func (s *Server) handleUpdateModelConfigs(c *gin.Context) {
 			return
 		}
 
-		err := s.stores.Models.Save(userID, key, name, modelData.Enabled, modelData.APIKey, modelData.CustomAPIURL, modelData.CustomModelName)
+		err := s.stores.Models.Save(userID, key, name, modelData.Enabled, modelData.APIKey, modelData.BaseURL, modelData.ModelName)
 		if err != nil {
 			SafeInternalError(c, fmt.Sprintf("Update model %s", key), err)
 			return
@@ -245,10 +269,10 @@ func (s *Server) handleDeleteModel(c *gin.Context) {
 // TestModelConfigRequest holds the model form's current values. A blank
 // api_key falls back to the key saved for agent_model_id.
 type TestModelConfigRequest struct {
-	AgentModelID    string `json:"agent_model_id"`
-	APIKey          string `json:"api_key"`
-	CustomAPIURL    string `json:"custom_api_url"`
-	CustomModelName string `json:"custom_model_name"`
+	AgentModelID string `json:"agent_model_id"`
+	APIKey       string `json:"api_key"`
+	BaseURL      string `json:"base_url"`
+	ModelName    string `json:"model_name"`
 }
 
 // modelTestTimeout bounds the single test request.
@@ -276,7 +300,7 @@ func (s *Server) handleTestModelConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": refusal})
 		return
 	}
-	modelName := strings.TrimSpace(req.CustomModelName)
+	modelName := strings.TrimSpace(req.ModelName)
 	if modelName == "" {
 		if p, ok := findNativeProvider(providerID); ok {
 			modelName = p.DefaultModel
@@ -288,7 +312,7 @@ func (s *Server) handleTestModelConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Unknown model provider"})
 		return
 	}
-	client.SetAPIKey(apiKey, baseURL, strings.TrimSpace(req.CustomModelName))
+	client.SetAPIKey(apiKey, baseURL, strings.TrimSpace(req.ModelName))
 	started := time.Now()
 	if _, err := client.CallWithMessages("You check that an API connection works.", "Reply with OK."); err != nil {
 		c.JSON(http.StatusOK, gin.H{"ok": false, "model": modelName, "error": modelTestError(err, apiKey)})
@@ -314,7 +338,7 @@ func (s *Server) modelFormValues(userID string, req TestModelConfigRequest) (pro
 	if apiKey == "" {
 		return "", "", "", "Enter an API key first"
 	}
-	baseURL = strings.TrimSpace(req.CustomAPIURL)
+	baseURL = strings.TrimSpace(req.BaseURL)
 	if baseURL != "" {
 		if err := security.ValidateURL(strings.TrimSuffix(baseURL, "#")); err != nil {
 			return "", "", "", "Base URL must be a valid HTTPS endpoint"
@@ -360,7 +384,7 @@ func (s *Server) handleSavedModelList(c *gin.Context) {
 		SafeNotFound(c, "Model")
 		return
 	}
-	answerModelList(c, saved.Provider, string(saved.APIKey), saved.CustomAPIURL)
+	answerModelList(c, saved.Provider, string(saved.APIKey), saved.BaseURL)
 }
 
 // handleModelFormList says what a provider offers with the model form's current values.
@@ -398,7 +422,7 @@ func (s *Server) handleGetSupportedModels(c *gin.Context) {
 	supportedModels := make([]map[string]interface{}, 0, len(nativeProviders))
 	for _, p := range nativeProviders {
 		supportedModels = append(supportedModels, map[string]interface{}{
-			"id": p.ID, "name": p.Name, "provider": p.ID, "defaultModel": p.DefaultModel, "defaultBaseUrl": p.DefaultBaseURL,
+			"id": p.ID, "name": p.Name, "provider": p.ID, "default_model": p.DefaultModel, "default_base_url": p.DefaultBaseURL,
 		})
 	}
 

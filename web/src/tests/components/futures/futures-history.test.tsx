@@ -29,7 +29,7 @@ afterEach(cleanup)
 const run = (id: string, name: string) =>
   ({
     id,
-    state: 'completed',
+    status: 'completed',
     orders: [],
     plan: {
       idea: { name, entry: '1', stop: '1', target: '2', rationale: '' },
@@ -47,7 +47,7 @@ const conversation = {
 }
 
 const draft = {
-  state: 'cancelled',
+  status: 'cancelled',
   updated: '2026-11-01T10:00:00Z',
   plan: {
     id: 'draft',
@@ -73,7 +73,7 @@ const show = (
     archived?: FuturesState['records'][string][]
     onRename?: (id: string, title: string) => Promise<void>
     onDelete?: () => Promise<void>
-    onDeleteDraft?: () => Promise<void>
+    onDeletePlan?: () => Promise<void>
   } = {}
 ) =>
   render(
@@ -90,7 +90,7 @@ const show = (
         onOpenConversation={onOpenConversation}
         onRenameConversation={more.onRename ?? vi.fn()}
         onDeleteConversation={more.onDelete ?? vi.fn()}
-        onDeleteDraft={more.onDeleteDraft ?? vi.fn()}
+        onDeletePlan={more.onDeletePlan ?? vi.fn()}
       />
     </QueryWrapper>
   )
@@ -130,9 +130,10 @@ it('reads a past conversation by its title, and carries on with it', async () =>
   expect(open).toHaveBeenCalledWith(conversation)
 })
 
-it('keeps the search box whatever the list holds, even nothing', () => {
+it('drops the directory and its search when there is nothing in it', () => {
   show(true, [])
-  expect(screen.getByRole('textbox', { name: 'Search history' })).toBeVisible()
+  expect(screen.queryByRole('navigation')).toBeNull()
+  expect(screen.queryByRole('textbox', { name: 'Search history' })).toBeNull()
   expect(screen.getByRole('status')).toBeVisible()
 })
 
@@ -193,22 +194,22 @@ it('deletes a conversation only once that is confirmed', async () => {
   await waitFor(() => expect(remove).toHaveBeenCalledWith(conversation))
 })
 
-it('offers to delete a draft but not a plan that ran', async () => {
+it('deletes a draft, and a finished plan with a word on what stays', async () => {
   mocks.api.mockResolvedValue({})
   const remove = vi.fn().mockResolvedValue(undefined)
   mocks.confirm.mockResolvedValue(true)
-  show(true, [run('win', 'Pullback')], [], vi.fn(), {
-    archived: [draft],
-    onDeleteDraft: remove,
-  })
+  const finished = run('win', 'Pullback')
+  show(true, [finished], [], vi.fn(), { onDeletePlan: remove })
   openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
   expect(
     await screen.findByRole('menuitem', { name: 'View trade on chart' })
   ).toBeVisible()
-  expect(screen.queryByRole('menuitem', { name: 'Delete draft' })).toBeNull()
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Delete plan' }))
+  await waitFor(() => expect(remove).toHaveBeenCalledWith(finished.plan))
+  expect(mocks.confirm.mock.calls[0][0]).toContain('stay in the account')
   cleanup()
 
-  show(true, [], [], vi.fn(), { archived: [draft], onDeleteDraft: remove })
+  show(true, [], [], vi.fn(), { archived: [draft], onDeletePlan: remove })
   openMenu(screen.getAllByRole('button', { name: 'More actions' })[0])
   fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete draft' }))
   await waitFor(() => expect(remove).toHaveBeenCalledWith(draft.plan))

@@ -29,12 +29,14 @@ const (
 	blockTable
 )
 
-// block is a run of source lines that render together.
-type block struct {
+// source is a run of the model's lines that render together.
+type source struct {
 	kind  blockKind
 	lines []string
 	// head holds a table's column names.
 	head []string
+	// language is what a fenced block names after its opening fence.
+	language string
 }
 
 var (
@@ -59,9 +61,9 @@ func isBlockStart(line string) bool {
 }
 
 // parseBlocks reads the few Markdown forms models write.
-func parseBlocks(text string) []block {
+func parseBlocks(text string) []source {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	var blocks []block
+	var blocks []source
 	for i := 0; i < len(lines); {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
@@ -69,6 +71,7 @@ func parseBlocks(text string) []block {
 		case trimmed == "", horizontal.MatchString(line):
 			i++
 		case strings.HasPrefix(trimmed, "```"):
+			language := strings.TrimSpace(strings.TrimPrefix(trimmed, "```"))
 			i++
 			code := []string{}
 			for i < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i]), "```") {
@@ -76,9 +79,9 @@ func parseBlocks(text string) []block {
 				i++
 			}
 			i++
-			blocks = append(blocks, block{kind: blockCode, lines: code})
+			blocks = append(blocks, source{kind: blockCode, lines: code, language: language})
 		case headingLine.MatchString(line):
-			blocks = append(blocks, block{kind: blockHeading, lines: []string{headingLine.ReplaceAllString(line, "")}})
+			blocks = append(blocks, source{kind: blockHeading, lines: []string{headingLine.ReplaceAllString(line, "")}})
 			i++
 		case bulletLine.MatchString(line) || numberedLine.MatchString(line):
 			items := []string{}
@@ -86,14 +89,14 @@ func parseBlocks(text string) []block {
 				items = append(items, lines[i])
 				i++
 			}
-			blocks = append(blocks, block{kind: blockList, lines: items})
+			blocks = append(blocks, source{kind: blockList, lines: items})
 		case quoteLine.MatchString(line):
 			quoted := []string{}
 			for i < len(lines) && quoteLine.MatchString(lines[i]) {
 				quoted = append(quoted, quoteLine.ReplaceAllString(lines[i], ""))
 				i++
 			}
-			blocks = append(blocks, block{kind: blockQuote, lines: quoted})
+			blocks = append(blocks, source{kind: blockQuote, lines: quoted})
 		case strings.Contains(line, "|") && i+1 < len(lines) && strings.Contains(lines[i+1], "|") && tableRule.MatchString(lines[i+1]):
 			head := tableCells(line)
 			i += 2
@@ -102,7 +105,7 @@ func parseBlocks(text string) []block {
 				rows = append(rows, lines[i])
 				i++
 			}
-			blocks = append(blocks, block{kind: blockTable, head: head, lines: rows})
+			blocks = append(blocks, source{kind: blockTable, head: head, lines: rows})
 		default:
 			paragraph := []string{}
 			for i < len(lines) && strings.TrimSpace(lines[i]) != "" && !isBlockStart(lines[i]) {
@@ -112,7 +115,7 @@ func parseBlocks(text string) []block {
 			if len(paragraph) == 0 {
 				paragraph, i = []string{line}, i+1
 			}
-			blocks = append(blocks, block{kind: blockText, lines: paragraph})
+			blocks = append(blocks, source{kind: blockText, lines: paragraph})
 		}
 	}
 	return blocks
@@ -151,14 +154,16 @@ func renderMarks(text string) string {
 	return italicMark.ReplaceAllString(text, "$1<i>$2</i>")
 }
 
-// renderBlock turns one block into Telegram HTML. A table becomes one entry per row, its
-// first cell standing as the name, since columns do not fit a phone and Telegram has no
-// tables to line them up with.
-func renderBlock(b block) string {
+// renderBlock turns one block into Telegram HTML. A table that fits a phone becomes a table of
+// the bot's own; one too wide becomes one entry per row, its first cell standing as the name.
+func renderBlock(b source) string {
 	switch b.kind {
 	case blockHeading:
 		return "<b>" + renderInline(strings.Join(b.lines, " ")) + "</b>"
 	case blockCode:
+		if b.language != "" {
+			return `<pre><code class="language-` + html.EscapeString(caption(b.language)) + `">` + html.EscapeString(strings.Join(b.lines, "\n")) + "</code></pre>"
+		}
 		return "<pre>" + html.EscapeString(strings.Join(b.lines, "\n")) + "</pre>"
 	case blockQuote:
 		return "<blockquote>" + renderInline(strings.Join(b.lines, "\n")) + "</blockquote>"
@@ -174,6 +179,9 @@ func renderBlock(b block) string {
 		}
 		return strings.Join(items, "\n")
 	case blockTable:
+		if t, ok := modelTable(b); ok {
+			return t.lines("")[0].html
+		}
 		rows := make([]string, len(b.lines))
 		for i, line := range b.lines {
 			cells := tableCells(line)
@@ -196,7 +204,10 @@ func renderBlock(b block) string {
 }
 
 // sourceOf is a block as text, for when Telegram refuses its HTML.
-func sourceOf(b block) string {
+func sourceOf(b source) string {
+	if t, ok := modelTable(b); ok {
+		return t.lines("")[0].plain
+	}
 	lines := b.lines
 	if b.kind == blockTable {
 		lines = append([]string{strings.Join(b.head, " | ")}, lines...)
@@ -204,13 +215,58 @@ func sourceOf(b block) string {
 	return strings.Join(lines, "\n")
 }
 
+var (
+	cellMarks  = regexp.MustCompile("\\*\\*|__|`")
+	figureCell = regexp.MustCompile(`^[+\-−]?[$]?[\d,]*\.?\d+\s?[%KMkmx]?$|^[—-]$`)
+)
+
+// modelTable is a table the model wrote as one of the bot's own, when it fits a phone: a few
+// columns and rows, as wide as a row can be. Figures are right-aligned, and the caption says
+// only that it is a table, in the language its cells are in.
+func modelTable(b source) (table, bool) {
+	if b.kind != blockTable || len(b.head) < 2 || len(b.head) > 5 || len(b.lines) == 0 || len(b.lines) > maxTableRows {
+		return table{}, false
+	}
+	plain := func(cell string) string { return strings.TrimSpace(cellMarks.ReplaceAllString(cell, "")) }
+	t := table{caption: "Table", columns: make([]column, len(b.head)), whole: true}
+	for i, name := range b.head {
+		t.columns[i] = column{name: plain(name), right: true}
+	}
+	chinese := false
+	for _, line := range b.lines {
+		cells := tableCells(line)
+		row := make([]string, len(b.head))
+		for i := range row {
+			if i < len(cells) {
+				row[i] = plain(cells[i])
+			}
+			if row[i] != "" && !figureCell.MatchString(row[i]) {
+				t.columns[i].right = false
+			}
+			if _, wide := counts(row[i]); wide > 0 {
+				chinese = true
+			}
+		}
+		t.rows = append(t.rows, row)
+	}
+	if chinese {
+		t.caption = "表格"
+	}
+	for _, line := range strings.Split(t.lines("")[0].plain, "\n")[1:] {
+		if a, w := counts(line); shown(a, w, wideWidth) > tableWidth {
+			return table{}, false
+		}
+	}
+	return t, true
+}
+
 func utf16Len(text string) int { return len(utf16.Encode([]rune(text))) }
 
 // fit cuts a block until each piece renders within a message. Each piece renders on its
 // own, so every message closes its own tags.
-func fit(b block, limit int) []block {
+func fit(b source, limit int) []source {
 	if utf16Len(renderBlock(b)) <= limit && utf16Len(sourceOf(b)) <= limit {
-		return []block{b}
+		return []source{b}
 	}
 	first, second := b, b
 	if len(b.lines) > 1 {
@@ -226,36 +282,18 @@ func fit(b block, limit int) []block {
 
 // renderReply turns what the assistant wrote into messages Telegram will take.
 func renderReply(text string) []messagePart {
-	return renderParts(text, maxMessageHTML)
+	return pack(markdownBlocks(text), maxMessageHTML)
 }
 
-func renderParts(text string, limit int) []messagePart {
-	var parts []messagePart
-	var htmlPart, plainPart strings.Builder
-	flush := func() {
-		if htmlPart.Len() > 0 {
-			parts = append(parts, messagePart{
-				HTML:  collapseSpace.ReplaceAllString(htmlPart.String(), "\n\n"),
-				Plain: plainPart.String(),
-			})
-		}
-		htmlPart.Reset()
-		plainPart.Reset()
-	}
+// markdownBlocks is what the model wrote as the blocks of a message, each short enough for
+// one Telegram message.
+func markdownBlocks(text string) []block {
+	var blocks []block
 	for _, whole := range parseBlocks(text) {
-		for _, b := range fit(whole, limit) {
-			rendered, source := renderBlock(b), sourceOf(b)
-			if htmlPart.Len() > 0 && (utf16Len(htmlPart.String())+utf16Len(rendered)+2 > limit || utf16Len(plainPart.String())+utf16Len(source)+2 > limit) {
-				flush()
-			}
-			if htmlPart.Len() > 0 {
-				htmlPart.WriteString("\n\n")
-				plainPart.WriteString("\n\n")
-			}
-			htmlPart.WriteString(rendered)
-			plainPart.WriteString(source)
+		for _, b := range fit(whole, maxMessageHTML) {
+			rendered := collapseSpace.ReplaceAllString(renderBlock(b), "\n\n")
+			blocks = append(blocks, block{{html: rendered, plain: sourceOf(b)}})
 		}
 	}
-	flush()
-	return parts
+	return blocks
 }

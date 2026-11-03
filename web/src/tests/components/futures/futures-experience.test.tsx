@@ -3,10 +3,8 @@ import { render, screen, fireEvent, cleanup } from '@testing-library/react'
 import type { Plan, FuturesEvent } from '@/api/futures'
 import { defaultLimits } from '@/api/futures'
 import { ExecutionSchedule } from '@/components/futures/execution-schedule'
-import {
-  FuturesActivity,
-  recordActivity,
-} from '@/components/futures/futures-activity'
+import { recordActivity } from '@/components/futures/futures-activity'
+import { TurnSteps } from '@/components/common/turn-steps'
 import { FuturesPlanDeck } from '@/components/futures/futures-plan-deck'
 import { PlanStructures } from '@/components/futures/plan-structures'
 
@@ -20,7 +18,7 @@ it('shows the unfunded planning explanation as activity, not an interruption', (
     type: 'planning_sizing',
     data: { planning_only: true },
   })
-  render(<FuturesActivity items={rows} busy />)
+  render(<TurnSteps items={rows} busy />)
   expect(screen.getByText(/No free margin is available/)).toBeInTheDocument()
   expect(rows[0].state).toBe('done')
   expect(screen.queryByText('Planning interrupted')).toBeNull()
@@ -259,7 +257,7 @@ it('updates a live task row with actual timeframe, candle count and measured dur
   )
   expect(rows).toHaveLength(1)
   expect(rows[0]).toMatchObject({ state: 'done', started: 1000, ended: 4000 })
-  render(<FuturesActivity items={rows} busy={false} />)
+  render(<TurnSteps items={rows} busy={false} />)
   // A finished turn folds its steps away, into one line that opens again.
   expect(screen.queryByText('3s')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: /Thought for 3s/ }))
@@ -428,7 +426,7 @@ it('says what a turn cost beside its steps, and does not count that as one', () 
     3000,
     'en'
   )
-  render(<FuturesActivity items={items} busy={false} />)
+  render(<TurnSteps items={items} busy={false} />)
   expect(
     screen.getByText(/2 steps · 40,000 in, 800 out · \$0\.0123/)
   ).toBeInTheDocument()

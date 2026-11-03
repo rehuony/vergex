@@ -39,11 +39,11 @@ func newLedgerFixture(t *testing.T) *ledgerFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	btc, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	btc, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
-	eth, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "ETHUSDT", "ETHUSDT")
+	eth, err := instrument.Ensure(db, "binance", instrument.KindPerpetual, "ETHUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,8 +58,8 @@ func (f *ledgerFixture) trade(side, positionSide, quantity, price string) Trade 
 	return Trade{
 		AccountID:       f.account,
 		InstrumentID:    f.btc,
-		ExchangeTradeID: fmt.Sprintf("trade-%d", f.next),
-		ExchangeOrderID: fmt.Sprintf("order-%d", f.next),
+		VenueTradeID:    fmt.Sprintf("trade-%d", f.next),
+		VenueOrderID:    fmt.Sprintf("order-%d", f.next),
 		Side:            side,
 		PositionSide:    positionSide,
 		Price:           dec(price),
@@ -74,7 +74,7 @@ func (f *ledgerFixture) trade(side, positionSide, quantity, price string) Trade 
 func (f *ledgerFixture) record(trade Trade, fallback Owner) {
 	f.t.Helper()
 	if _, err := f.s.RecordTrade(trade, fallback); err != nil {
-		f.t.Fatalf("record %s: %v", trade.ExchangeTradeID, err)
+		f.t.Fatalf("record %s: %v", trade.VenueTradeID, err)
 	}
 }
 
@@ -90,7 +90,7 @@ func (f *ledgerFixture) positions() []LedgerPosition {
 func (f *ledgerFixture) fill(tradeID string) LedgerFill {
 	f.t.Helper()
 	var fill LedgerFill
-	if err := f.db.Where("exchange_trade_id = ?", tradeID).First(&fill).Error; err != nil {
+	if err := f.db.Where("venue_trade_id = ?", tradeID).First(&fill).Error; err != nil {
 		f.t.Fatal(err)
 	}
 	return fill
@@ -223,7 +223,7 @@ func TestAFeeInAnotherAssetStaysOnTheFill(t *testing.T) {
 	trade.Commission, trade.CommissionAsset = dec("0.002"), "BNB"
 	f.record(trade, traderOwner)
 	assertDecimal(t, "position fee", f.positions()[0].Fee, "0")
-	fill := f.fill(trade.ExchangeTradeID)
+	fill := f.fill(trade.VenueTradeID)
 	assertDecimal(t, "fill commission", fill.Commission, "0.002")
 	if fill.CommissionAsset != "BNB" {
 		t.Errorf("asset = %s", fill.CommissionAsset)
@@ -268,7 +268,7 @@ func TestOneWayModeReducesThenReverses(t *testing.T) {
 	// The fee is split by how much of the trade each side took.
 	assertDecimal(t, "long fee", long.Fee, "1.125")
 	assertDecimal(t, "short fee", short.Fee, "0.375")
-	if fill := f.fill(reverse.ExchangeTradeID); fill.PositionID == nil || *fill.PositionID != long.ID {
+	if fill := f.fill(reverse.VenueTradeID); fill.PositionID == nil || *fill.PositionID != long.ID {
 		t.Errorf("fill points at %v", fill.PositionID)
 	}
 }
@@ -281,7 +281,7 @@ func TestAOneWayCloseFromBeforeWeWereWatchingOpensNothing(t *testing.T) {
 	if positions := f.positions(); len(positions) != 0 {
 		t.Fatalf("opened %+v", positions)
 	}
-	assertDecimal(t, "unmatched", f.fill(trade.ExchangeTradeID).UnmatchedQuantity, "1")
+	assertDecimal(t, "unmatched", f.fill(trade.VenueTradeID).UnmatchedQuantity, "1")
 }
 
 func TestACloseThatArrivesBeforeItsOpenStillClosesIt(t *testing.T) {
@@ -294,7 +294,7 @@ func TestACloseThatArrivesBeforeItsOpenStillClosesIt(t *testing.T) {
 	if positions := f.positions(); len(positions) != 0 {
 		t.Fatalf("a close opened %+v", positions)
 	}
-	assertDecimal(t, "waiting", f.fill(closing.ExchangeTradeID).UnmatchedQuantity, "2")
+	assertDecimal(t, "waiting", f.fill(closing.VenueTradeID).UnmatchedQuantity, "2")
 
 	f.record(open, traderOwner)
 	positions := f.positions()
@@ -305,7 +305,7 @@ func TestACloseThatArrivesBeforeItsOpenStillClosesIt(t *testing.T) {
 	assertDecimal(t, "exit", positions[0].ExitPrice, "130")
 	assertDecimal(t, "realized", positions[0].RealizedPnL, "60")
 	assertDecimal(t, "fee", positions[0].Fee, "1")
-	fill := f.fill(closing.ExchangeTradeID)
+	fill := f.fill(closing.VenueTradeID)
 	assertDecimal(t, "taken", fill.UnmatchedQuantity, "0")
 	if fill.PositionID == nil || *fill.PositionID != positions[0].ID {
 		t.Errorf("fill points at %v", fill.PositionID)
@@ -322,7 +322,7 @@ func TestAnOldCloseDoesNotEatANewerOpen(t *testing.T) {
 		t.Fatalf("status = %s", position.Status)
 	}
 	assertDecimal(t, "quantity", position.Quantity, "2")
-	assertDecimal(t, "still waiting", f.fill(old.ExchangeTradeID).UnmatchedQuantity, "1")
+	assertDecimal(t, "still waiting", f.fill(old.VenueTradeID).UnmatchedQuantity, "1")
 }
 
 func TestAnOverCloseKeepsTheRestForLater(t *testing.T) {
@@ -333,7 +333,7 @@ func TestAnOverCloseKeepsTheRestForLater(t *testing.T) {
 	if position := f.positions()[0]; position.Status != PositionClosed {
 		t.Fatalf("status = %s", position.Status)
 	}
-	assertDecimal(t, "unmatched", f.fill(over.ExchangeTradeID).UnmatchedQuantity, "2")
+	assertDecimal(t, "unmatched", f.fill(over.VenueTradeID).UnmatchedQuantity, "2")
 }
 
 func TestAStopNoOneRecordedGoesToWhoeverHoldsThePosition(t *testing.T) {
@@ -345,7 +345,7 @@ func TestAStopNoOneRecordedGoesToWhoeverHoldsThePosition(t *testing.T) {
 	f.record(stop, Owner{})
 
 	var order LedgerOrder
-	if err := f.db.Where("exchange_order_id = ?", stop.ExchangeOrderID).First(&order).Error; err != nil {
+	if err := f.db.Where("venue_order_id = ?", stop.VenueOrderID).First(&order).Error; err != nil {
 		t.Fatal(err)
 	}
 	if order.Source != SourceTrader || order.SourceID != "t1" || order.Role != RoleClose || order.Status != OrderFilled {
@@ -379,7 +379,7 @@ func TestACloseTakesItsOwnPositionFirstThenTheOldest(t *testing.T) {
 	placed := f.trade(SideSell, SideLong, "2", "110")
 	if err := f.s.RecordOrder(&LedgerOrder{
 		AccountID: f.account, InstrumentID: f.btc, Source: SourceTrader, SourceID: "t1", Role: RoleClose,
-		ExchangeOrderID: placed.ExchangeOrderID, Side: SideSell, PositionSide: SideLong, Type: "MARKET", Status: OrderNew, Quantity: dec("2"),
+		VenueOrderID: placed.VenueOrderID, Side: SideSell, PositionSide: SideLong, Type: "MARKET", Status: OrderNew, Quantity: dec("2"),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -404,7 +404,7 @@ func TestAnOrderRecordedFirstIsCompletedByItsFills(t *testing.T) {
 	first := f.trade(SideBuy, SideLong, "1", "100")
 	order := LedgerOrder{
 		AccountID: f.account, InstrumentID: f.btc, Source: SourceTrader, SourceID: "t1", Role: RoleEntry,
-		ExchangeOrderID: first.ExchangeOrderID, Side: SideBuy, PositionSide: SideLong, Type: "MARKET",
+		VenueOrderID: first.VenueOrderID, Side: SideBuy, PositionSide: SideLong, Type: "MARKET",
 		Status: OrderNew, Quantity: dec("3"), Leverage: &leverage, MarginMode: "cross",
 	}
 	if err := f.s.RecordOrder(&order); err != nil {
@@ -421,7 +421,7 @@ func TestAnOrderRecordedFirstIsCompletedByItsFills(t *testing.T) {
 	assertDecimal(t, "quantity", read.Quantity, "3")
 
 	second := f.trade(SideBuy, SideLong, "2", "130")
-	second.ExchangeOrderID = first.ExchangeOrderID
+	second.VenueOrderID = first.VenueOrderID
 	f.record(second, Owner{})
 	if err := f.db.First(&read, order.ID).Error; err != nil {
 		t.Fatal(err)
@@ -449,7 +449,7 @@ func TestAFillThatBeatsItsOrderIsCompletedByIt(t *testing.T) {
 	leverage := 3
 	order := LedgerOrder{
 		AccountID: f.account, InstrumentID: f.btc, Source: SourceTrader, SourceID: "t1", Role: RoleEntry,
-		ExchangeOrderID: trade.ExchangeOrderID, ClientOrderID: "client-1", Side: SideBuy, PositionSide: SideLong, Type: "MARKET",
+		VenueOrderID: trade.VenueOrderID, ClientID: "client-1", Side: SideBuy, PositionSide: SideLong, Type: "MARKET",
 		Status: OrderNew, Quantity: dec("2"), Leverage: &leverage, MarginMode: "isolated",
 	}
 	if err := f.s.RecordOrder(&order); err != nil {
@@ -462,7 +462,7 @@ func TestAFillThatBeatsItsOrderIsCompletedByIt(t *testing.T) {
 	if err := f.db.First(&read, order.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if read.ClientOrderID != "client-1" || read.Type != "MARKET" || read.Status != OrderPartiallyFilled {
+	if read.ClientID != "client-1" || read.Type != "MARKET" || read.Status != OrderPartiallyFilled {
 		t.Fatalf("order = %+v", read)
 	}
 	assertDecimal(t, "filled", read.FilledQuantity, "1")
@@ -478,7 +478,7 @@ func TestATriggeredOrderFindsItsFills(t *testing.T) {
 	trade := f.trade(SideSell, SideLong, "1", "90")
 	order := LedgerOrder{
 		AccountID: f.account, InstrumentID: f.btc, Source: SourceFutures, SourceID: "run", Role: RoleStop,
-		ExchangeOrderID: "algo-1", TriggeredOrderID: trade.ExchangeOrderID, Side: SideSell, PositionSide: SideLong,
+		VenueOrderID: "algo-1", TriggeredOrderID: trade.VenueOrderID, Side: SideSell, PositionSide: SideLong,
 		Type: "STOP_MARKET", Status: OrderNew, Quantity: dec("1"),
 	}
 	if err := f.s.RecordOrder(&order); err != nil {
@@ -488,7 +488,7 @@ func TestATriggeredOrderFindsItsFills(t *testing.T) {
 	if n := count(t, f.db, &LedgerOrder{}); n != 2 {
 		t.Fatalf("orders = %d", n)
 	}
-	if fill := f.fill(trade.ExchangeTradeID); fill.OrderID != order.ID {
+	if fill := f.fill(trade.VenueTradeID); fill.OrderID != order.ID {
 		t.Errorf("fill went to order %d", fill.OrderID)
 	}
 	if position := f.positions()[0]; position.CloseReason != "stop_loss" {

@@ -1,18 +1,24 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode, Suspense, lazy, useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router-dom'
 import { HeaderBar } from './header-bar'
 import { LoginRequiredOverlay } from '@/components/auth/login-required-overlay'
 import {
-  SettingsDialog,
   isSettingsSection,
   type SettingsSection,
-} from '@/components/settings/settings-dialog'
+} from '@/components/settings/settings-sections'
 import { useOpenSettings } from '@/components/settings/use-open-settings'
 import { SETTINGS_PARAM, type Page } from '@/constants/route-paths'
 import { useAuth } from '@/contexts/auth-context'
 import { useLanguage } from '@/contexts/language-context'
 import { useTheme } from '@/contexts/theme-context'
 import { useProfile } from '@/hooks/use-profile'
+
+// Settings open over any page, only when asked, so their code loads apart from the page's.
+const SettingsDialog = lazy(() =>
+  import('@/components/settings/settings-dialog').then((module) => ({
+    default: module.SettingsDialog,
+  }))
+)
 
 interface AppChromeProps {
   children: ReactNode
@@ -83,14 +89,19 @@ export function AppChrome({
         onOpenSettings={() => showSettings('profile')}
       />
 
-      <main className="min-h-screen pt-[72px]">{content}</main>
+      <main className="min-h-screen pt-[72px]">
+        {/* A page's code loads when it is first opened, under the top bar. */}
+        <Suspense fallback={null}>{content}</Suspense>
+      </main>
 
       {settingsSection && (
-        <SettingsDialog
-          section={settingsSection}
-          onSectionChange={showSettings}
-          onClose={() => showSettings(null)}
-        />
+        <Suspense fallback={null}>
+          <SettingsDialog
+            section={settingsSection}
+            onSectionChange={showSettings}
+            onClose={() => showSettings(null)}
+          />
+        </Suspense>
       )}
 
       <LoginRequiredOverlay

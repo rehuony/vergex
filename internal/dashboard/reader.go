@@ -171,7 +171,7 @@ func (r *reader) loadNames(force bool) bool {
 	}
 	r.hosts = make(map[string]string, len(models))
 	for _, model := range models {
-		r.hosts[model.ID] = agent.ProviderHost(model.Provider, model.CustomAPIURL)
+		r.hosts[model.ID] = agent.ProviderHost(model.Provider, model.BaseURL)
 	}
 	return true
 }
@@ -382,8 +382,8 @@ func (r *reader) readOrders() ([]Event, bool, error) {
 // catching up after an outage writes trades long after they happened.
 func orderTime(order *account.TraderOrder) int64 {
 	switch {
-	case order.FilledAt > 0:
-		return order.FilledAt
+	case order.ClosedAt > 0:
+		return order.ClosedAt
 	case order.Status == account.OrderNew:
 		return order.CreatedAt
 	}

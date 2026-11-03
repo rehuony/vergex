@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"slices"
 	"testing"
 
 	"vergex/internal/market"
@@ -29,17 +30,37 @@ func walk(n int, drift float64) []market.Kline {
 
 const hour = int64(3600 * 1000)
 
+// continuation reads every factor as the move going on, with a steep slope, which is what
+// a steady walk answers to. The default rules read the candle factors the other way.
+func continuation() Config {
+	config := DefaultConfig()
+	for name := range config.Factors {
+		config.Factors[name] = FactorConfig{Enabled: true, Trending: 1, Ranging: 1}
+	}
+	config.Slope, config.DirectionThreshold = 3, 0.05
+	return config
+}
+
 func TestRisingAndFallingMarketsPointOppositeWays(t *testing.T) {
-	up, err := Evaluate(DefaultConfig(), "1h", walk(WindowBars, 0.5), Derivatives{})
+	up, err := Evaluate(continuation(), "1h", walk(WindowBars, 0.5), Derivatives{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	down, err := Evaluate(DefaultConfig(), "1h", walk(WindowBars, -0.2), Derivatives{})
+	down, err := Evaluate(continuation(), "1h", walk(WindowBars, -0.2), Derivatives{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if up.ProbFull <= down.ProbFull {
 		t.Fatalf("rising %.3f should score above falling %.3f", up.ProbFull, down.ProbFull)
+	}
+	// The default rules read a steady climb as due to come back, and keep the score
+	// close to a probability.
+	reversal, err := Evaluate(DefaultConfig(), "1h", walk(WindowBars, 0.5), Derivatives{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reversal.Direction != DirectionDown || reversal.ProbFull < 0.3 || reversal.ProbFull >= 0.5 {
+		t.Fatalf("default rules on a climb: %s at %.3f", reversal.Direction, reversal.ProbFull)
 	}
 	if up.Regime != RegimeTrending {
 		t.Fatalf("a steady climb should read as trending, ADX %.1f", up.ADX)
@@ -55,8 +76,9 @@ func TestRisingAndFallingMarketsPointOppositeWays(t *testing.T) {
 	if up.Support >= up.Close || up.Resistance <= 0 {
 		t.Fatalf("levels: support %.2f resistance %.2f close %.2f", up.Support, up.Resistance, up.Close)
 	}
-	if up.ExpectedMovePct <= 0 {
-		t.Fatal("expected move should be positive")
+	climb := walk(WindowBars, 0.5)
+	if want := typicalMoveShare * market.ATR(climb, 14) / up.Close * 2 * 100; math.Abs(up.ExpectedMovePct-want) > 1e-9 {
+		t.Fatalf("expected move = %.4f, want %.4f: a typical move over the horizon, not the whole ATR", up.ExpectedMovePct, want)
 	}
 }
 
@@ -155,9 +177,9 @@ func TestDerivativesAreReadAsOfTheCandlesClose(t *testing.T) {
 
 func TestDerivativesMoveTheFullProbabilityOnly(t *testing.T) {
 	klines := walk(WindowBars, 0.1)
-	bare, _ := Evaluate(DefaultConfig(), "1h", klines, Derivatives{})
+	bare, _ := Evaluate(continuation(), "1h", klines, Derivatives{})
 	high := 0.003
-	crowded, err := Evaluate(DefaultConfig(), "1h", klines, Derivatives{Funding: &high})
+	crowded, err := Evaluate(continuation(), "1h", klines, Derivatives{Funding: &high})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,6 +341,39 @@ func TestBacktestMatchesLiveEvaluationAndDoesNotOverlap(t *testing.T) {
 
 // Coins move together, so more of them over the same stretch of time add samples and no
 // moments, while each interval's stretches are its own.
+func TestBacktestSamplesLineUpAcrossCoinsAndRuns(t *testing.T) {
+	candles := walk(WindowBars+200, 0.1)
+	options := BacktestOptions{Symbols: []string{"BTCUSDT"}, Intervals: []string{"1h"}, From: candles[WindowBars+10].OpenTime, To: candles[len(candles)-1].OpenTime}
+	span := int64(DefaultConfig().Horizons["1h"]) * hour
+	times := func(source fixedSource, options BacktestOptions) []int64 {
+		t.Helper()
+		samples, err := testSeries(source, DefaultConfig(), "BTCUSDT", "1h", Readings{}, options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := make([]int64, len(samples))
+		for i, sample := range samples {
+			out[i] = sample.time
+			if sample.time%span != 0 || sample.moment != sample.time/span {
+				t.Fatalf("sample at %d is off the grid of %d", sample.time, span)
+			}
+		}
+		return out
+	}
+	whole := times(fixedSource{candles}, options)
+	// A coin whose history starts three bars later tests the same candles once it can.
+	late := times(fixedSource{candles[3:]}, options)
+	if len(whole) == 0 || len(late) == 0 || !slices.Equal(whole[len(whole)-len(late):], late) {
+		t.Fatalf("whole = %v, late = %v, want the same candles", whole, late)
+	}
+	// A run over a range starting a bar later tests the same candles too.
+	shifted := options
+	shifted.From += hour
+	if later := times(fixedSource{candles}, shifted); !slices.Equal(whole[len(whole)-len(later):], later) || len(whole)-len(later) > 1 {
+		t.Fatalf("whole = %v, shifted = %v, want the same candles", whole, later)
+	}
+}
+
 func TestABacktestCountsEachStretchOfTimeOnce(t *testing.T) {
 	candles := walk(WindowBars+400, 0.15)
 	options := BacktestOptions{Symbols: []string{"BTCUSDT"}, Intervals: []string{"1h"}, From: candles[WindowBars].OpenTime, To: candles[len(candles)-1].OpenTime}
@@ -352,7 +407,7 @@ func TestABacktestCountsEachStretchOfTimeOnce(t *testing.T) {
 func TestBacktestReportsEachFactorAndCandlesAlone(t *testing.T) {
 	candles := walk(WindowBars+400, 0.15)
 	options := BacktestOptions{Symbols: []string{"BTCUSDT"}, Intervals: []string{"1h"}, From: candles[WindowBars].OpenTime, To: candles[len(candles)-1].OpenTime}
-	report, err := RunBacktest(context.Background(), fixedSource{candles}, DefaultConfig(), options, nil)
+	report, err := RunBacktest(context.Background(), fixedSource{candles}, continuation(), options, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

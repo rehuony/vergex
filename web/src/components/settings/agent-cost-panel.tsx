@@ -32,7 +32,7 @@ const PERIODS: { key: AgentCostPeriod; label: string }[] = [
   { key: 'all', label: 'periodAll' },
 ]
 
-const FEATURES = ['trader', 'futures', 'telegram', 'test']
+const FEATURES = ['trader', 'futures', 'telegram', 'assistant', 'test']
 
 const tokens = (n: number) => n.toLocaleString('en-US')
 const megabytes = (bytes: number) =>

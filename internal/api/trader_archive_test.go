@@ -37,7 +37,7 @@ func TestDeletingATraderKeepsItsHistoryAndOnlyTouchesYourOwn(t *testing.T) {
 	st := NewStores(testdb.Open(t))
 	mine := testdb.AddTrader(t, st.DB, &testdb.Trader{Name: "Mine"})
 	theirs := testdb.AddTrader(t, st.DB, &testdb.Trader{UserID: testdb.OtherUserID, Name: "Theirs"})
-	if err := st.Decisions.LogDecision(&trader.DecisionRecord{TraderID: mine.ID, CycleNumber: 1, Success: true}); err != nil {
+	if err := st.Decisions.LogDecision(&trader.DecisionRecord{TraderID: mine.ID, Seq: 1, Success: true}); err != nil {
 		t.Fatal(err)
 	}
 	r := traderRoutes(t, st)

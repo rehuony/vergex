@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react'
+import { useEffect, useMemo, useState, type RefObject } from 'react'
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -19,8 +19,6 @@ import { cn } from '@/utils/cn'
 const STORAGE_KEY = 'vergex.futures.forecast'
 const REFRESH_MS = 30000
 const WAITING_REFRESH_MS = 5000
-
-const NO_ROWS: never[] = []
 
 function remembered() {
   try {
@@ -109,11 +107,25 @@ export function FuturesForecast({
     refetchInterval: (query) =>
       query.state.data?.pending ? WAITING_REFRESH_MS : REFRESH_MS,
   })
-  const rows = wanted && data ? data.projection : NO_ROWS
+  const forecast = useMemo(
+    () =>
+      wanted && data && !data.pending && data.horizon > 0
+        ? {
+            time: data.open_time / 1000,
+            step: (data.target_time - data.open_time) / 1000 / data.horizon,
+            close: data.close,
+            expectedMovePct: data.expected_move_pct,
+            horizon: data.horizon,
+            prob: data.display_prob,
+            direction: data.direction ?? ('neutral' as const),
+          }
+        : null,
+    [wanted, data]
+  )
 
   useEffect(() => {
-    chart.current?.setForecast(venue, symbol, interval, rows)
-  }, [chart, venue, symbol, interval, scene, rows])
+    chart.current?.setForecast(venue, symbol, interval, forecast)
+  }, [chart, venue, symbol, interval, scene, forecast])
 
   const note =
     !on || !candlesReady || comparing || !interval

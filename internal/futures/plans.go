@@ -6,25 +6,17 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 	"time"
+	"vergex/internal/account"
 	"vergex/internal/futures/plan"
-)
-
-// Where a plan came from.
-const (
-	OriginAssistant = "assistant"
-	OriginManual    = "manual"
 )
 
 type Plan struct {
 	UserID         string    `gorm:"column:user_id" json:"-"`
 	ID             string    `gorm:"column:id;primaryKey" json:"id"`
 	AccountID      string    `gorm:"column:account_id;serializer:nulltext" json:"account_id"`
-	Venue          string    `gorm:"column:venue" json:"venue"`
 	Symbol         string    `gorm:"column:symbol" json:"symbol"`
 	Status         string    `gorm:"column:status" json:"status"`
-	Origin         string    `gorm:"column:origin;default:manual" json:"-"`
 	ConversationID string    `gorm:"column:conversation_id;serializer:nulltext" json:"-"`
-	RevisesPlanID  string    `gorm:"column:revises_plan_id;serializer:nulltext" json:"-"`
 	Body           string    `gorm:"column:body" json:"-"`
 	CreatedAt      time.Time `gorm:"column:created_at" json:"-"`
 	UpdatedAt      time.Time `gorm:"column:updated_at" json:"updated_at"`
@@ -35,8 +27,9 @@ func (Plan) TableName() string { return "futures.plans" }
 type PlanStore struct {
 	DB                       *gorm.DB
 	UserID, AccountID, Venue string
-	// Origin and ConversationID say where the plans added here come from.
-	Origin, ConversationID string
+	// ConversationID says where the plans added here are drafted, empty for one drafted by
+	// hand.
+	ConversationID string
 }
 
 // NewPlanStore returns a user's plans, with new ones going to an account and venue.
@@ -53,7 +46,7 @@ func (d *PlanStore) Records() map[string]plan.Record {
 	for _, row := range rows {
 		var p plan.Plan
 		if json.Unmarshal([]byte(row.Body), &p) == nil {
-			out[p.ID] = plan.Record{Plan: p, State: row.Status, Updated: row.UpdatedAt}
+			out[p.ID] = plan.Record{Plan: p, Status: row.Status, Updated: row.UpdatedAt}
 		}
 	}
 	return out
@@ -92,34 +85,79 @@ func (d *PlanStore) HasDraft(id string) bool {
 	return e == nil && row.AccountID == d.AccountID && row.Status == "draft"
 }
 
-// ErrPlanRan refuses to delete a plan that went to the exchange: its run is the record of
-// what was sent.
-var ErrPlanRan = errors.New("a plan that ran is kept as the record of its orders")
+// ErrPlanAtWork refuses to delete a plan the exchange may still hear from: one with a run that
+// has not settled, still holds its account or still has a position open.
+var ErrPlanAtWork = errors.New("a plan still at work on the exchange can't be deleted")
 
-// Delete removes a plan nothing ever came of. A plan that revised it stays, without the link.
+// SettledRuns are the states a run ends in, when none of its orders can still be live.
+var SettledRuns = []string{"completed", "cancelled", "expired"}
+
+// Delete removes a plan with its runs and their orders, once nothing of it is at work. What it
+// sent stays in the account's ledger, which keeps its own record of the orders, fills and
+// positions. A plan that revised it stays, without the link.
 func (d *PlanStore) Delete(id string) error {
 	return d.DB.Transaction(func(tx *gorm.DB) error {
 		if _, e := (&PlanStore{DB: tx, UserID: d.UserID}).Find(id); e != nil {
 			return e
 		}
-		var runs int64
-		if e := tx.Table("futures.runs").Where("plan_id = ?", id).Count(&runs).Error; e != nil {
+		// The lock keeps a run from moving on while this decides.
+		var runs []struct {
+			ID     string
+			Status string
+		}
+		if e := tx.Raw(`SELECT id, status FROM futures.runs WHERE plan_id = ? FOR UPDATE`, id).Scan(&runs).Error; e != nil {
 			return e
 		}
-		if runs > 0 {
-			return ErrPlanRan
+		ids := make([]string, 0, len(runs))
+		for _, run := range runs {
+			if !RunSettled(run.Status) {
+				return ErrPlanAtWork
+			}
+			ids = append(ids, run.ID)
 		}
-		if e := tx.Exec("UPDATE futures.plans SET revises_plan_id = NULL WHERE revises_plan_id = ?", id).Error; e != nil {
-			return e
+		if len(ids) > 0 {
+			var holding int64
+			if e := tx.Raw(`SELECT (SELECT count(*) FROM account.leases WHERE source = ? AND source_id IN ?)
+				+ (SELECT count(*) FROM account.positions WHERE source = ? AND source_id IN ? AND status = ?)`,
+				account.SourceFutures, ids, account.SourceFutures, ids, account.PositionOpen).Scan(&holding).Error; e != nil {
+				return e
+			}
+			if holding > 0 {
+				return ErrPlanAtWork
+			}
+			// Their orders go with them.
+			if e := tx.Exec(`DELETE FROM futures.runs WHERE id IN ?`, ids).Error; e != nil {
+				return e
+			}
 		}
 		return tx.Where("user_id = ? AND id = ?", d.UserID, id).Delete(&Plan{}).Error
 	})
 }
 
-func (d *PlanStore) Add(plans []plan.Plan) error {
-	return d.DB.Transaction(func(tx *gorm.DB) error { return d.add(tx, plans, "") })
+// RunSettled says whether a run has ended, when none of its orders can still be live.
+func RunSettled(state string) bool {
+	for _, s := range SettledRuns {
+		if s == state {
+			return true
+		}
+	}
+	return false
 }
-func (d *PlanStore) add(tx *gorm.DB, plans []plan.Plan, revises string) error {
+
+// DeleteDraftedIn removes the plans drafted in conversations that are going, as long as they
+// never ran. One that ran is the record of its orders, and stays without the link.
+func (d *PlanStore) DeleteDraftedIn(conversationIDs []string) error {
+	if len(conversationIDs) == 0 {
+		return nil
+	}
+	return d.DB.Exec(`DELETE FROM futures.plans p WHERE p.user_id = ? AND p.conversation_id IN ?
+		AND NOT EXISTS (SELECT 1 FROM futures.runs r WHERE r.plan_id = p.id)`, d.UserID, conversationIDs).Error
+}
+
+func (d *PlanStore) Add(plans []plan.Plan) error {
+	return d.DB.Transaction(func(tx *gorm.DB) error { return d.add(tx, plans) })
+}
+func (d *PlanStore) add(tx *gorm.DB, plans []plan.Plan) error {
 	for _, p := range plans {
 		if e := p.Verify(time.Now().UTC()); e != nil {
 			return e
@@ -132,7 +170,7 @@ func (d *PlanStore) add(tx *gorm.DB, plans []plan.Plan, revises string) error {
 			return e
 		}
 		now := time.Now().UTC()
-		r := Plan{UserID: d.UserID, ID: p.ID, AccountID: d.AccountID, Venue: d.Venue, Symbol: p.Snapshot.Symbol, Status: "draft", Origin: d.Origin, ConversationID: d.ConversationID, RevisesPlanID: revises, Body: string(raw), CreatedAt: now, UpdatedAt: now}
+		r := Plan{UserID: d.UserID, ID: p.ID, AccountID: d.AccountID, Symbol: p.Snapshot.Symbol, Status: "draft", ConversationID: d.ConversationID, Body: string(raw), CreatedAt: now, UpdatedAt: now}
 		if e := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&r).Error; e != nil {
 			return e
 		}
@@ -148,7 +186,7 @@ func (d *PlanStore) Revise(old string, plans []plan.Plan, now time.Time) error {
 		if row.Status != "draft" {
 			return errors.New("locked live plan cannot be revised; cancel approval first")
 		}
-		if e := d.add(tx, plans, old); e != nil {
+		if e := d.add(tx, plans); e != nil {
 			return e
 		}
 		res := tx.Model(&Plan{}).Where("user_id = ? AND id = ? AND status = ?", d.UserID, old, "draft").Updates(map[string]any{"status": "cancelled", "updated_at": now})

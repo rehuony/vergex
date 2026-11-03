@@ -42,6 +42,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { ROUTES } from '@/constants/route-paths'
+import { useAssistantPage } from '@/hooks/use-assistant-page'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
 
@@ -126,6 +127,11 @@ export function ForecastPage() {
   const { watchlist, toggle: toggleWatch } = useWatchlist(language)
 
   useEffect(() => rememberInterval(interval), [interval])
+  useAssistantPage('forecast_signals', () => ({
+    symbol: upper,
+    interval,
+    chart_options: options,
+  }))
 
   const coins = useQuery({
     queryKey: ['forecast-coins', interval],
@@ -203,23 +209,24 @@ export function ForecastPage() {
       language,
     ]
   )
+  // The calls the statistics count: one per horizon, judged, with a direction.
   const markers = useMemo(
     () =>
       options.hits
         ? (shown?.signals ?? [])
             .filter(
-              (signal) => signal.outcome === 'hit' || signal.outcome === 'miss'
+              (signal) =>
+                signal.independent &&
+                (signal.outcome === 'hit' || signal.outcome === 'miss') &&
+                signal.direction !== 'neutral'
             )
             .slice(0, CHART_MARKERS)
             .reverse()
             .map((signal) => ({
               time: signal.open_time / 1000,
+              direction: signal.direction as 'up' | 'down',
               tone:
                 signal.outcome === 'hit' ? ('up' as const) : ('down' as const),
-              position:
-                signal.direction === 'up'
-                  ? ('below' as const)
-                  : ('above' as const),
             }))
         : [],
     [options.hits, shown?.signals]
@@ -231,10 +238,19 @@ export function ForecastPage() {
         : (shown?.candles ?? []),
     [shown?.candles, shown?.forming]
   )
-  const projection = useMemo(
-    () => (options.projection ? (shown?.projection ?? []) : []),
-    [options.projection, shown?.projection]
-  )
+  const forecast = useMemo(() => {
+    const latest = shown?.latest
+    if (!options.projection || !latest || latest.horizon <= 0) return null
+    return {
+      time: latest.open_time / 1000,
+      step: (latest.target_time - latest.open_time) / 1000 / latest.horizon,
+      close: latest.close,
+      expectedMovePct: latest.expected_move_pct,
+      horizon: latest.horizon,
+      prob: latest.display_prob,
+      direction: latest.direction,
+    }
+  }, [options.projection, shown?.latest])
   const lines = useMemo(
     () => chartLines(options, shown?.indicators),
     [options, shown?.indicators]
@@ -363,7 +379,7 @@ export function ForecastPage() {
                     candles={candles}
                     levels={levels}
                     markers={markers}
-                    projection={projection}
+                    forecast={forecast}
                     lines={lines}
                     live={current ? live : null}
                     fitFor={fitFor}

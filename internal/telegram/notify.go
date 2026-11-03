@@ -7,35 +7,53 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 )
-
-// maxMessageRunes keeps a message under Telegram's limit of 4096 UTF-16 units.
-const maxMessageRunes = 3500
 
 var notifyClient = &http.Client{Timeout: 15 * time.Second}
 
 // ErrNotBound means no bot token or no chat is set up to send to.
 var ErrNotBound = errors.New("Telegram is not connected to a chat")
 
-// Notify sends plain text to the bound chat, split when it is too long. It does
-// not depend on the running bot, so it works while the bot is reloading.
-func Notify(ctx context.Context, configs ConfigStore, text string) error {
-	cfg, err := configs.Get()
-	if err != nil || cfg.BotToken == "" || cfg.ChatID == 0 {
-		return ErrNotBound
-	}
-	for _, part := range splitMessage(text) {
-		if err := sendMessage(ctx, string(cfg.BotToken), cfg.ChatID, part); err != nil {
+// Notify sends a message to the bound chat, in as many parts as it takes. It does not depend
+// on the running bot, so it works while the bot is reloading.
+func Notify(ctx context.Context, configs ConfigStore, m *message) error {
+	for _, part := range m.parts() {
+		if err := notifyPart(ctx, configs, part, m.silent); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func sendMessage(ctx context.Context, token string, chatID int64, text string) error {
-	body, err := json.Marshal(map[string]any{"chat_id": chatID, "text": text})
+// notifyPart sends one part to the bound chat, as HTML and failing that as plain text.
+func notifyPart(ctx context.Context, configs ConfigStore, part messagePart, silent bool) error {
+	cfg, err := configs.Get()
+	if err != nil || cfg.BotToken == "" || cfg.ChatID == 0 {
+		return ErrNotBound
+	}
+	err = sendMessage(ctx, string(cfg.BotToken), cfg.ChatID, part.HTML, "HTML", silent)
+	var refused *refusal
+	if errors.As(err, &refused) && refused.status == http.StatusBadRequest {
+		err = sendMessage(ctx, string(cfg.BotToken), cfg.ChatID, part.Plain, "", silent)
+	}
+	return err
+}
+
+// refusal is Telegram saying no to a message.
+type refusal struct {
+	status      int
+	description string
+}
+
+func (r *refusal) Error() string { return "Telegram refused the message: " + r.description }
+
+func sendMessage(ctx context.Context, token string, chatID int64, text, parseMode string, silent bool) error {
+	request := map[string]any{"chat_id": chatID, "text": text, "disable_notification": silent, "link_preview_options": map[string]any{"is_disabled": true}}
+	if parseMode != "" {
+		request["parse_mode"] = parseMode
+	}
+	body, err := json.Marshal(request)
 	if err != nil {
 		return err
 	}
@@ -55,7 +73,7 @@ func sendMessage(ctx context.Context, token string, chatID int64, text string) e
 			Description string `json:"description"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&reply)
-		return fmt.Errorf("Telegram refused the message: %s", reply.Description)
+		return &refusal{status: resp.StatusCode, description: reply.Description}
 	}
 	return nil
 }
@@ -103,47 +121,4 @@ func ClearMenu(ctx context.Context, token string, chatID int64) {
 	if resp, err := notifyClient.Do(req); err == nil {
 		resp.Body.Close()
 	}
-}
-
-// splitMessage cuts text at line breaks into parts Telegram will accept, and cuts a line
-// too long for one message: a single long error must not stop everything behind it.
-func splitMessage(text string) []string {
-	var parts []string
-	var part strings.Builder
-	for _, line := range strings.Split(text, "\n") {
-		for _, piece := range splitLine(line) {
-			if part.Len() > 0 && utf16Len(part.String())+utf16Len(piece)+1 > maxMessageRunes {
-				parts = append(parts, part.String())
-				part.Reset()
-			}
-			if part.Len() > 0 {
-				part.WriteByte('\n')
-			}
-			part.WriteString(piece)
-		}
-	}
-	if part.Len() > 0 {
-		parts = append(parts, part.String())
-	}
-	return parts
-}
-
-// splitLine cuts a line into pieces that each fit a message.
-func splitLine(line string) []string {
-	if utf16Len(line) <= maxMessageRunes {
-		return []string{line}
-	}
-	var pieces []string
-	var piece []rune
-	size := 0
-	for _, r := range line {
-		width := utf16Len(string(r))
-		if size+width > maxMessageRunes {
-			pieces = append(pieces, string(piece))
-			piece, size = piece[:0], 0
-		}
-		piece = append(piece, r)
-		size += width
-	}
-	return append(pieces, string(piece))
 }

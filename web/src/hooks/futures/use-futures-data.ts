@@ -67,11 +67,13 @@ export function useFuturesData(
       rows?.map((row) => (row.id === id ? { ...row, ...saved } : row))
     )
   }
+  // The drafts it made that never ran go with it, so the plans are read again.
   const deleteConversation = async (id: string) => {
     await futuresAPI(`conversations/${id}`, undefined, 'DELETE')
     client.setQueryData<FuturesConversation[]>(historyKey, (rows) =>
       rows?.filter((row) => row.id !== id)
     )
+    await reload().catch(() => {})
   }
   const deletePlan = useCallback(
     async (id: string) => {

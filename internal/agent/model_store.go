@@ -20,16 +20,16 @@ type ModelStore struct {
 
 // AgentModel model configuration
 type Model struct {
-	ID              string                 `gorm:"primaryKey" json:"id"`
-	UserID          string                 `gorm:"column:user_id" json:"user_id"`
-	Name            string                 `gorm:"column:name" json:"name"`
-	Provider        string                 `gorm:"column:provider" json:"provider"`
-	Enabled         bool                   `gorm:"column:enabled" json:"enabled"`
-	APIKey          crypto.EncryptedString `gorm:"column:api_key" json:"apiKey"`
-	CustomAPIURL    string                 `gorm:"column:base_url" json:"customApiUrl"`
-	CustomModelName string                 `gorm:"column:model_name" json:"customModelName"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
+	ID        string                 `gorm:"primaryKey" json:"id"`
+	UserID    string                 `gorm:"column:user_id" json:"user_id"`
+	Name      string                 `gorm:"column:name" json:"name"`
+	Provider  string                 `gorm:"column:provider" json:"provider"`
+	Enabled   bool                   `gorm:"column:enabled" json:"enabled"`
+	APIKey    crypto.EncryptedString `gorm:"column:api_key" json:"api_key"`
+	BaseURL   string                 `gorm:"column:base_url" json:"base_url"`
+	ModelName string                 `gorm:"column:model_name" json:"modelName"`
+	CreatedAt time.Time              `json:"created_at"`
+	UpdatedAt time.Time              `json:"updated_at"`
 }
 
 func (Model) TableName() string { return "agent.models" }
@@ -151,18 +151,18 @@ func (s *ModelStore) Find(userID, key string) (*Model, error) {
 
 // Save stores a model's settings, under key as in Find, and creates the model named
 // name the first time its provider is saved. A blank apiKey keeps the saved key.
-func (s *ModelStore) Save(userID, key, name string, enabled bool, apiKey, customAPIURL, customModelName string) error {
+func (s *ModelStore) Save(userID, key, name string, enabled bool, apiKey, baseURL, modelName string) error {
 	existing, err := s.Find(userID, key)
 	if errors.Is(err, gorm.ErrRecordNotFound) && uuid.Validate(key) != nil {
 		return s.db.Create(&Model{
-			ID:              uuid.NewString(),
-			UserID:          userID,
-			Name:            name,
-			Provider:        key,
-			Enabled:         enabled,
-			APIKey:          crypto.EncryptedString(apiKey),
-			CustomAPIURL:    customAPIURL,
-			CustomModelName: customModelName,
+			ID:        uuid.NewString(),
+			UserID:    userID,
+			Name:      name,
+			Provider:  key,
+			Enabled:   enabled,
+			APIKey:    crypto.EncryptedString(apiKey),
+			BaseURL:   baseURL,
+			ModelName: modelName,
 		}).Error
 	}
 	if err != nil {
@@ -170,8 +170,8 @@ func (s *ModelStore) Save(userID, key, name string, enabled bool, apiKey, custom
 	}
 	updates := map[string]any{
 		"enabled":    enabled,
-		"base_url":   customAPIURL,
-		"model_name": customModelName,
+		"base_url":   baseURL,
+		"model_name": modelName,
 		"updated_at": time.Now().UTC(),
 	}
 	if apiKey != "" {

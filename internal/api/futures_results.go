@@ -35,7 +35,7 @@ func (s *Server) handleFuturesResults(c *gin.Context) {
 	}
 	settled := map[string]bool{}
 	for _, view := range views {
-		if view.AccountID == account.ID && settledRunStates[view.State] {
+		if view.AccountID == account.ID && settledRunStates[view.Status] {
 			settled[view.ID] = true
 		}
 	}

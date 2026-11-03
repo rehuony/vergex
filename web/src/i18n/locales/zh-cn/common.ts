@@ -1,6 +1,15 @@
 import type { common as template } from '@/i18n/locales/en/common'
 
 export const common: typeof template = {
+  turnSteps: {
+    name: '本轮的步骤',
+    thinking: '正在思考',
+    thinkingFor: '正在思考 · {seconds} 秒',
+    thought: '思考了 {seconds} 秒 · {count} 步',
+    usage: '模型用量',
+    usageDetail: '输入 {prompt}，输出 {completion} · {money}',
+    unpriced: '未定价',
+  },
   details: '详情',
   running: '运行中',
   stopped: '已停止',

@@ -45,9 +45,10 @@ type Registry struct {
 	db *gorm.DB
 }
 
-// calculator is a row of futures.calculators, with the Artifact as JSON in Body.
+// calculator is a row of futures.calculators, with the Artifact as JSON in Body. Its ID is
+// the Artifact's hash.
 type calculator struct {
-	Hash           string    `gorm:"column:hash;primaryKey"`
+	ID             string    `gorm:"column:id;primaryKey"`
 	ConversationID string    `gorm:"column:conversation_id"`
 	Body           string    `gorm:"column:body"`
 	CreatedAt      time.Time `gorm:"column:created_at"`
@@ -77,7 +78,7 @@ func (c calculator) artifact() (Artifact, error) {
 	if err := json.Unmarshal([]byte(c.Body), &a); err != nil {
 		return Artifact{}, errors.New("Invalid entry plugin storage")
 	}
-	if c.Hash != a.Hash || c.Hash != digest(a.SessionID, a.Definition) || !idPattern.MatchString(a.ID) || (a.Status != "passed" && a.Status != "failed") {
+	if c.ID != a.Hash || c.ID != digest(a.SessionID, a.Definition) || !idPattern.MatchString(a.ID) || (a.Status != "passed" && a.Status != "failed") {
 		return Artifact{}, errors.New("Entry plugin version verification failed")
 	}
 	return a, nil
@@ -106,7 +107,7 @@ func (r *Registry) Develop(ctx context.Context, session string, d Definition) (A
 	d = detached
 	hash := digest(session, d)
 	var existing []calculator
-	if err := r.db.Where("hash = ?", hash).Limit(1).Find(&existing).Error; err != nil {
+	if err := r.db.Where("id = ?", hash).Limit(1).Find(&existing).Error; err != nil {
 		return Artifact{}, err
 	}
 	if len(existing) == 1 {
@@ -173,7 +174,7 @@ func (r *Registry) Develop(ctx context.Context, session string, d Definition) (A
 	if err != nil {
 		return a, err
 	}
-	row := calculator{Hash: hash, ConversationID: session, Body: string(body), CreatedAt: a.Created}
+	row := calculator{ID: hash, ConversationID: session, Body: string(body), CreatedAt: a.Created}
 	if err := r.db.Clauses(clause.OnConflict{DoNothing: true}).Create(&row).Error; err != nil {
 		return a, err
 	}

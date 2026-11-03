@@ -23,13 +23,9 @@ import {
 } from '@/utils/futures/futures-plans'
 import { useLanguage } from '@/contexts/language-context'
 import { t } from '@/i18n'
+import type { ChatMessage } from '@/components/common/chat-thread'
 import { recordActivity, type ActivityItem } from './futures-activity'
 import type { PlanCheck } from '@/utils/futures/futures-plans'
-
-export interface ChatMessage {
-  role: 'user' | 'assistant'
-  content: string
-}
 
 interface FuturesAssistantOptions {
   busy: boolean
@@ -114,9 +110,9 @@ export function useFuturesAssistant({
       return
     }
     // A locked trade is immutable, but it must not lock the whole workspace.
-    const separateDraft = Boolean(current && current.state !== 'draft')
+    const separateDraft = Boolean(current && current.status !== 'draft')
     const revisionID =
-      !compareStructures && current?.state === 'draft' ? selected : undefined
+      !compareStructures && current?.status === 'draft' ? selected : undefined
     const historyMessages = separateDraft ? [] : messages.slice(-16)
     if (separateDraft) {
       session.current = crypto.randomUUID()

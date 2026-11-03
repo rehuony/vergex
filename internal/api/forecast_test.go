@@ -74,7 +74,7 @@ func TestForecastInputsAreChecked(t *testing.T) {
 	if w := send(r, http.MethodPut, "/settings", `{"alert_threshold":40}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("a threshold under 51 = %d", w.Code)
 	}
-	if w := send(r, http.MethodPut, "/settings", `{"alert_threshold":80}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"alert_intervals":["1h","4h","1d"]`) {
+	if w := send(r, http.MethodPut, "/settings", `{"alert_threshold":80}`); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"alert_intervals":["1h","4h"]`) {
 		t.Fatalf("threshold = %d %s", w.Code, w.Body.String())
 	}
 	if w := send(r, http.MethodPut, "/settings", `{"alert_threshold":80,"alert_intervals":["3m"]}`); w.Code != http.StatusBadRequest {

@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"vergex/internal/agent"
+	"vergex/internal/assistant"
 	"vergex/internal/database/testdb"
-	telegramagent "vergex/internal/telegram/agent"
 )
 
 // scriptedClient asks for one skill, thinking aloud, then answers. It remembers the
@@ -44,15 +44,15 @@ func TestAChatIsKeptAcrossARestart(t *testing.T) {
 	st := NewStores(testdb.Open(t))
 	user := testdb.AddUser(t, st.DB)
 	history := &chatHistory{conversations: st.Conversations, userID: user}
-	const chat = int64(42)
+	const chat = "42"
 
 	client := &scriptedClient{}
-	manager := telegramagent.NewManager(0, signed, "me@example.com", user, func() agent.Client { return client }, history, noLanguage)
+	manager := assistant.NewManager(0, signed, "me@example.com", user, func() agent.Client { return client }, history, noLanguage, assistant.Telegram)
 	if reply := manager.Run(context.Background(), chat, "what do I have?", nil); reply.Text != "you have no accounts" {
 		t.Fatalf("reply = %q", reply.Text)
 	}
 
-	conversation, err := st.Conversations.Latest(user, agent.FeatureTelegram, "42")
+	conversation, err := st.Conversations.LatestByContext(user, agent.FeatureTelegram, "chat_id", "42")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestAChatIsKeptAcrossARestart(t *testing.T) {
 	// A new manager is what a restart makes: it remembers, in the same conversation.
 	client = &scriptedClient{}
 	client.turn.Store(1)
-	restarted := telegramagent.NewManager(0, signed, "me@example.com", user, func() agent.Client { return client }, history, noLanguage)
+	restarted := assistant.NewManager(0, signed, "me@example.com", user, func() agent.Client { return client }, history, noLanguage, assistant.Telegram)
 	restarted.Run(context.Background(), chat, "and now?", nil)
 	sent := client.lastReq.Messages[len(client.lastReq.Messages)-1].Content
 	if !strings.Contains(sent, "what do I have?") || !strings.Contains(sent, "you have no accounts") {
@@ -93,21 +93,21 @@ func TestAChatIsKeptAcrossARestart(t *testing.T) {
 	if strings.Contains(sent, "let me look") {
 		t.Fatalf("a step on the way to an answer came back as if it were one: %q", sent)
 	}
-	if again, err := st.Conversations.Latest(user, agent.FeatureTelegram, "42"); err != nil || again.ID != conversation.ID {
+	if again, err := st.Conversations.LatestByContext(user, agent.FeatureTelegram, "chat_id", "42"); err != nil || again.ID != conversation.ID {
 		t.Fatalf("resumed %+v, err %v", again, err)
 	}
 
 	// /start begins a new conversation, even as the first thing after a restart.
 	client = &scriptedClient{}
 	client.turn.Store(1)
-	afterStart := telegramagent.NewManager(0, signed, "me@example.com", user, func() agent.Client { return client }, history, noLanguage)
+	afterStart := assistant.NewManager(0, signed, "me@example.com", user, func() agent.Client { return client }, history, noLanguage, assistant.Telegram)
 	afterStart.Reset(chat)
 	afterStart.Run(context.Background(), chat, "fresh", nil)
 	sent = client.lastReq.Messages[len(client.lastReq.Messages)-1].Content
 	if strings.Contains(sent, "what do I have?") {
 		t.Fatalf("/start kept the old chat: %q", sent)
 	}
-	latest, err := st.Conversations.Latest(user, agent.FeatureTelegram, "42")
+	latest, err := st.Conversations.LatestByContext(user, agent.FeatureTelegram, "chat_id", "42")
 	if err != nil || latest.ID == conversation.ID {
 		t.Fatalf("latest = %+v, err %v", latest, err)
 	}

@@ -46,10 +46,10 @@ type Run struct {
 	PlanID       string     `gorm:"column:plan_id" json:"plan_id"`
 	PlanHash     string     `gorm:"column:plan_hash" json:"plan_hash"`
 	ApprovalHash string     `gorm:"column:approval_hash" json:"approval_hash"`
-	State        string     `gorm:"column:state" json:"state"`
+	Status       string     `gorm:"column:status" json:"status"`
 	ApprovedAt   time.Time  `gorm:"column:approved_at" json:"approved_at"`
 	StartedAt    *time.Time `gorm:"column:started_at" json:"started_at,omitempty"`
-	Deadline     *time.Time `gorm:"column:deadline" json:"deadline,omitempty"`
+	Deadline     *time.Time `gorm:"column:deadline_at" json:"deadline_at,omitempty"`
 	UpdatedAt    time.Time  `gorm:"column:updated_at" json:"updated_at"`
 	Error        string     `gorm:"column:error;serializer:nulltext" json:"error,omitempty"`
 }

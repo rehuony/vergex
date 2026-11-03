@@ -12,11 +12,11 @@ The Dashboard is a read-only view of the whole system, built around where things
 
 Until a model and an account exist, the page shows the three steps to get started instead.
 
-Each area keeps its size whatever it holds: no problems or many, no positions or forty, one event or two hundred. Lists scroll inside their panel. While the first overview loads, the page already holds the room the scene will take. On a wide window the page fills the first screen and does not scroll.
+Each area keeps its size whatever it holds: no problems or many, no positions or forty, one event or two hundred. Lists scroll inside their panel. While the first overview loads, the page is already laid out as it will be: the figures' names, the scene's floor with its blocks' names, and the event filter, with skeletons where the figures and events will be. On a wide window the page fills the first screen and does not scroll.
 
 ## Scene
 
-The scene is three-dimensional, drawn with three.js in a chunk only this page loads. Everything runs left to right through four columns named along the front of the floor: data, engines, where they send things, and what comes of it. Calls to a model run on an upper deck and orders and money on the ground, so the routes that would cross pass over each other, and the gates that reach the upper deck stand taller. Each block is a thin standing gate with its members on its face. A route is a curtain whose height follows its last 24 hours on a log scale: a route with nothing is a hairline. It fades in from where it leaves and carries arrowheads, so a still scene still says which way things go. The view starts with the exchanges nearest and the flow running away from them. Drag to turn and tilt it, within limits that keep the whole scene in frame; otherwise it holds still. Ctrl or Command with the wheel, or a pinch, zooms. The button in the corner, or a double click, goes back to where it started.
+The scene is three-dimensional, drawn with three.js in a chunk only this page loads. The chunk is the largest download on the page, so it starts as the page opens, beside the first overview, and nothing waits for it: the figures and events show as soon as they are read, and the scene takes its place when it arrives without moving anything. A phone never loads it. Everything runs left to right through four columns named along the front of the floor: data, engines, where they send things, and what comes of it. Calls to a model run on an upper deck and orders and money on the ground, so the routes that would cross pass over each other, and the gates that reach the upper deck stand taller. Each block is a thin standing gate with its members on its face. A route is a curtain whose height follows its last 24 hours on a log scale: a route with nothing is a hairline. It fades in from where it leaves and carries arrowheads, so a still scene still says which way things go. The view starts with the exchanges nearest and the flow running away from them. Drag to turn and tilt it, within limits that keep the whole scene in frame; otherwise it holds still. Ctrl or Command with the wheel, or a pinch, zooms. The button in the corner, or a double click, goes back to where it started.
 
 | Block | One dot is |
 | :---- | :--------- |
@@ -42,7 +42,7 @@ Each event starts with a ring at its source and its member lit, and runs its rou
 | Green | Realized profit returning to an account |
 | Red | A loss, a fee, an agent cost, or anything that failed |
 
-A burst of events on one route draws once with a count beside it, and at most 12 lines run at a time. Under reduced motion a route lights up in place instead of travelling, and the view holds still. A model call outside the scene, such as a model or strategy test, is only in the event list.
+A burst of events on one route draws once with a count beside it, and at most 12 lines run at a time. Under reduced motion a route lights up in place instead of travelling, and the view holds still. A model call outside the scene, such as a model or strategy test or the [assistant](assistant.md), is only in the event list.
 
 Hovering a block or route shows its members or its figures for the last hour and day as a tooltip. Clicking one filters the events and dims the rest, and clicking it again or an empty part of the scene clears that. If the stream drops, the page keeps what it has, says so in a corner of the scene and reconnects.
 

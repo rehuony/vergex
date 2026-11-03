@@ -56,7 +56,7 @@ func ToKlines(candles []Candle, interval string) []market.Kline {
 	for i, c := range candles {
 		rows[i] = binance.Candle{
 			OpenTime: c.OpenTime, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close, Volume: c.Volume,
-			QuoteVolume: c.QuoteVolume, Trades: c.Trades, TakerBuyVolume: c.TakerBuyVolume, TakerBuyQuote: c.TakerBuyQuote,
+			TakerBuyVolume: c.TakerBuyVolume,
 		}
 	}
 	return market.FromBinance(rows, interval)

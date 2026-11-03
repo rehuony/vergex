@@ -110,9 +110,7 @@ export function DryRunDialog({
                 disabled={running !== null}
                 options={models.map((m) => ({
                   value: m.id,
-                  label: m.customModelName
-                    ? `${m.name} · ${m.customModelName}`
-                    : m.name,
+                  label: m.model_name ? `${m.name} · ${m.model_name}` : m.name,
                 }))}
                 onChange={setChosen}
               />

@@ -15,7 +15,7 @@ import (
 // EngineVersion goes up whenever factor code changes what a strategy computes. A
 // strategy saved under another version is retired and a copy takes over, so records
 // from different code are never added up as if they were the same.
-const EngineVersion = 2
+const EngineVersion = 3
 
 // ScorerWeighted combines factors by weight, the only scorer so far. Strategies
 // carry the field so other ways of scoring can use the same strategies, records,
@@ -74,30 +74,35 @@ type Config struct {
 	Horizons map[string]int `json:"horizons"`
 }
 
-// DefaultConfig is the starting strategy. Its weights are a reasonable first
-// guess, not a tested result; the backtests are there to judge them.
+// DefaultConfig is the starting strategy. It reads every candle factor as reversal, the
+// same in trending and ranging markets: on 20 large coins over 2024 to 2026, price that
+// had just risen, sat high in its range or above its averages tended to come back a
+// little over the next few bars at 15m, 1h and 4h, in both kinds of market, and read as
+// continuation the same factors lost to chance. The derivatives factors added nothing
+// measurable and are off. The slope keeps the score close to a probability, so most
+// calls score between 44 and 56, and a direction is called from one point off 50.
 func DefaultConfig() Config {
 	return Config{
 		Scorer: ScorerWeighted,
 		Factors: map[string]FactorConfig{
-			FactorTrend:        {Enabled: true, Trending: 1.5, Ranging: 0.2},
-			FactorMomentum:     {Enabled: true, Trending: 1.0, Ranging: 0.2},
-			FactorRSI:          {Enabled: true, Trending: 0.4, Ranging: -1.0},
-			FactorBollinger:    {Enabled: true, Trending: 0.3, Ranging: -1.0},
-			FactorReturns:      {Enabled: true, Trending: 0.8, Ranging: -0.3},
-			FactorVolume:       {Enabled: true, Trending: 0.6, Ranging: 0.4},
-			FactorCandle:       {Enabled: true, Trending: 0.3, Ranging: 0.3},
-			FactorStructure:    {Enabled: true, Trending: 1.0, Ranging: 0.2},
-			FactorStochastic:   {Enabled: true, Trending: 0.2, Ranging: -0.8},
-			FactorVWAP:         {Enabled: true, Trending: 0.4, Ranging: -0.6},
-			FactorDivergence:   {Enabled: true, Trending: 0.6, Ranging: 0.8},
-			FactorFunding:      {Enabled: true, Trending: 0.4, Ranging: 0.5},
-			FactorOpenInterest: {Enabled: true, Trending: 0.6, Ranging: 0.3},
-			FactorLongShort:    {Enabled: true, Trending: 0.3, Ranging: 0.4},
+			FactorTrend:        {Enabled: true, Trending: -0.5, Ranging: -0.5},
+			FactorMomentum:     {Enabled: true, Trending: -0.5, Ranging: -0.5},
+			FactorRSI:          {Enabled: true, Trending: -1, Ranging: -1},
+			FactorBollinger:    {Enabled: true, Trending: -1, Ranging: -1},
+			FactorReturns:      {Enabled: true, Trending: -1, Ranging: -1},
+			FactorVolume:       {Enabled: true, Trending: -0.5, Ranging: -0.5},
+			FactorCandle:       {Enabled: true, Trending: -0.5, Ranging: -0.5},
+			FactorStructure:    {Enabled: false},
+			FactorStochastic:   {Enabled: true, Trending: -1, Ranging: -1},
+			FactorVWAP:         {Enabled: true, Trending: -1, Ranging: -1},
+			FactorDivergence:   {Enabled: true, Trending: 0.5, Ranging: 0.5},
+			FactorFunding:      {Enabled: false},
+			FactorOpenInterest: {Enabled: false},
+			FactorLongShort:    {Enabled: false},
 		},
 		ADXThreshold:       25,
-		Slope:              3,
-		DirectionThreshold: 0.05,
+		Slope:              0.5,
+		DirectionThreshold: 0.01,
 		Horizons:           map[string]int{"15m": 4, "1h": 4, "4h": 4, "1d": 4},
 	}
 }

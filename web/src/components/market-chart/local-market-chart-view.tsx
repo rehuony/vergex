@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Minus, Plus, RotateCcw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/utils/cn'
@@ -10,9 +10,9 @@ import type {
   ChartMarker,
   LocalMarketChart,
 } from './local-market-chart'
+import type { ChartForecast } from '@/api/forecast'
 
 const NO_LINES: ChartLines = {}
-const NO_CANDLES: ChartCandle[] = []
 
 export interface ChartText extends LegendText {
   zoomIn: string
@@ -28,7 +28,7 @@ export function LocalMarketChartView({
   candles,
   levels,
   markers,
-  projection = NO_CANDLES,
+  forecast = null,
   lines = NO_LINES,
   live = null,
   fitFor,
@@ -40,7 +40,8 @@ export function LocalMarketChartView({
   candles: ChartCandle[]
   levels: ChartLevel[]
   markers: ChartMarker[]
-  projection?: ChartCandle[]
+  // The forecast to draw as a band past the candles.
+  forecast?: ChartForecast | null
   lines?: ChartLines
   // The forming candle, between refreshes of candles.
   live?: ChartCandle | null
@@ -52,6 +53,7 @@ export function LocalMarketChartView({
   className?: string
 }) {
   const host = useRef<HTMLDivElement>(null)
+  const legend = useRef<HTMLParagraphElement>(null)
   const chart = useRef<LocalMarketChart | null>(null)
   const [ready, setReady] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -83,8 +85,8 @@ export function LocalMarketChartView({
     if (ready) chart.current?.setData(candles, levels, markers, fitFor)
   }, [ready, candles, levels, markers, fitFor])
   useEffect(() => {
-    if (ready) chart.current?.setProjection(projection)
-  }, [ready, projection])
+    if (ready) chart.current?.setForecast(forecast)
+  }, [ready, forecast])
   useEffect(() => {
     if (ready) chart.current?.setLines(lines)
   }, [ready, lines])
@@ -97,13 +99,30 @@ export function LocalMarketChartView({
     [candles]
   )
   const newest = live ?? candles[candles.length - 1]
-  // A simulated candle has no price to read, so the newest real one stays.
+  // The band has no candle to read, so the newest real one stays.
   const shownCandle =
     hoveredTime === null
       ? newest
       : hoveredTime === live?.time
         ? live
         : (byTime.get(hoveredTime) ?? newest)
+  const hasLegend = ready && Boolean(shownCandle)
+
+  // The legend wraps on a narrow chart, so the chart keeps as much of its top clear
+  // as the legend takes, whatever its width.
+  useLayoutEffect(() => {
+    const element = legend.current
+    if (!hasLegend || !element) {
+      chart.current?.reserveTop(0)
+      return
+    }
+    const reserve = () => chart.current?.reserveTop(element.offsetHeight)
+    reserve()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(reserve)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [hasLegend])
 
   if (failed) {
     return (
@@ -118,7 +137,9 @@ export function LocalMarketChartView({
   return (
     <div className={cn('group relative', className)}>
       <div ref={host} role="img" aria-label={label} className="h-full" />
-      {ready && shownCandle && <ChartLegend candle={shownCandle} text={text} />}
+      {hasLegend && shownCandle && (
+        <ChartLegend ref={legend} candle={shownCandle} text={text} />
+      )}
       {ready && (
         <div className="absolute bottom-8 left-1/2 z-10 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-vergex-line bg-vergex-surface p-0.5 opacity-0 shadow-(--shadow-float) transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
           {(

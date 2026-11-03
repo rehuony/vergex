@@ -40,7 +40,7 @@ func TestOverviewPositionsUseOneShapeWhateverTheAdapterReturns(t *testing.T) {
 func TestOverviewPositionOwner(t *testing.T) {
 	traders := []overviewTrader{
 		{TraderID: "stopped", AccountID: "a"},
-		{TraderID: "active", AccountID: "a", IsRunning: true},
+		{TraderID: "active", AccountID: "a", Running: true},
 		{TraderID: "idle", AccountID: "b"},
 	}
 	runs := []overviewRun{{AccountID: "b", Symbol: "ETH-USDT-SWAP"}}
@@ -88,14 +88,14 @@ func TestOverviewStaysWithinTheOwnerAndNeedsNoExchange(t *testing.T) {
 	ledger.Open(mine.ID, "BTCUSDT", account.SideLong, 1, 100, time.Now().Add(-time.Second))
 	ledger.Close(mine.ID, "BTCUSDT", account.SideLong, 1, 110, 12.5, time.Now())
 	// Realized today is the account's, so a Futures trade on it counts too.
-	eth, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "ETHUSDT", "ETHUSDT")
+	eth, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "ETHUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
 	futures := account.Owner{Source: account.SourceFutures, SourceID: "run"}
 	for _, trade := range []account.Trade{
-		{ExchangeTradeID: "f1", ExchangeOrderID: "f1", Side: account.SideBuy},
-		{ExchangeTradeID: "f2", ExchangeOrderID: "f2", Side: account.SideSell, RealizedPnL: decimal.NewNullDecimal(decimal.RequireFromString("2.5"))},
+		{VenueTradeID: "f1", VenueOrderID: "f1", Side: account.SideBuy},
+		{VenueTradeID: "f2", VenueOrderID: "f2", Side: account.SideSell, RealizedPnL: decimal.NewNullDecimal(decimal.RequireFromString("2.5"))},
 	} {
 		trade.AccountID, trade.InstrumentID, trade.PositionSide = ledger.Account, eth, account.SideLong
 		trade.Price, trade.Quantity, trade.QuoteQuantity, trade.ExecutedAt = decimal.NewFromInt(100), decimal.NewFromInt(1), decimal.NewFromInt(100), time.Now()
@@ -169,7 +169,7 @@ func TestOverviewNamesTradesTheLedgerIsMissing(t *testing.T) {
 
 	record := func(id string, at time.Time) {
 		t.Helper()
-		fill := &account.SkippedFill{AccountID: ledger.Account, NativeSymbol: "OLD-USDT-SWAP", ExchangeTradeID: id, Detail: "sell 7 contracts at 3: gone", ExecutedAt: at}
+		fill := &account.SkippedFill{AccountID: ledger.Account, NativeSymbol: "OLD-USDT-SWAP", VenueTradeID: id, Detail: "sell 7 contracts at 3: gone", ExecutedAt: at}
 		if _, err := st.Ledger.RecordSkippedFill(fill); err != nil {
 			t.Fatal(err)
 		}

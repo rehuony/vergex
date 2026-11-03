@@ -62,7 +62,7 @@ func (c *Controller) AmendExit(ctx context.Context, user, id, role string, price
 	if err != nil {
 		return View{}, err
 	}
-	if v.State != "position_open" {
+	if v.Status != "position_open" {
 		return v, plan.Rejection{Key: "exitNotOpen", Text: "only an open, fully protected position can have its stop or target moved"}
 	}
 	broker, key, err := c.Factory(ctx, user, v.AccountID)
@@ -119,7 +119,7 @@ func (c *Controller) AmendExit(ctx context.Context, user, id, role string, price
 		}
 		if err != nil {
 			v.Orders[last].Status = "UNKNOWN"
-			v.State = "needs_attention"
+			v.Status = "needs_attention"
 			v.Error = "The new " + orderRoleName(role) + " order is unconfirmed, and the old one stays. No order will be sent again until it is reconciled. " + err.Error()
 			_ = c.save(&v)
 			return v, errors.New(v.Error)
@@ -129,7 +129,7 @@ func (c *Controller) AmendExit(ctx context.Context, user, id, role string, price
 			return v, errors.New("The new order was placed but could not be recorded; reconcile before anything else")
 		}
 		if err := broker.Cancel(ctx, old); err != nil {
-			v.State = "needs_attention"
+			v.Status = "needs_attention"
 			v.Error = fmt.Sprintf("The new %s order is working, but cancelling the old one is unconfirmed. Vergex keeps trying.", orderRoleName(role))
 			_ = c.save(&v)
 			return v, errors.New(v.Error)

@@ -9,7 +9,7 @@ vergex is a personal, self-hosted agent trading system, forked from an upstream 
 - **Markets:** crypto only, on Binance USDT-M futures and OKX USDT perpetuals.
 - **Models:** direct calls with your own API key to DeepSeek, OpenAI, Claude, Qwen, Gemini, Grok, Kimi or MiniMax, with an optional custom base URL. There is no paid gateway, paid data source, referral tagging or telemetry.
 - **Users:** single user. The first account registered is the only one.
-- **Features:** Auto trading (traders, shown as 交易员, each with its own settings; the tab reads Auto trading and 自动交易), Futures (agent-assisted planning of individual trades), grid trading, a Telegram assistant and Forecast (experimental signals, not connected to trading).
+- **Features:** Auto trading (traders, shown as 交易员, each with its own settings; the tab reads Auto trading and 自动交易), Futures (agent-assisted planning of individual trades), grid trading, an assistant in Telegram and in the web app, and Forecast (experimental signals, not connected to trading).
 - **Deployment:** local builds only, with Docker Compose and the Makefile. Remote access adds nginx on the host: see [docs/deployment.md](docs/deployment.md).
 
 ## Commands
@@ -49,6 +49,8 @@ This is a clean rewrite with no old deployments or data to support, so the code 
 - Position history and statistics query the current trader ID only and do not chain other traders' records.
 - A trader's config is decoded by its kind in `internal/trader/kind`, and a value outside the kind's ranges or choices is refused rather than guessed at.
 - PostgreSQL is the only database. Its schema comes only from the forward-only SQL migrations in `internal/database/migrations`, applied at startup; GORM only reads and writes. To change a table, add a new file; a file changed after it was applied stops startup. See [docs/database.md](docs/database.md).
+- The baseline was redone in 2026-11, keeping no old data. Until the schema settles a change may rebuild it the same way; once it settles, changes go in new migration files that carry existing data over.
+- A chat with a model is deleted only through `deleteConversations` in `internal/api/conversations.go`, and takes all it held. A table that refers to `agent.conversations` declares `ON DELETE CASCADE` for what belongs to the conversation and `ON DELETE SET NULL` for a record that outlives it, and a rule that depends on more, such as a plan that ran staying, is a step in `deleteConversations`. A new feature people chat in joins `agent.ChatFeatures`, and is then listed, deleted and offered to the assistant with the rest.
 - Use `vergex` in all new code, copy, logs and storage keys. Upstream is named only in the README's License section, as AGPL requires of modified versions, and in the fork record ([docs/fork.md](docs/fork.md)).
 - Environment variables use the `VERGEX_*` prefix: `VERGEX_BIND_ADDRESS` (default `127.0.0.1`), `VERGEX_FRONTEND_PORT` (default 8000), and `VERGEX_BACKEND_PORT` (default 3000, used only when the backend port mapping is enabled).
 
@@ -67,7 +69,7 @@ This is a clean rewrite with no old deployments or data to support, so the code 
 ## Stack and runtime
 
 - **Backend:** Go (module `vergex`), Gin, GORM with PostgreSQL, Starlark for Futures calculators. Logging is logrus, always through `internal/logger`.
-- **Frontend:** React 18, TypeScript, Vite, Tailwind v4, TanStack Query, lightweight-charts, three.js (the Dashboard's stage, in a chunk only that page loads), qrcode.react (Telegram's binding step), Vitest, ESLint with Prettier. The package manager is pnpm (`corepack enable`; the version is pinned in `web/package.json`).
+- **Frontend:** React 18, TypeScript, Vite, Tailwind v4, TanStack Query, lightweight-charts, three.js (the Dashboard's stage, in a chunk only that page loads), qrcode.react (Telegram's binding step), Fontsource (Inter and IBM Plex Mono, served with the app), Vitest, ESLint with Prettier. The package manager is pnpm (`corepack enable`; the version is pinned in `web/package.json`).
 
 | Where | Backend | Frontend |
 | :---- | :------ | :------- |
@@ -106,14 +108,15 @@ Packages under `internal/`, in layers. Each depends only on those above it, and 
 | | `account/` | What all venues share: the `Trading` interface automatic trading uses, the `Executor` contract Futures uses, order types and exact decimals. Also accounts and their keys, leases, and the ledger (`account.*`: orders, fills, positions). The ledger knows no feature: it says where an order came from with `source` and `source_id` |
 | | `account/syncer` | Reads each active account's new trades into the ledger. What it asks of the features comes through `syncer.Features`, joined in `cmd/vergex/main.go` |
 | Features | `trader/` | Lifecycle (`manager.go`: load from the database, assemble an AutoTrader, start and stop), the AutoTrader main loop (`auto_trader_*.go`), risk control, position sync, and the `trader.*` tables |
-| | `trader/kind` | The kinds of trader, one file each: the config, `Validate`, `Limits`, `RiskFields`, presets; `Decode` and `Merge` by kind, and `EstimateTokens` |
+| | `trader/kind` | The kinds of trader, one file each: the config, `Validate`, `RiskFields`, presets; `Decode` and `Merge` by kind, and `EstimateTokens` |
 | | `trader/agent` | Coin selection, market data, system and user prompts, parsing and validating agent decisions; the grid's prompts |
 | | `trader/grid` | The grid's pure calculations: regime, box, levels |
 | | `futures/` | Plans and account closes, and `futures.Market`. The feature, shown as Futures and 合约交易, not go-binance's `futures` package, which only `venue/binance` imports. `agent` (chat, tools and the model adapter), `plan` (plan compiler, risk and reward), `run` (execution after approval, reconciliation), `forge` (Starlark entry calculators), `plugins` (public data such as funding rate and open interest) |
 | | `forecast/` | Forecast: `Evaluate` (factors, regime, score), strategies, records, verification, calibration, alerts and backtests, in the `forecast` schema |
 | Surfaces | `dashboard/` | The Dashboard: its event feed reads the database and turns new rows into agent, order, money and market events, reads the market streams' counters for their flow, and it assembles the overview |
-| | `telegram/` | Telegram bot, alerts and the `telegram.*` tables; `telegram/agent` is the skill-first assistant |
-| | `api/` | All HTTP endpoints, JWT auth, rate limiting, one file per module: `user_*.go`, `account_*.go`, `agent_*.go`, `trader_*.go`, `futures_*.go`, `dashboard_*.go` and so on |
+| | `assistant/` | The skill-first assistant: skills, target resolution, the confirmation gate and its memory. A `Surface` says what differs where it is reached from, and `telegram/` builds on it |
+| | `telegram/` | Telegram bot, alerts and the `telegram.*` tables |
+| | `api/` | All HTTP endpoints, JWT auth, rate limiting, one file per module: `user_*.go`, `account_*.go`, `agent_*.go`, `trader_*.go`, `futures_*.go`, `dashboard_*.go`, `assistant.go` and so on |
 
 Features do not import each other. Where one needs something from another, `cmd/vergex/main.go` passes it in.
 
@@ -144,6 +147,7 @@ Details are in [docs/futures.md](docs/futures.md).
 | `amend-exit`, `cancel-order` | Move an open run's stop or target, placing the new order before cancelling the old; cancel an order no unfinished run holds |
 | `candles`, `feed` | Chart history and SSE updates |
 | `results` | What finished plans realized, read from the exchange |
+| `plans`, `plans/:id` (`DELETE`) | Delete plans with their runs and run orders, once each run has settled and none holds its account or a position. The ledger keeps what they sent; a plan at work answers 409 (`PlanStore.Delete` in `internal/futures/plans.go`, outside the live order path) |
 
 `web/src/components/futures/futures-chart/futures-chart.ts` draws plan levels and the agent's drawings (`horizontal_line`, `trend_line`, `rectangle`).
 
@@ -157,34 +161,48 @@ Nothing downstream may hold a stream up: `market/ws` and `Hub` drop rather than 
 
 Details are in [docs/forecast.md](docs/forecast.md). `forecast.Evaluate` is pure and takes the data up to a candle, so live forecasts and backtests agree. Keep it that way: anything it reads must come through its arguments, and a change to what it computes raises `EngineVersion`, which on the next start retires the strategy in use and puts a copy to use. Saved strategies never change: a different idea is saved as a new one. Nothing in `trader/` or `futures/` reads forecasts: the Futures chart can overlay one through `/api/forecast/overlay/:symbol`, assembled in `internal/api`, and its web code uses `api/forecast` and the shared chart surface, not `components/forecast`.
 
-## Telegram assistant
+## Assistant
 
-`internal/telegram/bot.go` receives updates, and passes each through one gate before anything else: only the user bound with a one-time code from Settings, in their private chat, gets through, checked against what is saved (`binding.go`, `isOwner` in `bot.go`). Anyone else gets a fixed notice in English, and `visitors.go` keeps who they were for Settings to show. With no one bound, the code binds whether it comes after `/start`, as the link sends it, or on its own. `turn.go` runs that chat's messages one at a time, each with a placeholder saying what is under way, and `format.go` turns replies into Telegram's HTML. `internal/telegram/agent` holds the assistant.
+The assistant is a trading operations tool, not a general chatbot. The design is 80% fixed skills and 20% dynamic planning: Go code fixes the flow of known, frequent tasks, and the model only understands intent, picks a skill, fills in missing details and writes the reply. `internal/assistant` holds it, and a `Surface` says what differs where it is reached from: how replies are read and which skills are on offer. User-facing behaviour is in [docs/telegram.md](docs/telegram.md) and [docs/assistant.md](docs/assistant.md).
 
-The assistant is a trading operations tool, not a general chatbot. The design is 80% fixed skills and 20% dynamic planning: Go code fixes the flow of known, frequent tasks, and the model only understands intent, picks a skill, fills in missing details and writes the reply. User-facing behaviour is in [docs/telegram.md](docs/telegram.md).
+### Telegram
+
+`internal/telegram/bot.go` receives updates, and passes each through one gate before anything else: only the user bound with a one-time code from Settings, in their private chat, gets through, checked against what is saved (`binding.go`, `isOwner` in `bot.go`). Anyone else gets a fixed notice in English, and `visitors.go` keeps who they were for Settings to show. With no one bound, the code binds whether it comes after `/start`, as the link sends it, or on its own. `turn.go` runs that chat's messages one at a time, each with a placeholder saying what is under way. Every message the bot sends is built by `message.go`, in the one shape [DESIGN.md](DESIGN.md#telegram) sets out, with its tables from `table.go`; `format.go` turns what the model writes into the same Telegram HTML, and both are cut into messages the same way. Go code there never pads, escapes or picks an emoji by hand. What a turn came to reaches it in parts (`Reply.Results`, `Dropped`, `Ended`, `Said`), so it lays them out while the web app keeps its words.
 
 `internal/telegram/alerts.go` pushes events to the bound chat and `notify.go` sends them. The watcher only reads, so it adds no exchange requests and never touches the trading loop.
 
+### Web app
+
+`internal/api/assistant.go` holds one `Manager` per user, with each conversation as a chat named by its ID. It runs one turn at a time, streams it as server-sent events, and picks the model each turn asks for. `close_position` is not on offer there: a position's row has its button, and the web app needs no second way to send an order. Plans are approved and run on their page, as everywhere.
+
+A page tells it what is on screen with `useAssistantPage` from `hooks/use-assistant-page.ts`: a name and a function that gives ids, names and what only the browser knows, asked when a message is sent. It holds no figures, which skills read. `assistant.WithPage` carries it through the turn, and the model is told it is data. The name also picks the suggestions under `assistant.suggest` in the copy, and a new page adds a name there.
+
+`useAssistantForm` from the same file offers a form for as long as it is on screen: its fields with their kinds and limits, and an `apply` that does only what typing the values would. `fill_form` checks a suggestion against what the form declares and shows it in the window, the user presses to fill it in, and saving stays with the page's own button and checks. Nothing that holds a key, a password or an order to send gets registered. `open_page` shows a button to a page, from the table in `internal/assistant/web.go`. Neither is offered in Telegram.
+
+`web/src/components/assistant/` is its window, mounted beside the routes in `routes/app-routes.tsx` for whoever is signed in, so moving between pages keeps the conversation: `AppChrome` would not, as the Dashboard renders its own. `use-assistant.ts` holds the conversation. Its window is an `aside`, not a `Dialog` or `Popover`, because the page goes on working under it; and never `role="dialog"`, which is how `Dialog` finds the topmost one. The conversation, its input and its steps are `ChatThread`, `ChatComposer`, `TurnSteps` and `ModelPicker` from `components/common/`, shared with the Futures assistant.
+
 ### Commands
 
-`/status`, `/positions` and `/traders` answer from the local API without the model (`agent/commands.go`). `/stop`, `/cancel`, `/lang`, `/help` and `/start` are the rest of the menu, published for the bound chat alone, with `/start` for every private chat (`bot.go`). It goes out before the bot reports running, and a refusal is retried with the bot reporting degraded until then. `/start` answers everyone with where they stand: not bound, access denied or welcome. A command is only for what fixed words can answer: everything else goes to a skill.
+`/status`, `/positions` and `/traders` answer from the local API without the model (`internal/assistant/commands.go`). `/stop`, `/cancel`, `/lang`, `/help` and `/start` are the rest of the menu, published for the bound chat alone, with `/start` for every private chat (`bot.go`). It goes out before the bot reports running, and a refusal is retried with the bot reporting degraded until then. `/start` answers everyone with where they stand: not bound, access denied or welcome. A command is only for what fixed words can answer: everything else goes to a skill.
 
 ### Skills
 
-The model sees only these skills (`internal/telegram/agent/skills.go`):
+The model sees only these skills (`internal/assistant/skills.go`):
 
 | Skill | Actions | Notes |
 | :---- | :------ | :---- |
-| `trader_management` | create, update, delete, start, stop, query | Create takes a `kind` and `preset`, and auto-selects the model or account when only one is enabled. Update sends only `config_patch`; the server merges it |
+| `trader_management` | create, update, delete, start, stop, query | Create takes a `kind` and `preset`, and auto-selects the model or account when only one is enabled. It goes through the confirmation gate, and starting it after is a confirmation of its own. Update sends only `config_patch`; the server merges it |
 | `model_management` | query | Read-only; keys and endpoints change only in the web UI |
 | `account_management` | query, positions | Read-only, with account connection state; positions reads what an account holds, whoever opened it |
-| `account_query` | overview, balance, positions, position_history, trades, orders, open_orders, decisions, decision_detail, statistics, agent_costs | Read-only, per trader. Decisions read the summaries: a full record's prompts would fill a whole result |
-| `futures_query` | runs, drafts, results | Read-only, trimmed to what a chat needs; plans are approved and run in the web UI |
-| `forecast_query` | signals, detail | Read-only; Forecast is experimental and connected to no trading |
+| `account_query` | overview, system, balance, positions, position_history, trades, orders, open_orders, decisions, decision_detail, statistics, agent_costs | Read-only, per trader but for overview and system. Decisions read the summaries: a full record's prompts would fill a whole result |
+| `futures_query` | runs, drafts, results, compare | Read-only, trimmed to what a chat needs; compare only lays out the plan compiler's figures, and plans are approved and run in the web UI |
+| `forecast_query` | signals, detail, strategies, performance, backtests, backtest | Read-only; Forecast is experimental and connected to no trading, and every result says how to read it |
 | `close_position` | | Checks first that the position exists |
+| `plan_management` | delete, clear | Futures plans done with: drafts that never ran and finished plans whose runs have all settled, through `DELETE /api/futures/plans`. Delete holds one action per plan named, clear one for every plan of a kind by the IDs listed then. A plan still at work is never deleted, and the ledger keeps what a finished one sent (`skills_plans.go`) |
+| `conversation_management` | query, delete, clear | The user's chats in every feature in `agent.ChatFeatures`, through `/api/conversations`. Delete holds one action per conversation named, clear one for all that match its filters, by the IDs listed then. Neither ever takes the conversation it is asked in (`skills_conversations.go`) |
 | `diagnose` | trader_start, model, account, order_execution | Collects facts along fixed paths and gives hints (`diagnose.go`) |
 
-Skills call the local REST API with the bot's JWT over fixed paths, so all server-side validation and risk limits apply. There is no generic `api_request` tool.
+Skills call the local REST API with a JWT signed for each call over fixed paths, so all server-side validation and risk limits apply. There is no generic `api_request` tool.
 
 ### Target resolution (`resolve.go`)
 
@@ -192,7 +210,7 @@ Targets are matched by id, then exact name (case-insensitive), then a unique nam
 
 ### Confirming high-risk actions (`confirm.go`)
 
-These actions are held rather than run: starting, stopping or deleting a trader; updating a running trader; `close_position`; and a `config_patch` touching the `RiskFields` of the trader's kind. The tool result returns `needs_confirmation`, and everything one turn holds waits as one batch.
+These actions are held rather than run: creating, starting, stopping or deleting a trader; updating a running trader; `close_position`; a `config_patch` touching the `RiskFields` of the trader's kind; and deleting conversations or plans. The tool result returns `needs_confirmation`, and everything one turn holds waits as one batch.
 
 The bot, not the model, shows the batch: `Reply.Confirm` holds Go's summary of each action, with its account and whether that is real money, and `bot.go` sends it under confirm and cancel buttons. Go code decides whether to run it. The user presses a button, whose data names the batch, or replies with an explicit confirmation (`确认`, `confirm`, `yes` and so on); anything else cancels. Confirming runs every action and reports each. A held batch expires after 5 minutes.
 
@@ -224,6 +242,7 @@ Reads go through TanStack Query's `useQuery`, on the one `queryClient` in `utils
 
 ### Pages and scrolling
 
+- **Loading pages**: only the Dashboard, the first screen, and the sign-in pages come with the first download. Every other page is declared with `page()` in `routes/app-routes.tsx`, which loads it on its own when first opened and fetches it a few seconds after sign-in, and a new page goes through it too. Settings load the same way from `AppChrome`, so what opens them imports `settings-sections.ts`, never `settings-dialog.tsx`. A signed-in user does not wait for the system config, which only chooses between setup and sign-in.
 - **Pages** use `components/common/page.tsx`. A list page shows no title or description, which the top bar makes redundant: section tabs and actions share one row, and the title is only read by assistive technology. A detail page passes `detail` for one row with the back link, name, state, context and actions. `leading` puts a search box at the start of the actions row. Content fills the width, with side gutters from `--page-gutter` to match the top bar.
 - **Page scrollbars** are drawn by OverlayScrollbars (`utils/page-scroll.ts`) on platforms where native scrollbars take up width: they float and appear while scrolling. Platforms with floating native scrollbars are left alone. Because `html` is what scrolls, lock the page with `lockPageScroll()`, never by changing `overflow` on `body`.
 - **Other scroll areas** use `components/ui/scroll-area.tsx` (`ScrollArea`), with the same floating scrollbar and no width taken from content. Put padding in `ScrollArea`'s own `className`; the library moves it to the scroll viewport.

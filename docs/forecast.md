@@ -10,7 +10,7 @@ Open **Forecast** in the top bar. Data comes from [market data](market-data.md),
 | :--- | :---- |
 | Signals | Every tracked coin in a list that stays beside the page, then one coin's chart filling the screen with its call at the head, and what the call rests on, its factors and its record below. `/forecast` opens the last coin looked at, and `/forecast?symbol=BTCUSDT&interval=1h` a given one |
 | Strategies | Saved strategies in a list that stays beside the page, then how one has done live and its rules |
-| Backtests | Past runs in a list that stays beside the page, then one run's report, or the form to start another |
+| Backtests | Past runs in a list that stays beside the page, then one run's report, or the form to start another. Before the first run, the form is all there is |
 | Settings | What is collected, saved with its button, and the alert threshold and intervals, saved as they change, beside how collection and the live stream are doing |
 
 The strategy in use is chosen from the picker on Signals, or with **Use** on Strategies. Choosing one puts it to use: signals and alerts follow it, and nothing trades on them.
@@ -35,15 +35,15 @@ The **Chart** menu turns on or off, remembered on this browser:
 | Option | Draws |
 | :----- | :---- |
 | Support and resistance | The levels from the reading |
-| Past calls | A mark at each judged call: green right, red wrong |
-| Simulated candles | The forecast as candles over its horizon |
+| Past calls | An arrow at each judged call the statistics count, pointing the call's way: green right, red wrong |
+| Forecast band | The forecast over its horizon, from the last close to the candle that will judge it |
 | EMA 20, 50; Bollinger 20, 2; VWAP 24; RSI 14 | The series behind the factors, worked out the same way as a forecast at each candle, and fetched only when one is on. RSI has a pane of its own |
 
-Simulated candles restate the reading and add no information. From the score and expected move they set how far the path goes, each spanning one typical bar's range, with no randomness and nothing stored. They run flat on a neutral call, and where a calibrated score sits on the other side of 50 from the call. Only the direction of these calls has been tested, not the size or the path, so they are drawn see-through.
+The forecast band restates the reading and adds no information. It runs from the last close to the target candle, widening as the square root of time to the expected move on either side, with its middle drifting in the call's direction as far as the score says, and it takes the call's colour: green for Up, red for Down, grey for Neutral, when it drifts nowhere, as it also does where a calibrated score sits on the other side of 50 from the call. Nothing is stored for it. Only the direction of these calls has been tested, not the size or the path, so it is drawn see-through.
 
 The reading shows this strategy's hit rate on the coin next to what the same mix of Up and Down calls would hit by chance, given how often price rose. A hit rate means nothing until it beats that: always calling Down in a falling market hits often, with no skill. Both count only forecasts whose windows do not overlap, the same way a backtest does. The record's header says how many of them were right, and adds the percentages from 30 on.
 
-The Futures chart can overlay the same simulated candles and reading: see [Futures](futures.md).
+The Futures chart can overlay the same band and reading: see [Futures](futures.md).
 
 The coin list orders strong calls first and keeps rows in place while values refresh, so nothing moves under the pointer: it reorders only on a new interval or sort. It shows each coin's price, 24-hour change and score, with the change blank while the live stream is down, and can be narrowed to the watchlist, to Up calls or to Down calls. Typing a coin that is not tracked and pressing Enter opens it and starts fetching it. In the search box, the up and down keys move through the list, Enter opens the row they are on, and Escape clears the search.
 
@@ -58,13 +58,15 @@ The chart's head gives the price, the 24-hour change, the call and its score. Th
 1. **Factors.** Each reads from -1 (points down) to 1 (points up): trend, momentum, RSI, Bollinger position, recent returns, volume, candle shape, swing structure, stochastic, VWAP distance, divergence, funding rate, open interest and long/short ratio.
 2. **Market.** ADX splits trending from ranging markets, and each has its own weights. A negative weight reads a factor the other way round: an overbought RSI supports a trend but argues against a range.
 3. **Score.** The weighted average goes through a logistic curve. It is calculated twice: with candles only and with derivatives added. A factor with no recent reading is left out.
-4. **Call.** Up or Down when the score is far enough from 50, otherwise Neutral. Strength is how far the score is from 50, less when factors are missing, and is no probability: it says nothing the score does not. Expected move comes from ATR over the horizon, and support and resistance from recent swing points.
+4. **Call.** Up or Down when the score is far enough from 50, otherwise Neutral. Strength is how far the score is from 50, less when factors are missing, and is no probability: it says nothing the score does not. Expected move is 0.55 of ATR14 scaled to the horizon, a band the actual move stays within about two times in three, and support and resistance come from recent swing points.
+
+The default rules read every candle factor as reversal, with the same weights in trending and ranging markets, and leave swing structure and the derivatives factors off. On 20 large coins over 2024 to 2026, price that had just risen, sat high in its range or above its averages tended to come back a little over the next few bars at 15m, 1h and 4h, in both kinds of market, and the same factors read as continuation lost to chance; the derivatives factors added nothing measurable. Their slope of 0.5 keeps the score close to a probability, so most calls score between 44 and 56, and a direction is called from one point off 50. See [First results](#first-results).
 
 A coin needs 200 candles, and until then shows `Not enough history`. One whose candles have an unexplained hole is skipped, and says so, until the hole is filled.
 
 ## Score and probability
 
-A raw score is not a probability, so it shows as `Score 68`. A strategy and interval can earn a curve from isotonic regression, which maps scores to what actually happened and changes the display to `68%`. Earning one takes two things:
+A raw score is not a probability, so it shows as `Score 68`. The default rules keep it close to one, since their slope was fitted to what happened; a strategy with a steeper slope spreads its scores further than its hit rate warrants, which a backtest's reliability table shows. A strategy and interval can earn a curve from isotonic regression, which maps scores to what actually happened and changes the display to `68%`. Earning one takes two things:
 
 - **200 separate moments.** A moment is one horizon's stretch of time, so at 4 bars that is about 8 days at 15m, 33 days at 1h, 133 days at 4h and 2.2 years at 1d. Coins move together, so more coins in one moment do not count for more.
 - **A hold-out.** A curve fitted on the older 70% of moments must predict the newest 30% better than simply knowing how often price rose. Scores with no relation to what happened do not pass, and stay scores.
@@ -103,14 +105,14 @@ vergex forecast-backtest --symbols BTCUSDT,ETHUSDT --intervals 1h,4h,1d --months
 
 | Metric | Meaning |
 | :----- | :------ |
-| Samples | Non-overlapping tests: each series every `horizon` bars, so one move is not counted several times |
+| Samples | Non-overlapping tests: each series every `horizon` bars, at candles a whole number of horizons from the epoch, so one move is not counted several times and every coin and every run tests the same candles |
 | Moments | The separate stretches of time, one horizon long, that the calls come from. Coins move together, so this is how much evidence there really is, and figures from fewer than 30 are grey. A report from before they were counted shows `—` |
 | Hit rate | Hits over directional calls that moved |
 | By chance | What the same mix of Up and Down calls would hit with no skill. This is what a hit rate has to beat |
 | Rose anyway | How often price simply rose, over the samples where it moved |
-| Brier score, lift | Error of the scores, and the improvement over always predicting the base rate. Zero or below means no skill beyond it |
+| Brier score, lift | Error of the scores, and the improvement over always predicting the base rate. A check of how honest the scores are, not of skill: a forecaster right 52% of the time can lift at most 0.2%, so about zero means the scores say what they should, and well below zero means they claim more than they deliver |
 | Per signal after fees | Average return of acting on each call, less 0.10% round-trip fees |
-| Within expected move | How often the actual move stayed inside the expected move |
+| Within expected move | How often the actual move stayed inside the expected move. About two in three is what the band is sized for; a run from before `EngineVersion` 3 shows about nine in ten, since the band was then the whole ATR |
 | Derivatives | The share of samples that had derivatives readings. Binance's API keeps only about 30 days, so without deep history a long run tests mostly candle factors |
 | Brier on candles alone | The same samples without derivatives, to show what they add |
 | Factors | For each factor in each kind of market, how often its sign matched the move and its correlation with the move. A factor at about 50% and 0 carries nothing; one well below 50% reads better the other way round |
@@ -118,16 +120,20 @@ vergex forecast-backtest --symbols BTCUSDT,ETHUSDT --intervals 1h,4h,1d --months
 
 ### First results
 
-The default weights are a first guess, not a tested result. On BTC, ETH and SOL over 24 months at 1h, 4h and 1d, with candles only, measured on older forecast code (before `EngineVersion` 2) and not run again since, as that takes downloading the long history first:
+The default rules were set from a measurement, not a guess: 20 USDT perpetuals (the default watchlist with LTC, BCH, DOT, UNI, AAVE, NEAR, APT, ARB, OP and TRX) over the 24 months to 2026-11-03 at 15m, 1h, 4h and 1d, candles only, under `EngineVersion` 3, through the same code as `vergex forecast-backtest`:
 
-| | Samples | Hit rate | Rose anyway | Lift | Per signal after fees |
-| :- | --: | --: | --: | --: | --: |
-| Overall | 16,818 | 49.9% | 50.5% | -17.4% | -0.109% |
-| Ranging | 8,545 | 51.6% | 50.6% | -9.5% | -0.139% |
-| Trending | 8,273 | 48.4% | 50.5% | -25.7% | -0.082% |
+| | Samples | Moments | Hit rate | By chance | Rose anyway | Lift | Per signal after fees | Within expected move |
+| :- | --: | --: | --: | --: | --: | --: | --: | --: |
+| Overall | 460,553 | 23,042 | 51.8% | 50.0% | 49.7% | -0.1% | -0.101% | 67% |
+| 15m | 350,093 | 17,519 | 51.9% | 50.0% | 49.7% | -0.1% | -0.101% | 67% |
+| 1h | 86,860 | 4,343 | 51.6% | 50.0% | 49.9% | -0.2% | -0.102% | 68% |
+| 4h | 20,960 | 1,048 | 52.7% | 49.9% | 49.5% | +0.2% | -0.053% | 66% |
+| 1d | 2,640 | 132 | 49.6% | 49.3% | 46.2% | -1.3% | -0.460% | 69% |
+| Ranging | 253,372 | 21,811 | 51.6% | 50.0% | 49.5% | -0.2% | -0.098% | 66% |
+| Trending | 207,181 | 22,297 | 52.2% | 50.0% | 50.0% | -0.1% | -0.104% | 68% |
 
-The reliability table was flat: price rose about half the time at every score. So the default strategy has shown no predictive value. Its scores are also overconfident, which is why they are not shown as probabilities. Treat the signals as an experiment until a version does better on data it was not tuned on.
+The rules were chosen on the oldest 70% of this stretch and checked on the newest 30%, where they hit 1.7, 2.3 and 3.0 points over chance at 1h, 4h and 15m, on 17 of 18 coins at 1h and 10 of 10 at 15m, and in 7 of 9 quarters at 1h and 9 of 9 at 4h and 15m. The reliability table sits close to 50 because the scores do: scores of 46 rose 48% of the time and scores of 54 rose 51%, which is what the slope was set for. That is the whole of the edge there is in these factors, two to three points of hit rate, which at 15m and 1h does not pay the 0.10% round trip and at 4h nearly does. 1d has too few moments to say anything either way, so its calls are untested. The rules that came before read the same factors as continuation and hit 49.4% against 50.0% at 1h, and 47.9% where ADX said trending. Treat the signals as an experiment: the edge was found on two years of twenty large coins, and nothing says it holds on other coins or later.
 
 ## Alerts
 
-Watchlist coins alert over Telegram when a call's score crosses the threshold in **Forecast → Settings**: at 70, that means an Up call at 70 and above or a Down call at 30 and below. A neutral call does not alert, nor does a score a curve has put on the other side of the call. Each coin and interval alerts once, checked only when a candle closes, and can alert again after its score comes back inside. After downtime only the newest candle can alert, and only if it has just closed. Only the intervals picked beside the threshold can alert, by default 1h, 4h and 1d, since 15m calls would fill the chat. One round of candles is one message, in the language set with `/lang`, naming the strategy and about how long each call looks ahead. Turn it off with Forecast signals in **Settings → Telegram**.
+Watchlist coins alert over Telegram when a call's score crosses the threshold in **Forecast → Settings**: at 56, the default, that means an Up call at 56 and above or a Down call at 44 and below, which under the default rules is about the strongest fifth of calls, the ones that hit five to six points over chance out of sample. An install that saved its settings before keeps them. A neutral call does not alert, nor does a score a curve has put on the other side of the call. Each coin and interval alerts once, checked only when a candle closes, and can alert again after its score comes back inside. After downtime only the newest candle can alert, and only if it has just closed. Only the intervals picked beside the threshold can alert, by default 1h and 4h: 15m calls would fill the chat, and 1d calls have too short a record to stand on. One round of candles is one message, in the language set with `/lang`: a table under the strategy's name with each coin's interval, call, about how long it looks ahead and its score. It arrives silently, as Forecast trades nothing. Turn it off with Forecast signals in **Settings → Telegram**.

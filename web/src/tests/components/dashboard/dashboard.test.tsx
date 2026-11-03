@@ -8,7 +8,12 @@ import { FirstRun } from '@/components/dashboard/first-run'
 import { FlowEvents } from '@/components/dashboard/flow-events'
 import { BLOCKS, LINES, lineOf } from '@/components/dashboard/flow-layout'
 import { blockViews } from '@/components/dashboard/flow-members'
-import { eventWhat, lineSummary } from '@/components/dashboard/flow-text'
+import { OverviewFigures } from '@/components/dashboard/overview-figures'
+import {
+  eventRoute,
+  eventWhat,
+  lineSummary,
+} from '@/components/dashboard/flow-text'
 import { PositionsOverview } from '@/components/dashboard/positions-overview'
 import { t } from '@/i18n'
 
@@ -89,7 +94,7 @@ it('says when nothing needs attention, and links to the fix when something does'
             {
               trader_id: 'abcd1234',
               trader_name: 'Alpha',
-              is_running: true,
+              running: true,
               agent_model_id: 'm',
               account_id: 'e',
             },
@@ -318,7 +323,7 @@ const eventsProps = {
       {
         trader_id: 'abcd1234',
         trader_name: 'Alpha',
-        is_running: true,
+        running: true,
         agent_model_id: 'm',
         account_id: 'e',
       },
@@ -412,6 +417,31 @@ it('says so when the day has been quiet, and offers the next step only if nothin
   expect(screen.getByText('Create trader')).toBeInTheDocument()
 })
 
+it('lays out the figures and the event filter before the overview is read', () => {
+  const page = (read: Overview | undefined) => (
+    <MemoryRouter>
+      <OverviewFigures
+        overview={read}
+        attention={<AttentionList overview={read} language="en" />}
+        label={label}
+      />
+      <FlowEvents {...eventsProps} overview={read} events={[event({})]} />
+    </MemoryRouter>
+  )
+  const { rerender } = render(page(undefined))
+  expect(screen.getByText('Total equity')).toBeInTheDocument()
+  expect(screen.getByText('Needs attention')).toBeInTheDocument()
+  expect(screen.getByText('Agent')).toBeInTheDocument()
+  expect(screen.queryByText('1 / 1')).not.toBeInTheDocument()
+  // Events wait for the overview, which their links are made from.
+  expect(screen.queryAllByRole('listitem')).toHaveLength(0)
+
+  rerender(page(eventsProps.overview))
+  expect(screen.getByText('1 / 1')).toBeInTheDocument()
+  expect(screen.getByText('None')).toBeInTheDocument()
+  expect(screen.getAllByRole('listitem')).toHaveLength(1)
+})
+
 it('leads a new account through setup, picking out the next step', () => {
   render(
     <MemoryRouter>
@@ -429,4 +459,18 @@ it('leads a new account through setup, picking out the next step', () => {
     'href',
     '?settings=accounts'
   )
+})
+
+it('names the assistant among calls from outside the scene', () => {
+  const label = (key: string) => key
+  const call = (id: string) =>
+    eventRoute(
+      {
+        from: { block: 'other', id },
+        to: { block: 'models', name: 'api.example.com' },
+      } as never,
+      label
+    )
+  expect(call('assistant')).toContain('flow.block.assistant')
+  expect(call('test')).toContain('flow.block.other')
 })

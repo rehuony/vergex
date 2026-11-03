@@ -19,7 +19,7 @@ func protectedTrade(t *testing.T, kind string) (*Controller, *testBroker, View) 
 	b.account.Position = entry.Quantity
 	c.step(context.Background(), testUser, v.ID)
 	v, _ = c.Get(testUser, v.ID)
-	v.State, v.Error = "needs_attention", "Previous position snapshot was not yet available"
+	v.Status, v.Error = "needs_attention", "Previous position snapshot was not yet available"
 	if err := c.save(&v); err != nil {
 		t.Fatal(err)
 	}
@@ -47,11 +47,11 @@ func TestStatusCheckRecoversOnlyVerifiedProtectedPosition(t *testing.T) {
 			placed, cancelled := len(b.placed), len(b.cancelled)
 			out, err := c.CheckStatus(context.Background(), testUser, v.ID)
 			if scenario == "protected" {
-				if err != nil || out.State != "position_open" || out.Error != "" {
-					t.Fatalf("verified position stayed interrupted: %s %s %v", out.State, out.Error, err)
+				if err != nil || out.Status != "position_open" || out.Error != "" {
+					t.Fatalf("verified position stayed interrupted: %s %s %v", out.Status, out.Error, err)
 				}
-			} else if err == nil || out.State != "needs_attention" {
-				t.Fatalf("unverified trade marked healthy: %s %v", out.State, err)
+			} else if err == nil || out.Status != "needs_attention" {
+				t.Fatalf("unverified trade marked healthy: %s %v", out.Status, err)
 			}
 			var leases int64
 			c.DB.Model(&account.Lease{}).Count(&leases)
@@ -70,7 +70,7 @@ func TestStatusRecoveryDoesNotResumeRemainingTWAPSlices(t *testing.T) {
 	placed, cancelled := len(b.placed), len(b.cancelled)
 	for range 2 {
 		out, err := c.CheckStatus(context.Background(), testUser, v.ID)
-		if err != nil || out.State != "position_open" || out.Orders[1].Status != "CANCELED" || out.Orders[1].OrderID != "" {
+		if err != nil || out.Status != "position_open" || out.Orders[1].Status != "CANCELED" || out.Orders[1].OrderID != "" {
 			t.Fatalf("paused TWAP was not reconciled without replay: %+v %v", out, err)
 		}
 	}
@@ -86,8 +86,8 @@ func TestWorkerClearsTransientSnapshotFailureWithoutNewEntries(t *testing.T) {
 		t.Fatal("protected open position should remain monitored")
 	}
 	out, err := c.Get(testUser, v.ID)
-	if err != nil || out.State != "position_open" || out.Error != "" || len(b.placed) != placed || len(b.cancelled) != 0 {
-		t.Fatalf("transient error remained after fresh confirmation: %s %s %v", out.State, out.Error, err)
+	if err != nil || out.Status != "position_open" || out.Error != "" || len(b.placed) != placed || len(b.cancelled) != 0 {
+		t.Fatalf("transient error remained after fresh confirmation: %s %s %v", out.Status, out.Error, err)
 	}
 }
 
@@ -96,8 +96,8 @@ func TestWorkerNeverClearsUnconfirmedReceiptUsingPreviousSnapshot(t *testing.T) 
 	b.lookupErr = true
 	c.step(context.Background(), testUser, v.ID)
 	out, err := c.Get(testUser, v.ID)
-	if err != nil || out.State != "needs_attention" || out.Error == "" {
-		t.Fatalf("stale NEW receipt was treated as fresh protection: %s %s %v", out.State, out.Error, err)
+	if err != nil || out.Status != "needs_attention" || out.Error == "" {
+		t.Fatalf("stale NEW receipt was treated as fresh protection: %s %s %v", out.Status, out.Error, err)
 	}
 }
 
@@ -130,11 +130,11 @@ func TestWorkerReleasesExternallyClosedTradeOnlyAfterTerminalExitProof(t *testin
 			var leases int64
 			c.DB.Model(&account.Lease{}).Count(&leases)
 			if scenario == "closed" {
-				if !done || out.State != "completed" || leases != 0 || out.Error != "" {
-					t.Fatalf("verified external close stayed reserved: %s %d %s", out.State, leases, out.Error)
+				if !done || out.Status != "completed" || leases != 0 || out.Error != "" {
+					t.Fatalf("verified external close stayed reserved: %s %d %s", out.Status, leases, out.Error)
 				}
-			} else if done || out.State == "completed" || leases != 1 {
-				t.Fatalf("incomplete close released reservation: %s %d", out.State, leases)
+			} else if done || out.Status == "completed" || leases != 1 {
+				t.Fatalf("incomplete close released reservation: %s %d", out.Status, leases)
 			}
 			if len(b.placed) != placed || len(b.cancelled) != cancelled {
 				t.Fatal("external-close recovery changed exchange orders")

@@ -26,7 +26,7 @@ func traderStore(t *testing.T) (*trader.Stores, *testdb.Trader) {
 
 func TestACycleReadsBackWhatItDecidedAndWhatWasSaid(t *testing.T) {
 	st, row := traderStore(t)
-	conversation := agent.Conversation{ID: uuid.NewString(), UserID: row.UserID, Feature: agent.FeatureTrader, SourceID: row.ID}
+	conversation := agent.Conversation{ID: uuid.NewString(), UserID: row.UserID, Feature: agent.FeatureTrader}
 	if err := st.Conversations.Open(&conversation); err != nil {
 		t.Fatal(err)
 	}
@@ -38,13 +38,13 @@ func TestACycleReadsBackWhatItDecidedAndWhatWasSaid(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
 	order := account.LedgerOrder{
 		AccountID: row.AccountID, InstrumentID: btc, Source: account.SourceTrader, SourceID: row.ID, Role: account.RoleEntry,
-		ExchangeOrderID: "77", Side: account.SideBuy, PositionSide: account.SideLong, Type: "MARKET", Status: account.OrderNew, Quantity: decimal.NewFromInt(1),
+		VenueOrderID: "77", Side: account.SideBuy, PositionSide: account.SideLong, Type: "MARKET", Status: account.OrderNew, Quantity: decimal.NewFromInt(1),
 	}
 	if err := st.Ledger.RecordOrder(&order); err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ func TestACycleReadsBackWhatItDecidedAndWhatWasSaid(t *testing.T) {
 	finished := time.Now().UTC().Truncate(time.Millisecond)
 	account := &trader.AccountSnapshot{TotalBalance: 1000, PositionCount: 2, MarginUsedPct: 12.5}
 	record := &trader.DecisionRecord{
-		TraderID: row.ID, CycleNumber: 7, Timestamp: finished, ConversationID: conversation.ID,
+		TraderID: row.ID, Seq: 7, Timestamp: finished, ConversationID: conversation.ID,
 		CandidateCoins: []string{"BTCUSDT", "ETHUSDT"}, ExecutionLog: []string{"line one"},
 		Success: false, ErrorMessage: "1 of 3 failed", AgentDurationMs: 1500, AccountState: account,
 		Decisions: []trader.DecisionAction{
@@ -74,7 +74,7 @@ func TestACycleReadsBackWhatItDecidedAndWhatWasSaid(t *testing.T) {
 	if full.SystemPrompt != "the rules" || full.InputPrompt != "the market" || full.RawResponse != "the reply" || full.CoTTrace != "the thinking" {
 		t.Fatalf("what was said = %+v", full)
 	}
-	if full.CycleNumber != 7 || !full.Timestamp.Equal(finished) || full.ErrorMessage != "1 of 3 failed" || full.AgentDurationMs != 1500 || full.Success {
+	if full.Seq != 7 || !full.Timestamp.Equal(finished) || full.ErrorMessage != "1 of 3 failed" || full.AgentDurationMs != 1500 || full.Success {
 		t.Fatalf("cycle = %+v", full)
 	}
 	if len(full.CandidateCoins) != 2 || full.CandidateCoins[1] != "ETHUSDT" || len(full.ExecutionLog) != 1 {
@@ -109,13 +109,60 @@ func TestACycleReadsBackWhatItDecidedAndWhatWasSaid(t *testing.T) {
 
 func TestACycleThatStoppedEarlyHasNoAccountOrConversation(t *testing.T) {
 	st, row := traderStore(t)
-	record := &trader.DecisionRecord{TraderID: row.ID, CycleNumber: 1, ErrorMessage: "Trading blocked"}
+	record := &trader.DecisionRecord{TraderID: row.ID, Seq: 1, ErrorMessage: "Trading blocked"}
 	if err := st.Decisions.LogDecision(record); err != nil {
 		t.Fatal(err)
 	}
 	full, err := st.Decisions.GetRecord(row.ID, record.ID)
 	if err != nil || full == nil || full.AccountState != nil || full.ConversationID != "" || full.SystemPrompt != "" {
 		t.Fatalf("record = %+v, err %v", full, err)
+	}
+}
+
+func TestAConversationNoCycleWasSavedForIsDeletedAndItsCallKept(t *testing.T) {
+	st, row := traderStore(t)
+	open := func() string {
+		t.Helper()
+		conversation := agent.Conversation{ID: uuid.NewString(), UserID: row.UserID, Feature: agent.FeatureTrader}
+		if err := st.Conversations.Open(&conversation); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.Conversations.Append(conversation.ID, agent.ConversationMessage{Role: agent.RoleUser, Content: "the market"}); err != nil {
+			t.Fatal(err)
+		}
+		call := agent.Call{Feature: agent.FeatureTrader, SourceID: row.ID, ConversationID: conversation.ID, Provider: "deepseek", Model: "m", CostUSD: 0.01}
+		if err := agent.NewCallStore(st.DB).Record(&call); err != nil {
+			t.Fatal(err)
+		}
+		return conversation.ID
+	}
+	saved, lost, other := open(), open(), open()
+	if err := st.Decisions.LogDecision(&trader.DecisionRecord{TraderID: row.ID, Seq: 1, ConversationID: saved}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Named, only that one goes, and only while no cycle points at it.
+	if n, err := st.Decisions.ForgetConversations(saved, lost); err != nil || n != 1 {
+		t.Fatalf("forgot %d, err %v", n, err)
+	}
+	if _, err := st.Conversations.Get(row.UserID, other); err != nil {
+		t.Fatalf("one not named went: %v", err)
+	}
+	// Unnamed, the rest of them go.
+	if n, err := st.Decisions.ForgetConversations(); err != nil || n != 1 {
+		t.Fatalf("swept %d, err %v", n, err)
+	}
+	if _, err := st.Conversations.Get(row.UserID, saved); err != nil {
+		t.Fatalf("the saved cycle's conversation went: %v", err)
+	}
+	// What each call cost stays the trader's.
+	_, total, err := agent.NewCallStore(st.DB).ForTrader(row.ID, "")
+	if err != nil || total < 0.0299 {
+		t.Fatalf("the trader's costs came to %v, err %v", total, err)
+	}
+	var messages int64
+	if err := st.DB.Model(&agent.ConversationMessage{}).Where("conversation_id IN ?", []string{lost, other}).Count(&messages).Error; err != nil || messages != 0 {
+		t.Fatalf("%d messages left, err %v", messages, err)
 	}
 }
 
@@ -167,7 +214,7 @@ func TestFailedActionsAreReportedOnce(t *testing.T) {
 
 func TestAnArchivedTraderIsGoneButItsHistoryStays(t *testing.T) {
 	st, row := traderStore(t)
-	record := &trader.DecisionRecord{TraderID: row.ID, CycleNumber: 1, Success: true}
+	record := &trader.DecisionRecord{TraderID: row.ID, Seq: 1, Success: true}
 	if err := st.Decisions.LogDecision(record); err != nil {
 		t.Fatal(err)
 	}
@@ -221,21 +268,16 @@ func TestAnArchivedTraderIsGoneButItsHistoryStays(t *testing.T) {
 	}
 }
 
-func TestACycleKeepsTheLimitsItRanUnder(t *testing.T) {
+func TestATraderCannotSaveTwoCyclesWithOneNumber(t *testing.T) {
 	st, row := traderStore(t)
-	limits := map[string]any{"max_positions": 3}
-	if err := st.Decisions.LogDecision(&trader.DecisionRecord{TraderID: row.ID, CycleNumber: 1, Success: true, Limits: limits}); err != nil {
+	if err := st.Decisions.LogDecision(&trader.DecisionRecord{TraderID: row.ID, Seq: 1, Success: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.Decisions.LogDecision(&trader.DecisionRecord{TraderID: row.ID, CycleNumber: 2, Success: true}); err != nil {
-		t.Fatal(err)
+	if err := st.Decisions.LogDecision(&trader.DecisionRecord{TraderID: row.ID, Seq: 1, Success: true}); err == nil {
+		t.Fatal("a second cycle 1 was saved")
 	}
-	var kept []string
-	if err := st.DB.Raw(`SELECT COALESCE(limits::text, 'none') FROM trader.cycles WHERE trader_id = ? ORDER BY cycle_number`, row.ID).Scan(&kept).Error; err != nil {
-		t.Fatal(err)
-	}
-	if len(kept) != 2 || !strings.Contains(kept[0], `"max_positions": 3`) || kept[1] != "none" {
-		t.Fatalf("limits = %v", kept)
+	if last, err := st.Decisions.LastSeq(row.ID); err != nil || last != 1 {
+		t.Fatalf("last = %d, %v", last, err)
 	}
 }
 

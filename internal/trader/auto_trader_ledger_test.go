@@ -31,7 +31,7 @@ func TestAPlacedOrderIsRecordedAndItsFillsJoinIt(t *testing.T) {
 	if recorded == 0 || order.ID != recorded {
 		t.Fatalf("recorded as %d, order is %d", recorded, order.ID)
 	}
-	if order.ExchangeOrderID != "77" || order.ClientOrderID != "vergex-1" || order.Status != account.OrderNew || order.OrderAction != "open_long" || order.Leverage != 10 || order.Quantity != 0.5 {
+	if order.VenueOrderID != "77" || order.ClientID != "vergex-1" || order.Status != account.OrderNew || order.OrderAction != "open_long" || order.Leverage != 10 || order.Quantity != 0.5 {
 		t.Fatalf("order = %+v", order)
 	}
 
@@ -41,12 +41,12 @@ func TestAPlacedOrderIsRecordedAndItsFillsJoinIt(t *testing.T) {
 	}
 
 	// The account's sync reports the fill, and it joins the order rather than making one.
-	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT", "BTCUSDT")
+	btc, err := instrument.Ensure(st.DB, "binance", instrument.KindPerpetual, "BTCUSDT")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = st.Ledger.RecordTrade(account.Trade{
-		AccountID: ledger.Account, InstrumentID: btc, ExchangeTradeID: "t-1", ExchangeOrderID: "77", Side: account.SideBuy, PositionSide: account.SideLong,
+		AccountID: ledger.Account, InstrumentID: btc, VenueTradeID: "t-1", VenueOrderID: "77", Side: account.SideBuy, PositionSide: account.SideLong,
 		Price: decimal.NewFromInt(100), Quantity: decimal.RequireFromString("0.5"), QuoteQuantity: decimal.NewFromInt(50), ExecutedAt: time.Now(),
 	}, account.Owner{})
 	if err != nil {
@@ -82,9 +82,9 @@ func TestEachActionIsRecordedAsWhatItDoes(t *testing.T) {
 		"4": {"close_short", "BUY", true},
 	}
 	for _, order := range orders {
-		expected := want[order.ExchangeOrderID]
+		expected := want[order.VenueOrderID]
 		if order.OrderAction != expected.action || order.Side != expected.side || order.ReduceOnly != expected.reduceOnly {
-			t.Errorf("order %s = %+v", order.ExchangeOrderID, order)
+			t.Errorf("order %s = %+v", order.VenueOrderID, order)
 		}
 	}
 }

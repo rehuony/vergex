@@ -371,7 +371,7 @@ it('goes back to the first step only by clearing the token, and has no way back'
 
 const visitor = (patch: Partial<TelegramVisitor> = {}): TelegramVisitor => ({
   chat_id: 2002,
-  user_id: 2002,
+  sender_id: 2002,
   chat_type: 'private',
   username: 'mallory',
   name: 'Mal Lory',
@@ -403,7 +403,7 @@ it('counts the visitors and opens them from a button', async () => {
       attempts: 1,
       username: '',
       name: '',
-      user_id: 4004,
+      sender_id: 4004,
       last_text: '',
       last_at: new Date('2026-11-02T08:00:00').getTime(),
     }),
@@ -440,7 +440,7 @@ it('offers a search once the list is longer than a screen', async () => {
     Array.from({ length: 9 }, (_, index) =>
       visitor({
         chat_id: index + 1,
-        user_id: index + 1,
+        sender_id: index + 1,
         name: `Person ${index + 1}`,
       })
     )

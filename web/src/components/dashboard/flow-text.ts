@@ -30,6 +30,9 @@ function endName(end: ActivityEvent['from'], label: Label) {
     return `${baseLabel(symbol)} ${side}`
   }
   if (end.block === 'futures') return label('flow.block.futures')
+  // The assistant has no gate of its own on the stage, so its calls pass as other, by name.
+  if (end.block === 'other' && end.id === 'assistant')
+    return label('flow.block.assistant')
   return end.name || label(`flow.block.${end.block}`)
 }
 

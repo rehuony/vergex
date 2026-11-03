@@ -17,26 +17,26 @@ import (
 // columns are the Order's fields and nothing is converted: the controller's checks read
 // back exactly what they wrote.
 type runOrder struct {
-	RunID           string          `gorm:"column:run_id;primaryKey"`
-	Seq             int             `gorm:"column:seq;primaryKey;autoIncrement:false"`
-	Role            string          `gorm:"column:role"`
-	Symbol          string          `gorm:"column:symbol"`
-	Side            string          `gorm:"column:side"`
-	Type            string          `gorm:"column:type"`
-	ClientID        string          `gorm:"column:client_id"`
-	VenueClientID   string          `gorm:"column:venue_client_id"`
-	ParentClientID  string          `gorm:"column:parent_client_id"`
-	ExchangeOrderID string          `gorm:"column:exchange_order_id"`
-	Price           account.Decimal `gorm:"column:price"`
-	Quantity        account.Decimal `gorm:"column:quantity"`
-	Status          string          `gorm:"column:status"`
-	Filled          account.Decimal `gorm:"column:filled"`
-	Average         account.Decimal `gorm:"column:average"`
-	ReduceOnly      bool            `gorm:"column:reduce_only"`
-	PostOnly        bool            `gorm:"column:post_only"`
-	Error           string          `gorm:"column:error"`
-	Replaces        string          `gorm:"column:replaces"`
-	UpdatedAt       time.Time       `gorm:"column:updated_at;autoUpdateTime:false"`
+	RunID          string          `gorm:"column:run_id;primaryKey"`
+	Seq            int             `gorm:"column:seq;primaryKey;autoIncrement:false"`
+	Role           string          `gorm:"column:role"`
+	Symbol         string          `gorm:"column:symbol"`
+	Side           string          `gorm:"column:side"`
+	Type           string          `gorm:"column:type"`
+	ClientID       string          `gorm:"column:client_id"`
+	VenueClientID  string          `gorm:"column:venue_client_id"`
+	ParentClientID string          `gorm:"column:parent_client_id"`
+	VenueOrderID   string          `gorm:"column:venue_order_id"`
+	Price          account.Decimal `gorm:"column:price"`
+	Quantity       account.Decimal `gorm:"column:quantity"`
+	Status         string          `gorm:"column:status"`
+	Filled         account.Decimal `gorm:"column:filled"`
+	Average        account.Decimal `gorm:"column:average"`
+	ReduceOnly     bool            `gorm:"column:reduce_only"`
+	PostOnly       bool            `gorm:"column:post_only"`
+	Error          string          `gorm:"column:error"`
+	Replaces       string          `gorm:"column:replaces"`
+	UpdatedAt      time.Time       `gorm:"column:updated_at;autoUpdateTime:false"`
 }
 
 func (runOrder) TableName() string { return "futures.run_orders" }
@@ -44,7 +44,7 @@ func (runOrder) TableName() string { return "futures.run_orders" }
 func toRunOrder(runID string, seq int, o Order) runOrder {
 	return runOrder{
 		RunID: runID, Seq: seq, Role: o.Role, Symbol: o.Symbol, Side: o.Side, Type: o.Type, ClientID: o.ClientID,
-		VenueClientID: o.VenueClientID, ParentClientID: o.ParentID, ExchangeOrderID: o.OrderID, Price: o.Price,
+		VenueClientID: o.VenueClientID, ParentClientID: o.ParentID, VenueOrderID: o.OrderID, Price: o.Price,
 		Quantity: o.Quantity, Status: o.Status, Filled: o.Filled, Average: o.Average, ReduceOnly: o.ReduceOnly,
 		PostOnly: o.PostOnly, Error: o.Error, Replaces: o.Replaces,
 	}
@@ -53,7 +53,7 @@ func toRunOrder(runID string, seq int, o Order) runOrder {
 func (r runOrder) order() Order {
 	return Order{
 		Type: r.Type, ReduceOnly: r.ReduceOnly, PostOnly: r.PostOnly, VenueClientID: r.VenueClientID, ParentID: r.ParentClientID,
-		ClientID: r.ClientID, OrderID: r.ExchangeOrderID, Role: r.Role, Symbol: r.Symbol, Side: r.Side, Price: r.Price,
+		ClientID: r.ClientID, OrderID: r.VenueOrderID, Role: r.Role, Symbol: r.Symbol, Side: r.Side, Price: r.Price,
 		Quantity: r.Quantity, Status: r.Status, Filled: r.Filled, Average: r.Average, Error: r.Error, Replaces: r.Replaces,
 	}
 }
@@ -67,7 +67,7 @@ type storedRun struct {
 }
 
 func (v *View) remember() {
-	v.stored = storedRun{state: v.State, err: v.Error, started: v.StartedAt, deadline: v.Deadline, orders: slices.Clone(v.Orders)}
+	v.stored = storedRun{state: v.Status, err: v.Error, started: v.StartedAt, deadline: v.Deadline, orders: slices.Clone(v.Orders)}
 }
 
 func sameTime(a, b *time.Time) bool {
@@ -79,7 +79,7 @@ func sameTime(a, b *time.Time) bool {
 
 func (v *View) changed() bool {
 	s := &v.stored
-	return v.State != s.state || v.Error != s.err || !sameTime(v.StartedAt, s.started) || !sameTime(v.Deadline, s.deadline) || !slices.Equal(v.Orders, s.orders)
+	return v.Status != s.state || v.Error != s.err || !sameTime(v.StartedAt, s.started) || !sameTime(v.Deadline, s.deadline) || !slices.Equal(v.Orders, s.orders)
 }
 
 // writeRun writes the run and whichever of its orders changed, on the caller's
@@ -87,7 +87,7 @@ func (v *View) changed() bool {
 func writeRun(tx *gorm.DB, v *View) error {
 	v.UpdatedAt = time.Now().UTC()
 	result := tx.Model(&Run{}).Where("id = ? AND user_id = ?", v.ID, v.UserID).Updates(map[string]any{
-		"state": v.State, "error": database.NullText(v.Error), "started_at": v.StartedAt, "deadline": v.Deadline, "updated_at": v.UpdatedAt,
+		"status": v.Status, "error": database.NullText(v.Error), "started_at": v.StartedAt, "deadline_at": v.Deadline, "updated_at": v.UpdatedAt,
 	})
 	if result.Error != nil {
 		return result.Error

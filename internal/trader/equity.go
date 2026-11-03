@@ -14,14 +14,10 @@ type EquityStore struct {
 
 // EquitySnapshot equity snapshot
 type EquitySnapshot struct {
-	TraderID         string    `gorm:"column:trader_id;primaryKey" json:"trader_id"`
-	Timestamp        time.Time `gorm:"column:taken_at;primaryKey" json:"timestamp"`
-	TotalEquity      float64   `gorm:"column:total_equity" json:"total_equity"`
-	Balance          float64   `gorm:"column:balance" json:"balance"`
-	AvailableBalance float64   `gorm:"column:available_balance" json:"available_balance"`
-	UnrealizedPnL    float64   `gorm:"column:unrealized_pnl" json:"unrealized_pnl"`
-	PositionCount    int       `gorm:"column:position_count" json:"position_count"`
-	MarginUsedPct    float64   `gorm:"column:margin_used_pct" json:"margin_used_pct"`
+	TraderID      string    `gorm:"column:trader_id;primaryKey" json:"trader_id"`
+	Timestamp     time.Time `gorm:"column:taken_at;primaryKey" json:"timestamp"`
+	TotalEquity   float64   `gorm:"column:total_equity" json:"total_equity"`
+	UnrealizedPnL float64   `gorm:"column:unrealized_pnl" json:"unrealized_pnl"`
 }
 
 func (EquitySnapshot) TableName() string { return "trader.equity_snapshots" }

@@ -627,7 +627,7 @@ func TestARefusalIsStructuredAndInEnglish(t *testing.T) {
 	f.say(strangerChat, "private", "mallory", "/start")
 	waitFor(t, "the answer to /start", func() bool { return len(f.sentTo(strangerChat)) == 1 })
 	unbound := f.sentTo(strangerChat)[0]
-	for _, want := range []string{"<b>Status:</b> Not bound", "<b>Access:</b> Binding code", fmt.Sprintf("<code>%d</code>", strangerChat), " UTC"} {
+	for _, want := range []string{"🔒 <b>Private bot</b>", "<i>Not bound · binding code from Settings → Telegram</i>", fmt.Sprintf("• Your ID: <code>%d</code>", strangerChat), " UTC</b>"} {
 		if !strings.Contains(unbound.Text, want) {
 			t.Fatalf("no %q in %q", want, unbound.Text)
 		}
@@ -642,7 +642,7 @@ func TestARefusalIsStructuredAndInEnglish(t *testing.T) {
 	f.say(strangerChat+1, "private", "mallory", "hello")
 	waitFor(t, "the refusal", func() bool { return len(f.sentTo(strangerChat+1)) == 1 })
 	refused := f.sentTo(strangerChat + 1)[0].Text
-	if !strings.Contains(refused, "<b>Status:</b> Access denied") || !strings.Contains(refused, "<b>Access:</b> Bound owner only") {
+	if !strings.Contains(refused, "<i>Access denied · bound owner only</i>") || !strings.Contains(refused, "<i>This attempt was recorded</i>") {
 		t.Fatalf("refused with %q", refused)
 	}
 	for _, text := range []string{unbound.Text, refused} {
@@ -680,7 +680,7 @@ func TestEveryAttemptIsKeptForSettingsToShow(t *testing.T) {
 	f.say(groupChat, "group", "mallory", "/status")
 	waitFor(t, "all three", func() bool { return attempts(strangerChat).Attempts == 2 && attempts(groupChat).Attempts == 1 })
 	stranger := attempts(strangerChat)
-	if stranger.UserID != strangerChat || stranger.Username != "mallory" || stranger.Name != "x" || stranger.ChatType != "private" || stranger.LastText != "/start" {
+	if stranger.SenderID != strangerChat || stranger.Username != "mallory" || stranger.Name != "x" || stranger.ChatType != "private" || stranger.LastText != "/start" {
 		t.Fatalf("visitor = %+v", stranger)
 	}
 	if stranger.FirstAt == 0 || stranger.LastAt < stranger.FirstAt {
@@ -725,7 +725,7 @@ func TestTheVisitorListKeepsTheNewestAndAShortText(t *testing.T) {
 	store := NewVisitorStore(testdb.Open(t))
 	now := time.Now()
 	for i := int64(1); i <= 3; i++ {
-		if err := store.Record(Visitor{ChatID: i, UserID: i, ChatType: "private"}, now.Add(time.Duration(i)*time.Minute)); err != nil {
+		if err := store.Record(Visitor{ChatID: i, SenderID: i, ChatType: "private"}, now.Add(time.Duration(i)*time.Minute)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -859,7 +859,7 @@ func skillsAPI(t *testing.T) (port int, stops *atomic.Int32) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/traders":
-			_, _ = w.Write([]byte(`[{"trader_id":"t2","trader_name":"ETH Grid","is_running":true,"kind":"grid","account_id":"ex1"}]`))
+			_, _ = w.Write([]byte(`[{"trader_id":"t2","trader_name":"ETH Grid","running":true,"kind":"grid","account_id":"ex1"}]`))
 		case "/api/accounts":
 			_, _ = w.Write([]byte(`[{"id":"ex1","venue":"binance","name":"Main"}]`))
 		case "/api/traders/t2/stop":
@@ -924,7 +924,7 @@ func TestButtonsConfirmOnlyForTheOwnerAndOnlyTheirBatch(t *testing.T) {
 
 	f.say(ownerChat, "private", "alice", "stop eth grid")
 	messageID, batch, text := confirmRequest(t, f, 0)
-	if !strings.Contains(text, `stop running trader &#34;ETH Grid&#34; on account &#34;Main&#34; (real money)`) {
+	if !strings.Contains(text, "⚠️ <b>Waiting for your confirmation · real money</b>") || !strings.Contains(text, "<b>Stop trader</b> · ETH Grid\n• Account: <b>Main · Real money</b>") {
 		t.Fatalf("request to confirm = %q", text)
 	}
 
@@ -1335,7 +1335,8 @@ func TestAReplyShowsAsItIsWrittenThenInItsFinalForm(t *testing.T) {
 	f.say(ownerChat, "private", "alice", "hello")
 	waitFor(t, "the reply so far", func() bool {
 		for _, m := range f.sentTo(ownerChat) {
-			if m.Method == "editMessageText" && strings.Contains(m.Text, "**The answer so far**") && strings.Contains(m.Text, "⏳") {
+			// The reply so far shows as it will read, never with its marks.
+			if m.Method == "editMessageText" && m.ParseMode == "HTML" && strings.Contains(m.Text, "<b>The answer so far</b>") && strings.Contains(m.Text, "⏳") {
 				return true
 			}
 		}

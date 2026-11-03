@@ -6,16 +6,17 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 	"vergex/internal/agent"
 	_ "vergex/internal/agent/provider"
+	"vergex/internal/assistant"
 	"vergex/internal/config"
 	"vergex/internal/logger"
 	"vergex/internal/service"
-	telegramagent "vergex/internal/telegram/agent"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -172,7 +173,7 @@ type runner struct {
 	// The registered user and their agents, resolved lazily and refreshed if that changes.
 	userID    string
 	userEmail string
-	agents    *telegramagent.Manager
+	agents    *assistant.Manager
 	// confirming is the message with the buttons for what is waiting, 0 when none is.
 	confirming atomic.Int64
 	// menuStale says Telegram refused the last menu, which runBot then tries again.
@@ -237,15 +238,19 @@ func (r *runner) resolveUser() bool {
 	}
 	r.userID, r.userEmail = u.ID, u.Email
 	userID := u.ID
-	token := func() (string, error) { return telegramagent.GenerateBotToken(userID) }
-	r.agents = telegramagent.NewManager(r.cfg.APIServerPort, token, u.Email, u.ID,
+	token := func() (string, error) { return assistant.CallToken(userID) }
+	r.agents = assistant.NewManager(r.cfg.APIServerPort, token, u.Email, u.ID,
 		func() agent.Client { return newClient(r.st, userID) },
 		&chatHistory{conversations: r.st.Conversations, userID: u.ID},
 		r.chosenLanguage,
+		assistant.Telegram,
 	)
 	logger.Infof("Bot: acting for user %s (%s)", u.ID, u.Email)
 	return true
 }
+
+// chat is what the assistant knows the bound chat by.
+func (r *runner) chat() string { return strconv.FormatInt(r.owner, 10) }
 
 // parseCommand splits "/start abc" or "/start@some_bot abc" into its command and argument.
 // Anything else has no command.
@@ -289,16 +294,13 @@ func (r *runner) handleMessage(m *tgbotapi.Message) {
 	switch command {
 	case "start":
 		if !r.resolveUser() {
-			sendMsg(r.bot, r.owner, pick(lang,
-				"No account found\nOpen the web dashboard to register, then send /start",
-				"还没有账户\n请先在网页上注册，然后发送 /start"))
+			r.send(noUserMessage(lang))
 			return
 		}
 		agents, userID := r.agents, r.userID
 		r.enqueue(func() {
-			agents.Reset(r.owner)
-			sendMarkdownMsg(r.bot, r.owner, welcomeMsg(r.st, userID, lang,
-				pick(lang, "✅ **Welcome to Vergex**", "✅ **欢迎使用 Vergex**")))
+			agents.Reset(r.chat())
+			r.send(welcomeMessage(r.st, userID, lang, pick(lang, "New chat started", "已开始新对话")))
 		})
 		return
 	case "stop":
@@ -306,7 +308,7 @@ func (r *runner) handleMessage(m *tgbotapi.Message) {
 		if r.stopTurn() {
 			return
 		}
-		sendMsg(r.bot, r.owner, pick(lang, "Nothing is running", "现在没有在做的事"))
+		r.send(newMessage(lang).title(emojiNothing, pick(lang, "Nothing is running", "现在没有在做的事")))
 		return
 	case "cancel":
 		if !r.resolveUser() {
@@ -314,12 +316,13 @@ func (r *runner) handleMessage(m *tgbotapi.Message) {
 		}
 		agents := r.agents
 		r.enqueue(func() {
-			reply, held := agents.CancelPending(r.owner)
+			reply, held := agents.CancelPending(r.chat())
 			r.closeConfirming()
 			if !held {
-				reply.Text = pick(lang, "Nothing is waiting for your confirmation", "没有等待确认的操作")
+				r.send(newMessage(lang).title(emojiNothing, pick(lang, "Nothing is waiting for your confirmation", "没有等待确认的操作")))
+				return
 			}
-			deliver(r.bot, r.owner, 0, reply.Text)
+			r.send(replyMessage(reply, lang))
 		})
 		return
 	case "status", "positions", "traders":
@@ -336,7 +339,7 @@ func (r *runner) handleMessage(m *tgbotapi.Message) {
 		r.askLanguage()
 		return
 	case "help":
-		sendMarkdownMsg(r.bot, r.owner, helpMsg(lang))
+		r.send(helpMessage(lang))
 		return
 	}
 	if text == "" {
@@ -345,17 +348,26 @@ func (r *runner) handleMessage(m *tgbotapi.Message) {
 
 	// ── Refresh user before every model call ────────────────────────────────
 	if !r.resolveUser() {
-		sendMsg(r.bot, r.owner, pick(lang, "No account found. Open the web app to register", "还没有账户。请先在网页上注册"))
+		r.send(noUserMessage(lang))
 		return
 	}
 
-	// ── Guard: show status if not ready for trading ───────────────────────
+	// ── Guard: say what is left to set up when no model can answer ─────────
 	if newClient(r.st, r.userID) == nil {
-		sendMarkdownMsg(r.bot, r.owner, statusMsg(r.st, r.userID, r.cfg.APIServerPort, lang))
+		r.send(setupMessage(r.st, r.userID, lang))
 		return
 	}
 	r.runAgent(text)
 }
+
+// noUserMessage says nobody has registered in the web app yet.
+func noUserMessage(lang string) *message {
+	return newMessage(lang).notice(emojiSetup, pick(lang, "No account yet", "还没有账户"),
+		pick(lang, "Register in the web app, then send /start", "请先在网页上注册，然后发送 /start"))
+}
+
+// send says something to the owner.
+func (r *runner) send(m *message) { deliver(r.bot, r.owner, 0, m, nil) }
 
 // handleUnbound answers a private chat while no one is bound. Pressing Start sends a bare
 // /start, so that is met with what to do next, and the code can then be sent on its own. The
@@ -383,17 +395,21 @@ func (r *runner) handleUnbound(m *tgbotapi.Message, text, command, argument stri
 // runReadCommand answers a command that only reads, in turn with everything else but
 // without the model.
 func (r *runner) runReadCommand(command, lang string) {
-	agents, chatID := r.agents, r.owner
+	agents, chat := r.agents, r.chat()
 	r.enqueue(func() {
-		r.runTurn(func(_ context.Context, progress *telegramagent.Progress) telegramagent.Reply {
+		r.runWork(func(progress *assistant.Progress) *message {
 			progress.Stage(pick(lang, "Reading…", "正在读取…"))
 			switch command {
 			case "positions":
-				return telegramagent.Reply{Text: agents.Positions(chatID)}
+				holdings, err := agents.Holdings(chat)
+				return positionsMessage(holdings, err, lang)
 			case "traders":
-				return telegramagent.Reply{Text: agents.Traders(chatID)}
+				traders, err := agents.Traders(chat)
+				return tradersMessage(traders, err, lang)
 			}
-			return telegramagent.Reply{Text: agents.Status(chatID)}
+			holdings, holdingsErr := agents.Holdings(chat)
+			traders, tradersErr := agents.Traders(chat)
+			return statusMessage(holdings, holdingsErr, traders, tradersErr, lang)
 		})
 	})
 }
@@ -401,7 +417,7 @@ func (r *runner) runReadCommand(command, lang string) {
 // adoptLanguage settles the language for someone who never chose one, the first time they
 // write in Chinese. English is what everyone starts on.
 func (r *runner) adoptLanguage(text string) {
-	if r.chosenLanguage() == "" && telegramagent.PrefersChinese(text) {
+	if r.chosenLanguage() == "" && assistant.PrefersChinese(text) {
 		if err := r.st.Telegram.SetLanguage("zh"); err != nil {
 			logger.Warnf("Telegram: save the language: %v", err)
 			return
@@ -413,12 +429,8 @@ func (r *runner) adoptLanguage(text string) {
 // askLanguage offers the languages as buttons. Nothing waits for a typed answer, so no
 // message of the owner's can be mistaken for one.
 func (r *runner) askLanguage() {
-	msg := tgbotapi.NewMessage(r.owner, langMenuMsg())
-	msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("English", buttonLanguage+":en"),
-		tgbotapi.NewInlineKeyboardButtonData("中文", buttonLanguage+":zh"),
-	))
-	r.bot.Send(msg) //nolint:errcheck
+	markup := languageButtons(r.chosenLanguage())
+	deliver(r.bot, r.owner, 0, languageMessage(), &markup)
 }
 
 // setLanguage switches the bot, its menu and its alerts to a language.
@@ -427,7 +439,7 @@ func (r *runner) setLanguage(lang string) {
 		logger.Warnf("Telegram: save the language: %v", err)
 	}
 	r.refreshMenu()
-	sendMarkdownMsg(r.bot, r.owner, statusMsg(r.st, r.userID, r.cfg.APIServerPort, lang))
+	r.send(languageSetMessage(lang))
 }
 
 // refreshMenu publishes the commands and reports how the bot stands: it runs once they are in
@@ -495,7 +507,8 @@ func (r *runner) bind(m *tgbotapi.Message) {
 	}
 	if err := r.st.Telegram.BindUser(m.Chat.ID, name); err != nil {
 		logger.Errorf("Failed to bind Telegram user: %v", err)
-		sendMsg(r.bot, m.Chat.ID, pick(r.st.Telegram.GetLanguage(), "Binding failed. Please try again", "绑定失败，请重试"))
+		lang := r.st.Telegram.GetLanguage()
+		deliver(r.bot, m.Chat.ID, 0, newMessage(lang).notice(emojiFailed, pick(lang, "Binding failed", "绑定失败"), pick(lang, "Try again", "请重试")), nil)
 		return
 	}
 	r.owner = m.Chat.ID
@@ -506,8 +519,7 @@ func (r *runner) bind(m *tgbotapi.Message) {
 	r.resolveUser()
 	r.refreshMenu()
 	lang := r.st.Telegram.GetLanguage()
-	sendMarkdownMsg(r.bot, r.owner, welcomeMsg(r.st, r.userID, lang,
-		pick(lang, "✅ **Bound. Welcome to Vergex**", "✅ **绑定成功，欢迎使用 Vergex**")))
+	r.send(welcomeMessage(r.st, r.userID, lang, pick(lang, "Bound", "绑定成功")))
 }
 
 // turnAwayEvery is how often one stranger hears that this is a private bot.
@@ -541,9 +553,7 @@ func (r *runner) noteStranger(m *tgbotapi.Message) bool {
 	if err != nil || cfg.AlertMuted(AlertSystem) {
 		return true
 	}
-	sendMsg(r.bot, r.owner, fmt.Sprintf(pick(r.st.Telegram.GetLanguage(),
-		"Someone else tried to use this bot: %s (ID %d, %s). They were refused. See Visitors in Settings → Telegram",
-		"有人尝试使用这个机器人：%s（ID %d，%s），已拒绝。可在 设置 → Telegram 的访客用户里查看"), name, id, m.Chat.Type))
+	r.send(strangerMessage(r.st.Telegram.GetLanguage(), name, id, m.Chat.Type))
 	return true
 }
 
@@ -560,76 +570,96 @@ func (r *runner) refuse(m *tgbotapi.Message, status, access, note string) {
 	if m.From != nil {
 		id = m.From.ID
 	}
-	msg := tgbotapi.NewMessage(m.Chat.ID, refusalText(status, access, note, id, time.Now()))
-	msg.ParseMode = tgbotapi.ModeHTML
-	if _, err := r.bot.Send(msg); err != nil {
-		logger.Warnf("Telegram: send a refusal: %s", scrubToken(err.Error()))
-	}
+	deliver(r.bot, m.Chat.ID, 0, refusalMessage(status, access, note, id, time.Now()), nil)
 }
 
 // runAgent hands a message to the assistant, in turn with whatever came before it.
 func (r *runner) runAgent(text string) {
-	agents, chatID := r.agents, r.owner
+	agents, chat := r.agents, r.chat()
 	r.enqueue(func() {
-		r.runTurn(func(ctx context.Context, progress *telegramagent.Progress) telegramagent.Reply {
-			return agents.Run(ctx, chatID, text, progress)
+		r.runTurn(func(ctx context.Context, progress *assistant.Progress) assistant.Reply {
+			return agents.Run(ctx, chat, text, progress)
 		})
-		agents.Tidy(chatID)
+		agents.Tidy(chat)
 	})
 }
 
-// deliver shows a reply: its first part in place of the placeholder, if there is one, and
-// the rest as new messages. Nothing to say takes the placeholder away.
-func deliver(bot *tgbotapi.BotAPI, chatID int64, placeholderID int, text string) {
-	parts := renderReply(text)
+// deliver shows a message: its first part in place of the placeholder, if there is one, and
+// the rest as new messages, the last with the buttons, if there are any. Nothing to say takes
+// the placeholder away. It returns the id of the last message, 0 when none went out.
+func deliver(bot *tgbotapi.BotAPI, chatID int64, placeholderID int, m *message, buttons *tgbotapi.InlineKeyboardMarkup) int {
+	parts := m.parts()
 	if len(parts) == 0 && placeholderID != 0 {
 		bot.Request(tgbotapi.NewDeleteMessage(chatID, placeholderID)) //nolint:errcheck
-		return
+		return 0
 	}
+	last := 0
 	for i, part := range parts {
-		if i == 0 && placeholderID != 0 && editPart(bot, chatID, placeholderID, part) {
+		var markup *tgbotapi.InlineKeyboardMarkup
+		if i == len(parts)-1 {
+			markup = buttons
+		}
+		if i == 0 && placeholderID != 0 && editPart(bot, chatID, placeholderID, part, markup) {
+			last = placeholderID
 			continue
 		}
-		sendPart(bot, chatID, part)
+		if id := sendPart(bot, chatID, part, markup, m.silent); id != 0 {
+			last = id
+		}
 	}
+	return last
 }
 
 // editPart replaces a message's text, as HTML and failing that as plain text.
-func editPart(bot *tgbotapi.BotAPI, chatID int64, messageID int, part messagePart) bool {
-	edit := tgbotapi.NewEditMessageText(chatID, messageID, part.HTML)
-	edit.ParseMode = tgbotapi.ModeHTML
-	if sendPatiently(bot, edit) == nil {
-		return true
+func editPart(bot *tgbotapi.BotAPI, chatID int64, messageID int, part messagePart, buttons *tgbotapi.InlineKeyboardMarkup) bool {
+	for _, edit := range []tgbotapi.EditMessageTextConfig{
+		tgbotapi.NewEditMessageText(chatID, messageID, part.HTML),
+		tgbotapi.NewEditMessageText(chatID, messageID, part.Plain),
+	} {
+		if edit.Text == part.HTML {
+			edit.ParseMode = tgbotapi.ModeHTML
+		}
+		edit.DisableWebPagePreview = true
+		edit.ReplyMarkup = buttons
+		if sendPatiently(bot, edit) == nil {
+			return true
+		}
 	}
-	return sendPatiently(bot, tgbotapi.NewEditMessageText(chatID, messageID, part.Plain)) == nil
+	return false
 }
 
-// sendPart sends a message, as HTML and failing that as plain text.
-func sendPart(bot *tgbotapi.BotAPI, chatID int64, part messagePart) {
-	msg := tgbotapi.NewMessage(chatID, part.HTML)
-	msg.ParseMode = tgbotapi.ModeHTML
-	if sendPatiently(bot, msg) == nil {
-		return
+// sendPart sends a message, as HTML and failing that as plain text, and returns its id.
+func sendPart(bot *tgbotapi.BotAPI, chatID int64, part messagePart, buttons *tgbotapi.InlineKeyboardMarkup, silent bool) int {
+	var err error
+	for i, body := range []string{part.HTML, part.Plain} {
+		msg := tgbotapi.NewMessage(chatID, body)
+		if i == 0 {
+			msg.ParseMode = tgbotapi.ModeHTML
+		}
+		msg.DisableWebPagePreview = true
+		msg.DisableNotification = silent
+		if buttons != nil {
+			msg.ReplyMarkup = *buttons
+		}
+		var sent tgbotapi.Message
+		if sent, err = sendPatientlyFor(bot, msg); err == nil {
+			return sent.MessageID
+		}
 	}
-	if err := sendPatiently(bot, tgbotapi.NewMessage(chatID, part.Plain)); err != nil {
-		logger.Warnf("Telegram: send a message: %v", err)
-	}
+	logger.Warnf("Telegram: send a message: %v", err)
+	return 0
 }
 
 // askToConfirm shows what is waiting for an answer, in Go's words, with its buttons.
-func (r *runner) askToConfirm(c *telegramagent.Confirmation) {
+func (r *runner) askToConfirm(c *assistant.Confirmation) {
 	if c == nil {
 		return
 	}
-	msg := tgbotapi.NewMessage(r.owner, confirmationText(c, r.st.Telegram.GetLanguage()))
-	msg.ParseMode = tgbotapi.ModeHTML
-	msg.ReplyMarkup = confirmationButtons(c, r.st.Telegram.GetLanguage())
-	sent, err := r.bot.Send(msg)
-	if err != nil {
-		logger.Warnf("Telegram: ask to confirm: %v", err)
-		return
+	lang := r.st.Telegram.GetLanguage()
+	buttons := confirmationButtons(c, lang)
+	if id := deliver(r.bot, r.owner, 0, confirmationMessage(c, lang), &buttons); id != 0 {
+		r.confirming.Store(int64(id))
 	}
-	r.confirming.Store(int64(sent.MessageID))
 }
 
 // closeConfirming takes the buttons off the last request to confirm.
@@ -675,30 +705,20 @@ func (r *runner) handleButton(q *tgbotapi.CallbackQuery) {
 	messageID := q.Message.MessageID
 	r.confirming.CompareAndSwap(int64(messageID), 0)
 	r.removeButtons(messageID)
-	agents, chatID, lang := r.agents, r.owner, r.st.Telegram.GetLanguage()
+	agents, chat, lang := r.agents, r.chat(), r.st.Telegram.GetLanguage()
 	r.enqueue(func() {
-		r.runTurn(func(_ context.Context, progress *telegramagent.Progress) telegramagent.Reply {
+		r.runWork(func(progress *assistant.Progress) *message {
 			if action == buttonConfirm {
 				progress.Stage(pick(lang, "Running it…", "正在执行…"))
 			}
-			reply, live := agents.Answer(chatID, id, action == buttonConfirm)
+			reply, live := agents.Answer(chat, id, action == buttonConfirm)
 			if !live {
-				return telegramagent.Reply{Text: pick(lang, "This button is no longer valid. Nothing was done", "这个按钮已经失效，没有执行任何操作")}
+				return newMessage(lang).notice(emojiDropped, pick(lang, "Button no longer valid", "按钮已失效"),
+					pick(lang, "That no longer waits for an answer, so nothing was done", "这项已经不在等待确认，没有执行任何操作"))
 			}
-			return reply
+			return replyMessage(reply, lang)
 		})
 	})
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-func sendMsg(bot *tgbotapi.BotAPI, chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	bot.Send(msg) //nolint:errcheck
-}
-
-func sendMarkdownMsg(bot *tgbotapi.BotAPI, chatID int64, text string) {
-	deliver(bot, chatID, 0, text)
 }
 
 // ── model client ───────────────────────────────────────────────────────────────
@@ -710,7 +730,7 @@ func newAgentClient(st *Stores, userID string) agent.Client {
 			apiKey := string(model.APIKey)
 			if apiKey != "" {
 				client := clientForProvider(model.Provider)
-				client.SetAPIKey(apiKey, model.CustomAPIURL, model.CustomModelName)
+				client.SetAPIKey(apiKey, model.BaseURL, model.ModelName)
 				logger.Infof("Telegram agent: provider=%s user=%s", model.Provider, userID)
 				return client
 			}
@@ -722,7 +742,7 @@ func newAgentClient(st *Stores, userID string) agent.Client {
 		apiKey := string(model.APIKey)
 		if apiKey != "" {
 			client := clientForProvider(model.Provider)
-			client.SetAPIKey(apiKey, model.CustomAPIURL, model.CustomModelName)
+			client.SetAPIKey(apiKey, model.BaseURL, model.ModelName)
 			logger.Infof("Telegram agent: provider=%s user=%s", model.Provider, userID)
 			return client
 		}
@@ -752,77 +772,7 @@ func clientForProvider(provider string) agent.Client {
 	return client
 }
 
-// ── Status message ────────────────────────────────────────────────────────────
-
-// statusMsg says what is left to set up, or that everything is ready.
-func statusMsg(st *Stores, userID string, apiPort int, lang string) string {
-	if setup := setupMsg(st, userID, lang); setup != "" {
-		return setup
-	}
-	return pick(lang, "✅ **Vergex is ready**", "✅ **Vergex 已就绪**") + "\n\n" + readyMsg(lang)
-}
-
-// welcomeMsg is what the owner reads on arriving: a heading, then what is left to set up or
-// what they can do now.
-func welcomeMsg(st *Stores, userID, lang, heading string) string {
-	if setup := setupMsg(st, userID, lang); setup != "" {
-		return heading + "\n\n" + setup
-	}
-	return heading + "\n\n" + readyMsg(lang)
-}
-
-// setupMsg lists what has to be set up in the web app first, empty when nothing does.
-func setupMsg(st *Stores, userID, lang string) string {
-	// Determine what's missing.
-	hasModel := false
-	if _, err := st.Models.GetDefault(userID); err == nil {
-		hasModel = true
-	}
-
-	hasAccount := false
-	if accounts, err := st.Accounts.List(userID); err == nil {
-		hasAccount = len(accounts) > 0
-	}
-
-	if !hasModel || !hasAccount {
-		missing := ""
-		if lang == "zh" {
-			if !hasModel {
-				missing += "\n- ❌ 模型：设置 → Agent 模型 → 添加"
-			}
-			if !hasAccount {
-				missing += "\n- ❌ 账户：设置 → 交易账户 → 添加"
-			}
-			return "⚙️ **需要先完成设置**\n\n请在网页上完成：\n" + missing + "\n\n完成后发送 /start"
-		}
-		if !hasModel {
-			missing += "\n- ❌ Model: Settings → Agent models → Add"
-		}
-		if !hasAccount {
-			missing += "\n- ❌ Account: Settings → Trading accounts → Add"
-		}
-		return "⚙️ **Setup required**\n\nIn the web app:\n" + missing + "\n\nSend /start when done"
-	}
-	return ""
-}
-
-// readyMsg says what can be done with everything set up.
-func readyMsg(lang string) string {
-	if lang == "zh" {
-		return `直接告诉我要做什么，比如“看看我的持仓”或“停止所有交易员”。
-
-/status 账户概览 · /positions 持仓 · /help 全部功能`
-	}
-	return `Tell me what you want, such as "show my positions" or "stop all traders".
-
-/status accounts · /positions positions · /help everything`
-}
-
 // ── Language ──────────────────────────────────────────────────────────────────
-
-func langMenuMsg() string {
-	return "🌐 Choose your language / 选择语言"
-}
 
 func parseLangChoice(text string) string {
 	switch strings.TrimSpace(text) {
@@ -832,55 +782,4 @@ func parseLangChoice(text string) string {
 		return "zh"
 	}
 	return ""
-}
-
-// ── Help ──────────────────────────────────────────────────────────────────────
-
-func helpMsg(lang string) string {
-	if lang == "zh" {
-		return `**Vergex 帮助**
-
-**立即回答，不用模型**
-- /status 账户概览
-- /positions 所有账户的持仓
-- /traders 交易员
-
-**直接说**
-- “为什么交易员不开仓？”
-- “创建一个谨慎的 BTC 交易员并启动”
-- “把最大持仓改成 2 个”
-- “平掉 Trend 的 BTC 多单”
-- “合约交易的计划怎么样了？”
-- “BTC 的预测是什么？”
-
-启动、停止、删除、平仓和改风控会先列出来等你确认。计划的批准和执行、密钥和绑定只能在网页上做。
-
-**控制**
-- /stop 停止当前操作
-- /cancel 取消待确认的操作
-- /lang 切换语言
-- /start 开始新对话`
-	}
-	return `**Vergex Help**
-
-**Answered at once, without the model**
-- /status accounts at a glance
-- /positions what every account holds
-- /traders your traders
-
-**Just ask**
-- "Why isn't my trader opening anything?"
-- "Create a careful BTC trader and start it"
-- "Set max positions to 2"
-- "Close Trend's BTC long"
-- "How are my Futures plans doing?"
-- "What's the forecast for BTC?"
-
-Starting, stopping, deleting, closing and changing risk settings wait for your confirmation. Approving and running plans, keys and binding are only done in the web app.
-
-**Control**
-- /stop stop what is running
-- /cancel cancel what awaits your confirmation
-- /lang change language
-- /start start a new chat`
 }

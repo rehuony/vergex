@@ -12,7 +12,6 @@ import (
 	"vergex/internal/market/instrument"
 	traderagent "vergex/internal/trader/agent"
 	"vergex/internal/trader/kind"
-	"vergex/internal/venue/okx"
 )
 
 // saveEquitySnapshot saves equity snapshot independently (for drawing profit curve, decoupled from agent decision)
@@ -22,14 +21,10 @@ func (at *AutoTrader) saveEquitySnapshot(ctx *traderagent.Context) {
 	}
 
 	snapshot := &EquitySnapshot{
-		TraderID:         at.id,
-		Timestamp:        time.Now().UTC(),
-		TotalEquity:      ctx.Account.TotalEquity,
-		Balance:          ctx.Account.TotalEquity - ctx.Account.UnrealizedPnL,
-		AvailableBalance: ctx.Account.AvailableBalance,
-		UnrealizedPnL:    ctx.Account.UnrealizedPnL,
-		PositionCount:    ctx.Account.PositionCount,
-		MarginUsedPct:    ctx.Account.MarginUsedPct,
+		TraderID:      at.id,
+		Timestamp:     time.Now().UTC(),
+		TotalEquity:   ctx.Account.TotalEquity,
+		UnrealizedPnL: ctx.Account.UnrealizedPnL,
 	}
 
 	if err := at.stores.Equity.Save(snapshot); err != nil {
@@ -49,9 +44,8 @@ func (at *AutoTrader) saveDecision(record *DecisionRecord) error {
 	}
 
 	at.cycleNumber++
-	record.CycleNumber = at.cycleNumber
+	record.Seq = at.cycleNumber
 	record.TraderID = at.id
-	record.Limits = at.limits()
 
 	if record.Timestamp.IsZero() {
 		record.Timestamp = time.Now().UTC()
@@ -61,6 +55,7 @@ func (at *AutoTrader) saveDecision(record *DecisionRecord) error {
 	defer cancel()
 	if err := at.stores.Decisions.WithContext(ctx).LogDecision(record); err != nil {
 		logger.Infof("⚠️ Failed to save decision record: %v", err)
+		at.forgetConversation(record.ConversationID)
 		return err
 	}
 
@@ -105,7 +100,7 @@ func (at *AutoTrader) GetStatus() map[string]interface{} {
 		"trader_name":     at.name,
 		"agent_model":     at.agentModel,
 		"venue":           at.venue,
-		"is_running":      isRunning,
+		"running":         isRunning,
 		"start_time":      at.startTime.Format(time.RFC3339),
 		"runtime_minutes": int(time.Since(at.startTime).Minutes()),
 		"call_count":      at.callCount,
@@ -285,17 +280,17 @@ func (at *AutoTrader) recordOrder(orderResult map[string]interface{}, symbol, ac
 	clientOrderID, _ := orderResult["clientOrderId"].(string)
 
 	order := account.LedgerOrder{
-		AccountID:       at.accountID,
-		Source:          account.SourceTrader,
-		SourceID:        at.id,
-		Role:            account.RoleEntry,
-		ExchangeOrderID: orderID,
-		ClientOrderID:   clientOrderID,
-		Side:            account.SideBuy,
-		PositionSide:    account.SideLong,
-		Type:            "MARKET",
-		Status:          account.OrderNew,
-		Quantity:        decimal.NewFromFloat(quantity),
+		AccountID:    at.accountID,
+		Source:       account.SourceTrader,
+		SourceID:     at.id,
+		Role:         account.RoleEntry,
+		VenueOrderID: orderID,
+		ClientID:     clientOrderID,
+		Side:         account.SideBuy,
+		PositionSide: account.SideLong,
+		Type:         "MARKET",
+		Status:       account.OrderNew,
+		Quantity:     decimal.NewFromFloat(quantity),
 	}
 	switch action {
 	case "open_short":
@@ -339,11 +334,7 @@ func (at *AutoTrader) marginMode() string {
 // saveOrder records an order on the instrument a symbol names on this trader's venue.
 func (at *AutoTrader) saveOrder(order *account.LedgerOrder, symbol string) error {
 	symbol = instrument.Normalize(symbol)
-	native := symbol
-	if at.venue == "okx" {
-		native = okx.InstrumentID(symbol)
-	}
-	instrumentID, err := instrument.Ensure(at.stores.DB, at.venue, instrument.KindPerpetual, symbol, native)
+	instrumentID, err := instrument.Ensure(at.stores.DB, at.venue, instrument.KindPerpetual, symbol)
 	if err != nil {
 		return err
 	}
